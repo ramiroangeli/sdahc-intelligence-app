@@ -354,7 +354,14 @@ function periodRange(periodKey) {
   if (periodKey === '7d') { start = new Date(end); start.setDate(start.getDate() - 6); }
   else if (periodKey === '30d') { start = new Date(end); start.setDate(start.getDate() - 29); }
   else if (periodKey === 'quarter') { const q = Math.floor(end.getMonth() / 3); start = new Date(end.getFullYear(), q * 3, 1); }
-  else { start = new Date(end.getFullYear(), 0, 1); } // ytd
+  else {
+    // ytd -> fiscal-year-to-date. fyStartMonth defaults to 0 (January), which
+    // reproduces plain calendar-YTD exactly. Settings can move this.
+    const fyStartMonth = getSettings().fyStartMonth ?? 0;
+    let y = end.getFullYear();
+    if (end.getMonth() < fyStartMonth) y -= 1;
+    start = new Date(y, fyStartMonth, 1);
+  }
   return { start, end };
 }
 
@@ -667,14 +674,111 @@ const Aggregates = {
 
     return { bySource, groups };
   },
+
+  /* SDA Report inventory — entirely dashboard-owned (see ASSUMPTIONS). Pending
+     and Available are always calculated, never stored, so they can never
+     drift from the underlying counters. */
+  sdaReportInventory: () => {
+    const s = getSettings().sdaReport;
+    const printed = s.initialPrintRun + s.additionalPrintRun;
+    const pending = Math.max(0, s.allocated - s.delivered - s.damaged - s.internalUse - s.returned);
+    const available = Math.max(0, printed - s.delivered - s.damaged - s.internalUse + s.returned + s.manualAdjustment);
+    return {
+      printed, allocated: s.allocated, delivered: s.delivered, pending, available,
+      damaged: s.damaged, internalUse: s.internalUse, returned: s.returned, manualAdjustment: s.manualAdjustment,
+      adjustmentLog: s.adjustmentLog, campaignCost: s.campaignCost,
+    };
+  },
+
+  /* SDA Report commercial funnel. Reports Delivered / Deal / Pipeline
+     Generated / Settled Revenue are REAL — the last three read directly from
+     the deals in DEALS tagged source === 'SDA Report' (the same 3 deals
+     counted in prospectSourceBreakdown). Followed Up / Response / Meeting /
+     Opportunity are simulated — see ASSUMPTIONS. */
+  sdaReportFunnel: () => {
+    const s = getSettings().sdaReport;
+    const delivered = s.delivered;
+    const followedUp = Math.round(delivered * SDA_REPORT_FUNNEL_RATES.followedUpRate);
+    const response = Math.round(followedUp * SDA_REPORT_FUNNEL_RATES.responseRate);
+    const meeting = Math.round(response * SDA_REPORT_FUNNEL_RATES.meetingRate);
+    const opportunity = Math.round(meeting * SDA_REPORT_FUNNEL_RATES.opportunityRate);
+
+    const sourcedDeals = DEALS.filter(d => d.source === 'SDA Report');
+    const dealCount = sourcedDeals.length;
+    const pipelineGenerated = sourcedDeals.filter(d => d.outcome === 'In Progress').reduce((sum, d) => sum + sdahcRevenue(d), 0);
+    const settledRevenue = sourcedDeals.filter(d => d.outcome === 'Won').reduce((sum, d) => sum + sdahcRevenue(d), 0);
+
+    const raw = [
+      { label: 'Reports Delivered', count: delivered, kind: 'count', isReal: true },
+      { label: 'Followed Up', count: followedUp, kind: 'count', isReal: false },
+      { label: 'Response', count: response, kind: 'count', isReal: false },
+      { label: 'Meeting', count: meeting, kind: 'count', isReal: false },
+      { label: 'Opportunity', count: opportunity, kind: 'count', isReal: false },
+      { label: 'Deal', count: dealCount, kind: 'count', isReal: true },
+      { label: 'Pipeline Generated', count: pipelineGenerated, kind: 'currency', isReal: true },
+      { label: 'Settled Revenue', count: settledRevenue, kind: 'currency', isReal: true },
+    ];
+    const stages = raw.map((row, i) => ({
+      ...row,
+      conversionFromPrevious: i === 0 || row.kind !== raw[i - 1].kind ? null : (raw[i - 1].count === 0 ? 0 : row.count / raw[i - 1].count),
+    }));
+
+    return { stages, sourcedDeals, dealCount, pipelineGenerated, settledRevenue, meeting, opportunity, followedUp, response, delivered, campaignCost: s.campaignCost };
+  },
+
+  /* Campaign ROI. Cost ratios divide the real campaignCost by a mix of real
+     (delivered, dealCount, settledRevenue) and simulated (meeting,
+     opportunity) counts — see ASSUMPTIONS for which is which. */
+  sdaReportRoi: () => {
+    const f = Aggregates.sdaReportFunnel();
+    const s = getSettings().sdaReport;
+    const costPerDelivered = f.delivered === 0 ? 0 : f.campaignCost / f.delivered;
+    const costPerMeeting = f.meeting === 0 ? 0 : f.campaignCost / f.meeting;
+    const costPerOpportunity = f.opportunity === 0 ? 0 : f.campaignCost / f.opportunity;
+    const returnMultiple = f.campaignCost === 0 ? null : (f.settledRevenue === 0 ? 0 : f.settledRevenue / f.campaignCost);
+    return {
+      campaignCost: f.campaignCost, costPerDelivered, costPerMeeting, costPerOpportunity,
+      pipelineGenerated: f.pipelineGenerated, settledRevenue: f.settledRevenue, returnMultiple,
+      targetMeetings: s.targetMeetings, targetOpportunities: s.targetOpportunities, targetPipeline: s.targetPipeline,
+      meeting: f.meeting, opportunity: f.opportunity,
+    };
+  },
 };
 
 /* ------------------------------ SETTINGS --------------------------------- */
-/* Dashboard-owned data. Simulated with localStorage so a future Settings page
-   can edit it without touching Notion. Seeded once; never overwritten after. */
+/* Dashboard-owned data. Simulated with localStorage so the Settings page can
+   edit it without touching Notion. Seeded once on first load; edits persist
+   and merge over the defaults below (so adding a new default field later
+   never breaks an existing saved settings blob). */
 
 const DEFAULT_SETTINGS = {
+  // Business
   annualTarget: 1600000,
+  monthlyTarget: Math.round(1600000 / 12),
+  fyStartMonth: 0, // 0 = January (calendar year). 3=Apr, 6=Jul, 9=Oct.
+
+  // Pipeline
+  highValueDealThreshold: 4000000,
+  staleWarningDays: 21,
+  stageProbabilities: Object.fromEntries(STAGES.map(s => [s.id, s.defaultProbability])),
+
+  // SDA Report — dashboard-owned print/campaign inventory
+  sdaReport: {
+    initialPrintRun: 200,
+    additionalPrintRun: 0,
+    allocated: 190,
+    delivered: 122,
+    damaged: 0,
+    internalUse: 0,
+    returned: 0,
+    manualAdjustment: 0,
+    campaignCost: 3335,
+    targetMeetings: 30,
+    targetOpportunities: 15,
+    targetPipeline: 900000,
+    adjustmentLog: [],
+  },
+
   syncStatus: { connected: true, lastSyncMinutesAgo: 2 },
 };
 
@@ -685,12 +789,268 @@ function initSettings() {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
-      return { ...DEFAULT_SETTINGS };
+      return structuredCloneSettings(DEFAULT_SETTINGS);
     }
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const saved = JSON.parse(raw);
+    return {
+      ...DEFAULT_SETTINGS, ...saved,
+      stageProbabilities: { ...DEFAULT_SETTINGS.stageProbabilities, ...(saved.stageProbabilities || {}) },
+      sdaReport: { ...DEFAULT_SETTINGS.sdaReport, ...(saved.sdaReport || {}) },
+      syncStatus: { ...DEFAULT_SETTINGS.syncStatus, ...(saved.syncStatus || {}) },
+    };
   } catch (e) {
-    return { ...DEFAULT_SETTINGS };
+    return structuredCloneSettings(DEFAULT_SETTINGS);
   }
 }
 
+function structuredCloneSettings(obj) { return JSON.parse(JSON.stringify(obj)); }
+
 function getSettings() { return initSettings(); }
+
+/* Deep-merges `patch` over the current saved settings and persists. Nested
+   objects (stageProbabilities, sdaReport) are merged key-by-key rather than
+   replaced wholesale, so a partial patch never clobbers sibling fields. */
+function updateSettings(patch) {
+  const current = getSettings();
+  const next = { ...current, ...patch };
+  if (patch.stageProbabilities) next.stageProbabilities = { ...current.stageProbabilities, ...patch.stageProbabilities };
+  if (patch.sdaReport) next.sdaReport = { ...current.sdaReport, ...patch.sdaReport };
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+  return next;
+}
+
+function resetSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
+  return structuredCloneSettings(DEFAULT_SETTINGS);
+}
+
+/* ---------------------------- SDA REPORT MOCKS ---------------------------- */
+/* Individual report recipients are not tracked as Notion records, so this
+   distribution and the upper-funnel conversion rates are simulated — see
+   ASSUMPTIONS. Distribution figures sum to the 122-report delivered baseline,
+   which is fixed in this prototype (not one of the five editable adjustment
+   actions), so they never drift out of sync with the live inventory. */
+
+const SDA_REPORT_FUNNEL_RATES = { followedUpRate: 0.79, responseRate: 0.43, meetingRate: 0.46, opportunityRate: 0.47 };
+
+const SDA_REPORT_DISTRIBUTION = {
+  byCity: [
+    { label: 'Brisbane', value: 46 }, { label: 'Sydney', value: 24 }, { label: 'Melbourne', value: 20 },
+    { label: 'Adelaide', value: 12 }, { label: 'Perth', value: 10 }, { label: 'Other', value: 10 },
+  ],
+  byChannel: [
+    { label: 'In-person', value: 74 }, { label: 'Post', value: 48 },
+  ],
+  byPriority: [
+    { label: 'A1', value: 54 }, { label: 'A2', value: 68 },
+  ],
+  byRelationshipType: [
+    { label: 'Existing Relationship', value: 58 }, { label: 'Referral Partner', value: 31 },
+    { label: 'Cold / New Contact', value: 23 }, { label: 'Other', value: 10 },
+  ],
+};
+
+/* ------------------------------- MARKET INTEL ----------------------------- */
+
+const MARKET_PULSE = [
+  { key: 'institutional-appetite', label: 'Institutional Appetite', value: 72, sentiment: 'positive', summary: 'Institutional capital continues to actively pursue completed SDA assets at compressed yields.' },
+  { key: 'completed-asset-demand', label: 'Completed Asset Demand', value: 65, sentiment: 'positive', summary: 'Demand for settled, tenanted SDA dwellings remains firm across metro-fringe locations.' },
+  { key: 'regional-vacancy-risk', label: 'Regional Vacancy Risk', value: 28, sentiment: 'positive', summary: 'Vacancy risk is low across core catchments — participant demand continues to outstrip new supply.' },
+  { key: 'capital-yield-pressure', label: 'Capital / Yield Pressure', value: 58, sentiment: 'neutral', summary: 'Funding costs remain elevated, moderating some buyer underwriting appetite at the margin.' },
+  { key: 'provider-market-conditions', label: 'Provider Market Conditions', value: 70, sentiment: 'positive', summary: 'SDA provider operating conditions are stable, supporting continued portfolio expansion.' },
+];
+
+const MARKET_INTEL_CATEGORIES = [
+  { key: 'transaction-evidence', label: 'Transaction Evidence', summary: 'Settled SDA transaction prices and terms across comparable dwelling and portfolio sales.' },
+  { key: 'comparable-sales', label: 'Comparable Sales', summary: 'Like-for-like sales evidence used to benchmark pricing on active mandates.' },
+  { key: 'buyer-underwriting', label: 'Buyer Underwriting', summary: 'How institutional and private buyers are underwriting SDA income streams and vacancy risk.' },
+  { key: 'cap-rates-yield', label: 'Cap Rates / Yield Evidence', summary: 'Observed capitalisation rates and yield movements across SDA asset classes.' },
+  { key: 'supply-demand', label: 'Supply & Demand', summary: 'Regional SDA supply pipeline against participant demand and NDIS plan growth.' },
+  { key: 'sda-ndis-data', label: 'SDA / NDIS Data', summary: 'NDIS participant and SDA enrolment data informing where new stock is needed.' },
+  { key: 'provider-intelligence', label: 'Provider Intelligence', summary: 'Provider expansion plans, portfolio strategy shifts and operating performance signals.' },
+  { key: 'investor-appetite', label: 'Investor Appetite', summary: 'Which investor types are active, their return hurdles and preferred asset profiles.' },
+  { key: 'alternative-use-evidence', label: 'Alternative Use Evidence', summary: 'Fallback value evidence for SDA assets under alternative residential-use scenarios.' },
+];
+
+const MARKET_INTEL_SIGNALS = [
+  {
+    dealName: 'SDA Abodes / Socia',
+    signal: 'Brisbane SDA vacancy tightened ~40bps quarter-on-quarter across the Logan and southern corridor catchments.',
+    implication: 'Supports pricing resilience through to settlement — limited downside risk from participant vacancy.',
+  },
+  {
+    dealName: 'LVP Logan',
+    signal: 'Institutional buyer appetite for completed, tenanted SDA assets has firmed over the last two quarters.',
+    implication: 'Positions this asset favourably in the current negotiation — buyer competitive tension is a live lever.',
+  },
+  {
+    dealName: 'Coomera SDA Portfolio',
+    signal: 'Gold Coast corridor showing above-average NDIS plan growth relative to new SDA stock approvals.',
+    implication: 'Reinforces the case for holding firm on portfolio pricing during buyer follow-up.',
+  },
+];
+
+/* --------------------------------- PLAYBOOK -------------------------------- */
+
+const PLAYBOOK_WHAT_WE_ARE = "SDA Home Choices is a specialist SDA transaction and advisory business. Our core engine is successful transactions — brokerage and divestment mandates that convert relationships into settled outcomes. That engine is supported by paid advisory work, market intelligence, investor relationships, and the systems, data and AI that make the whole operation legible and fast.";
+
+const PLAYBOOK_ENGINES = [
+  { key: 'deals-capital-markets', code: 'A', label: 'Deals & Capital Markets', status: 'Current', summary: 'Brokerage and divestment mandates — originating, marketing and closing SDA asset and portfolio sales for vendors and investors.' },
+  { key: 'transaction-advisory', code: 'B', label: 'Transaction Advisory', status: 'Current', summary: 'Paid due-diligence and advisory engagements — structuring, feasibility and transaction-readiness work ahead of a sale or acquisition.' },
+  { key: 'special-situations', code: 'C', label: 'Special Situations', status: 'Emerging', summary: 'Complex or distressed situations — restructures, provider exits and non-standard transaction structures requiring bespoke handling.' },
+  { key: 'operating-platform', code: 'D', label: 'Operating Platform — Systems, Data & AI', status: 'Emerging', summary: 'The internal systems, data pipelines and AI tooling — like this dashboard — that let a small team operate with institutional-grade rigour.' },
+];
+
+const VALUE_LOOP = [
+  'Relationship / Intelligence', 'Opportunity', 'Qualification', 'Advisory', 'Transaction Ready',
+  'Investor Campaign', 'Negotiation', 'Contract', 'Settlement', 'Revenue', 'New Market Intelligence',
+];
+
+const TEAM = [
+  { name: 'Steve', role: 'Relationships, commercial judgement, qualification, pricing, negotiation.' },
+  { name: 'Ramiro', role: 'Systems, data, analysis, AI, market intelligence, deal enablement.' },
+  { name: 'Ali', role: 'Business operations, CRM hygiene, follow-up, marketing, outbound origination.' },
+  { name: 'Loretta', role: 'Finance, invoicing, accounts, revenue admin.' },
+];
+
+const PLAYBOOK_MANUAL_CATEGORIES = [
+  { key: 'business-model', label: 'Business Model', summary: 'How SDA Home Choices makes money across brokerage, advisory, conjunction and referral fee lines.' },
+  { key: 'transaction-value-chain', label: 'Transaction Value Chain', summary: 'The end-to-end path a deal takes from first contact through to settled revenue.' },
+  { key: 'transaction-advisory-manual', label: 'Transaction Advisory', summary: 'Scope, pricing and delivery standards for paid due-diligence and advisory engagements.' },
+  { key: 'investment-sales', label: 'Investment Sales', summary: 'Brokerage process for SDA asset and portfolio divestments, from appointment to settlement.' },
+  { key: 'management-rights', label: 'Management Rights / M&A-style Work', summary: 'Structuring and executing provider-level and management-rights style transactions.' },
+  { key: 'special-situations-manual', label: 'Special Situations', summary: 'Playbook for distressed, complex or non-standard transaction scenarios.' },
+  { key: 'origination', label: 'Origination', summary: 'How new relationships and prospects enter the pipeline — network, referral and marketing channels.' },
+  { key: 'market-intelligence-manual', label: 'Market Intelligence', summary: 'How transaction evidence, provider data and investor sentiment are gathered and applied.' },
+  { key: 'execution', label: 'Execution', summary: 'Standards for running a live mandate — marketing, buyer management, negotiation and contract.' },
+  { key: 'crm-systems', label: 'CRM & Systems', summary: 'How Notion, this dashboard and supporting tools are used together across the deal lifecycle.' },
+  { key: 'team-decision-rights', label: 'Team & Decision Rights', summary: 'Who owns which decisions — pricing, qualification, engagement terms and exceptions.' },
+  { key: 'sdahc-3dsda', label: 'SDAHC / 3DSDA', summary: 'How the two entities relate, and when a deal sits under each.' },
+];
+
+/* ---------------------------- ASSUMPTIONS REGISTER ------------------------- */
+/* Every simulated, estimated or placeholder figure in this prototype, in one
+   place. If something in the UI carries an asterisk, it has an entry here.
+   Surfaced via the "Prototype — Mock Data" badge and in Settings. */
+
+const ASSUMPTIONS = [
+  {
+    id: 'value-added-rate',
+    label: 'Commercial Flow "Value Added" (35% annualised rate)',
+    usedIn: 'Overview → Commercial Flow waterfall',
+    category: 'Modelled',
+    why: 'No stage-history log exists to measure how much carried-over pipeline gained value during a period. Modelled as a fixed annualised re-rating rate applied to the current weighted pipeline, pro-rated to the period length.',
+  },
+  {
+    id: 'opening-pipeline-derivation',
+    label: 'Commercial Flow "Opening Pipeline" (back-solved, not stored)',
+    usedIn: 'Overview → Commercial Flow waterfall',
+    category: 'Modelled',
+    why: 'There is no historical snapshot of pipeline value at the start of a period. Opening is derived algebraically from Closing, New, Value Added, Lost and Settled so the bridge always balances exactly.',
+  },
+  {
+    id: 'estimated-close-date',
+    label: 'Estimated close month (derived from stage probability)',
+    usedIn: 'Revenue → Revenue Over Time (Forecast bars)',
+    category: 'Modelled',
+    why: 'Notion does not track an expected close date. A rough one is derived from each deal\'s probability so forecast revenue can be bucketed into months — directional only, not an operational fact.',
+  },
+  {
+    id: 'monthly-target-split',
+    label: 'Monthly Revenue Target (defaults to annual target ÷ 12, editable)',
+    usedIn: 'Revenue → Revenue Over Time (Target line); Settings → Business',
+    category: 'Dashboard-owned',
+    why: 'No seasonality is modelled for the target — it assumes even monthly pacing unless overridden in Settings.',
+  },
+  {
+    id: 'market-relationships-estimate',
+    label: '"Market / Relationships" top-of-funnel = 60',
+    usedIn: 'Sales Funnel → Conversion Funnel (top tier)',
+    category: 'Estimated constant',
+    why: 'Not tracked in Notion at all — an editorial estimate of SDAHC\'s active relationship network, shown only so the funnel has the correct shape.',
+  },
+  {
+    id: 'qualified-definition',
+    label: '"Qualified Opportunity" definition (reached stage A1 / B1)',
+    usedIn: 'Overview → Deal Activity; Sales Funnel → funnel tiers, Prospect Sources',
+    category: 'Definitional',
+    why: 'Notion has no "qualified" flag. A deal is treated as qualified once its current/frozen stage is A1, B1 or later — a threshold judgement call, not a stored field.',
+  },
+  {
+    id: 'funnel-tier-mapping',
+    label: 'Sales Funnel tier → stage-index mapping',
+    usedIn: 'Sales Funnel → Conversion Funnel, Stage Conversion table',
+    category: 'Definitional',
+    why: 'The real 16-stage pipeline is collapsed into 9 simplified milestones for readability. A deal\'s furthest-reached global stage index stands in for a true per-deal milestone history, which Notion does not store.',
+  },
+  {
+    id: 'revenue-scope',
+    label: 'Revenue Composition & Concentration scope (Won + Active + Paused, excludes Lost)',
+    usedIn: 'Revenue → Revenue Composition, Revenue Concentration',
+    category: 'Definitional',
+    why: 'A scoping choice for "what counts as revenue-generating" — Lost deals are excluded since they never produced revenue. Not a Notion-native filter.',
+  },
+  {
+    id: 'cohort-conversion',
+    label: 'Cohort conversion by creation-quarter',
+    usedIn: 'Sales Funnel → Cohort Conversion by Quarter',
+    category: 'Definitional',
+    why: 'Win rate is grouped by the quarter a deal was created — not a stored "cohort" concept in Notion. Quarters with no decided deals yet show "Too early" rather than a fabricated rate.',
+  },
+  {
+    id: 'sda-report-inventory',
+    label: 'SDA Report inventory (Printed, Allocated, Delivered, Damaged, Internal Use, Returned)',
+    usedIn: 'SDA Report → Inventory panel; Settings → SDA Report',
+    category: 'Dashboard-owned',
+    why: 'SDA Report print logistics are not tracked in Notion at all. The whole inventory block is dashboard-owned, seeded with plausible starting values, and editable via the five adjustment actions on that page.',
+  },
+  {
+    id: 'sda-report-funnel-upper',
+    label: 'SDA Report funnel — Followed Up / Response / Meeting / Opportunity counts',
+    usedIn: 'SDA Report → Commercial Funnel',
+    category: 'Estimated constant',
+    why: 'Individual report recipients are not tracked as Notion records, so early-funnel campaign activity is simulated at plausible conversion rates from the real Reports Delivered count.',
+  },
+  {
+    id: 'sda-report-distribution',
+    label: 'SDA Report distribution mix (by City, Channel, Priority, Relationship Type)',
+    usedIn: 'SDA Report → Distribution charts',
+    category: 'Estimated constant',
+    why: 'Individual report recipients are not tracked as Notion records, so the breakdown is simulated to sum to the 122 delivered reports.',
+  },
+  {
+    id: 'sda-report-deal-link',
+    label: 'SDA Report → Deal / Pipeline Generated / Settled Revenue',
+    usedIn: 'SDA Report → Commercial Funnel (final three stages)',
+    category: 'Real (cross-page check)',
+    why: 'Unlike the rest of this page, these figures are NOT simulated — they read directly from the real deals in data.js tagged source = "SDA Report", the same 3 deals counted on Sales Funnel → Prospect Sources. Settled Revenue is currently $0 because none of the 3 have reached Settlement yet.',
+  },
+  {
+    id: 'market-pulse-gauges',
+    label: 'Market Pulse gauges (Institutional Appetite, Completed Asset Demand, Regional Vacancy Risk, Capital/Yield Pressure, Provider Market Conditions)',
+    usedIn: 'Market Intelligence → Market Pulse',
+    category: 'Estimated constant',
+    why: 'No live market-data feed exists yet. Values are illustrative placeholders showing how a future data feed would be visualised.',
+  },
+  {
+    id: 'market-intel-deal-signals',
+    label: 'Intelligence signals linked to SDA Abodes / Socia, LVP Logan and Coomera SDA Portfolio',
+    usedIn: 'Market Intelligence → Intelligence Impacting Active Deals',
+    category: 'Estimated constant',
+    why: 'Illustrative only — demonstrates how market intelligence would inform live deals, not a real signal-detection system. Deal names are real (from data.js); the signals themselves are not.',
+  },
+  {
+    id: 'stage-probability-preview',
+    label: 'Default Stage Probabilities — editable, preview-only',
+    usedIn: 'Settings → Pipeline',
+    category: 'Dashboard-owned',
+    why: 'Persisted to localStorage and shown as a live "what-if" recompute of Weighted Pipeline as you edit. Does not retroactively reweight the 25 seeded deals elsewhere in this prototype — each deal already carries its own probability, matching the stage default at seed time (with two deliberate per-deal overrides).',
+  },
+  {
+    id: 'fiscal-year-scope',
+    label: 'Financial Year start month — affects YTD window',
+    usedIn: 'Settings → Business; Overview, Revenue (every "YTD" figure)',
+    category: 'Dashboard-owned',
+    why: 'Changes when "YTD" starts counting (defaults to January = calendar year, matching every figure verified in this prototype). Revenue Over Time\'s Jan–Dec chart is unaffected — it is always calendar-year for readability.',
+  },
+];

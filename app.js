@@ -62,7 +62,11 @@ const PAGE_META = {
    into a hidden (display:none) container measures 0×0 and renders blank. So
    those two pages render lazily, the first time their nav item is opened —
    by then the view already has .active applied and a real size. */
-const LAZY_PAGE_RENDERERS = { revenue: renderRevenuePage, funnel: renderFunnelPage };
+const LAZY_PAGE_RENDERERS = {
+  revenue: renderRevenuePage, funnel: renderFunnelPage,
+  'sda-report': renderSdaReportPage, 'market-intel': renderMarketIntelPage,
+  playbook: renderPlaybookPage, settings: renderSettingsPage,
+};
 const renderedViews = new Set();
 
 function initNav() {
@@ -526,15 +530,17 @@ function renderDealsTable() {
     th.classList.toggle('sorted', th.dataset.key === tableSortKey);
   });
 
+  const highValueThreshold = getSettings().highValueDealThreshold;
   const tbody = document.getElementById('deals-tbody');
   tbody.innerHTML = sortedDeals().map(d => {
     const stage = getStage(d.stage);
     const meta = STAGE_GROUPS[stage.group];
     const rev = sdahcRevenue(d);
     const wtd = weightedRevenue(d);
+    const highValueTag = d.transactionValue >= highValueThreshold ? '<span class="high-value-badge">High Value</span>' : '';
     return `
       <tr data-id="${d.id}">
-        <td class="deal-name-cell">${d.name}<span class="deal-entity">${d.entity}</span></td>
+        <td class="deal-name-cell">${d.name}${highValueTag}<span class="deal-entity">${d.entity}</span></td>
         <td><span class="stage-chip" style="background:${hexToRgba(meta.color, 0.12)}; color:${meta.color}"><span class="dot" style="background:${meta.color}"></span>${stage.short}</span></td>
         <td>${d.owner}</td>
         <td><div class="type-tags">${d.dealType.map(t => `<span class="type-tag">${t}</span>`).join('')}</div></td>
@@ -984,7 +990,8 @@ function openDrawer(id) {
   } else if (deal.outcome === 'Won') {
     statusBlock = `<div class="drawer-section"><div class="drawer-section-label">Settled</div><div class="drawer-section-text">${fmtDate(deal.closeDate)}</div></div>`;
   } else {
-    const staleColor = deal.daysStale > 21 ? 'var(--red)' : deal.daysStale > 10 ? 'var(--gold)' : 'var(--green)';
+    const staleThreshold = getSettings().staleWarningDays;
+    const staleColor = deal.daysStale > staleThreshold ? 'var(--red)' : deal.daysStale > staleThreshold / 2 ? 'var(--gold)' : 'var(--green)';
     statusBlock = `
       <div class="drawer-section">
         <div class="drawer-section-label">Next Action</div>
@@ -1072,6 +1079,661 @@ function initDrawer() {
 }
 
 /* ============================================================================
+   ASSUMPTIONS REGISTER MODAL
+   Every simulated/estimated/placeholder figure in the app, in one place.
+   Opened from the "Prototype — Mock Data" badge, or from Settings.
+   ============================================================================ */
+
+const ASSUMPTION_CATEGORY_CLASS = {
+  'Modelled': 'cat-modelled',
+  'Definitional': 'cat-definitional',
+  'Estimated constant': 'cat-estimated',
+  'Dashboard-owned': 'cat-dashboard-owned',
+  'Real (cross-page check)': 'cat-real',
+};
+
+function renderAssumptionsList() {
+  document.getElementById('assumptions-body').innerHTML = ASSUMPTIONS.map(a => `
+    <div class="assumption-item">
+      <div class="assumption-top">
+        <div class="assumption-label">${a.label}</div>
+        <span class="assumption-category ${ASSUMPTION_CATEGORY_CLASS[a.category] || ''}">${a.category}</span>
+      </div>
+      <div class="assumption-used-in">Used in: ${a.usedIn}</div>
+      <div class="assumption-why">${a.why}</div>
+    </div>
+  `).join('');
+}
+
+function openAssumptionsModal() {
+  renderAssumptionsList();
+  document.getElementById('assumptions-overlay').classList.add('open');
+}
+function closeAssumptionsModal() {
+  document.getElementById('assumptions-overlay').classList.remove('open');
+}
+function initAssumptionsModal() {
+  document.getElementById('assumptions-badge').addEventListener('click', openAssumptionsModal);
+  document.getElementById('assumptions-close').addEventListener('click', closeAssumptionsModal);
+  document.getElementById('assumptions-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'assumptions-overlay') closeAssumptionsModal();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAssumptionsModal(); });
+}
+
+/* ============================================================================
+   SDA REPORT PAGE
+   Treated as a commercial origination campaign. Inventory + adjustments are
+   entirely dashboard-owned (no Notion source). The Commercial Funnel mixes
+   simulated upper-funnel activity with real deal data for the bottom three
+   stages — each row is tagged so the distinction is never ambiguous.
+   ============================================================================ */
+
+let sdaDistChartInstances = [];
+
+const SDA_ADJUSTMENTS = [
+  { key: 'additionalPrintRun', label: 'Additional Print Run', hint: 'Adds to Printed', accent: '#0476D9' },
+  { key: 'damaged', label: 'Damaged', hint: 'Removes from Available', accent: '#D9534F' },
+  { key: 'internalUse', label: 'Internal Use', hint: 'Removes from Available', accent: '#7A5CC7' },
+  { key: 'returned', label: 'Returned', hint: 'Adds back to Available', accent: '#14A8A0' },
+  { key: 'manualAdjustment', label: 'Manual Adjustment', hint: 'Signed correction to Available', accent: '#E0A82E', allowNegative: true },
+];
+
+function renderSdaReportPage() {
+  const root = document.getElementById('view-sda-report');
+  root.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Print Inventory</h3>
+          <div class="panel-sub">SDA Report 2026 campaign — <span class="scope-tag dashboard">Dashboard-owned</span> · not tracked in Notion</div>
+        </div>
+      </div>
+      <div class="kpi-row" id="sda-inventory-row" style="padding:0 24px 22px; margin-top:14px;"></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Inventory Adjustments</h3>
+          <div class="panel-sub">Saved locally · updates Pending / Available immediately</div>
+        </div>
+      </div>
+      <div class="adjustment-panel">
+        <div class="adjustment-grid" id="adjustment-grid"></div>
+        <div class="adjustment-log" id="adjustment-log"></div>
+      </div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Distribution</h3>
+          <div class="panel-sub">Of the 122 delivered reports · *simulated breakdown, see Assumptions</div>
+        </div>
+      </div>
+      <div class="distribution-panel-body">
+        <div class="distribution-grid">
+          <div><div class="panel-sub" style="font-weight:600; color:var(--ink-soft);">By City</div><div class="distribution-chart" id="sda-city-chart"></div></div>
+          <div><div class="panel-sub" style="font-weight:600; color:var(--ink-soft);">By Channel</div><div class="distribution-chart" id="sda-channel-chart"></div></div>
+          <div><div class="panel-sub" style="font-weight:600; color:var(--ink-soft);">By Priority</div><div class="distribution-chart" id="sda-priority-chart"></div></div>
+          <div><div class="panel-sub" style="font-weight:600; color:var(--ink-soft);">By Relationship Type</div><div class="distribution-chart" id="sda-rel-chart"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Commercial Funnel</h3>
+          <div class="panel-sub">Reports Delivered → Settled Revenue · each stage tagged Real or Simulated</div>
+        </div>
+      </div>
+      <div id="sda-funnel-body" style="padding:8px 24px 20px;"></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Campaign ROI</h3>
+          <div class="panel-sub">Pipeline Generated and Settled Revenue are shown separately — never combined</div>
+        </div>
+      </div>
+      <div class="kpi-row" id="sda-roi-row" style="padding:0 24px 6px; margin-top:14px;"></div>
+      <div id="sda-target-progress" style="padding:6px 24px 22px;"></div>
+    </div>
+  `;
+
+  renderSdaInventorySummary();
+  renderSdaAdjustmentPanel();
+  renderSdaDistribution();
+  renderSdaFunnel();
+  renderSdaRoi();
+}
+
+function renderSdaInventorySummary() {
+  const inv = Aggregates.sdaReportInventory();
+  const cards = [
+    { label: 'Printed', value: inv.printed },
+    { label: 'Allocated', value: inv.allocated },
+    { label: 'Delivered', value: inv.delivered },
+    { label: 'Pending', value: inv.pending, foot: 'calculated' },
+    { label: 'Available', value: inv.available, foot: 'calculated' },
+  ];
+  document.getElementById('sda-inventory-row').innerHTML = cards.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value tabular">${c.value}</div>
+      <div class="kpi-foot">${c.foot || 'reports'}</div>
+    </div>
+  `).join('');
+}
+
+function renderSdaAdjustmentPanel() {
+  const grid = document.getElementById('adjustment-grid');
+  grid.innerHTML = SDA_ADJUSTMENTS.map(a => `
+    <div class="adjustment-form">
+      <div class="adjustment-form-label" style="color:${a.accent}">${a.label}</div>
+      <div class="adjustment-form-hint">${a.hint}</div>
+      <div class="adjustment-form-row">
+        <input class="field-input" type="number" ${a.allowNegative ? '' : 'min="0"'} placeholder="Qty" id="qty-${a.key}">
+        <button class="btn btn-primary btn-sm" data-key="${a.key}" data-label="${a.label}">Apply</button>
+      </div>
+    </div>
+  `).join('');
+
+  grid.querySelectorAll('button[data-key]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      const input = document.getElementById(`qty-${key}`);
+      const qty = parseInt(input.value, 10);
+      if (!qty || isNaN(qty)) return;
+      applySdaAdjustment(key, qty, btn.dataset.label);
+      input.value = '';
+    });
+  });
+
+  renderSdaAdjustmentLog();
+}
+
+function applySdaAdjustment(key, qty, label) {
+  const current = getSettings().sdaReport;
+  const nextVal = (current[key] || 0) + qty;
+  const log = [{ type: label, qty, date: TODAY.toISOString().slice(0, 10) }, ...current.adjustmentLog].slice(0, 20);
+  updateSettings({ sdaReport: { [key]: nextVal, adjustmentLog: log } });
+  renderSdaInventorySummary();
+  renderSdaAdjustmentLog();
+}
+
+function renderSdaAdjustmentLog() {
+  const log = getSettings().sdaReport.adjustmentLog;
+  const el = document.getElementById('adjustment-log');
+  if (!log.length) { el.innerHTML = '<div class="adjustment-log-empty">No adjustments yet — try Additional Print Run above.</div>'; return; }
+  el.innerHTML = log.map(l => `
+    <div class="adjustment-log-row">
+      <div class="adjustment-log-type">${l.type}</div>
+      <div class="adjustment-log-note">Applied to SDA Report inventory</div>
+      <div class="adjustment-log-qty" style="color:${l.qty >= 0 ? 'var(--green)' : 'var(--red)'}">${l.qty >= 0 ? '+' : ''}${l.qty}</div>
+      <div class="adjustment-log-date">${fmtDate(l.date)}</div>
+    </div>
+  `).join('');
+}
+
+function renderDistBar(elId, rows, colors) {
+  const el = document.getElementById(elId);
+  const instance = echarts.init(el);
+  instance.setOption({
+    grid: { left: 8, right: 44, top: 8, bottom: 8, containLabel: true },
+    tooltip: { trigger: 'item', backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 } },
+    xAxis: { type: 'value', show: false },
+    yAxis: {
+      type: 'category', data: [...rows].reverse().map(r => r.label),
+      axisLine: { show: false }, axisTick: { show: false },
+      axisLabel: { color: '#3B4657', fontSize: 11.5, fontWeight: 600, fontFamily: 'IBM Plex Sans' },
+    },
+    series: [{
+      type: 'bar', barWidth: '55%',
+      data: [...rows].reverse().map((r, i) => ({ value: r.value, itemStyle: { color: colors[(rows.length - 1 - i) % colors.length], borderRadius: [0, 4, 4, 0] } })),
+      label: { show: true, position: 'right', formatter: '{c}', color: '#3B4657', fontSize: 11.5, fontFamily: 'IBM Plex Mono', fontWeight: 600 },
+    }],
+  });
+  return instance;
+}
+
+function renderSdaDistribution() {
+  sdaDistChartInstances = [
+    renderDistBar('sda-city-chart', SDA_REPORT_DISTRIBUTION.byCity, ['#0476D9', '#14A8A0', '#7A5CC7', '#E0A82E', '#2FB37A', '#8592A6']),
+    renderDistBar('sda-channel-chart', SDA_REPORT_DISTRIBUTION.byChannel, ['#0476D9', '#14A8A0']),
+    renderDistBar('sda-priority-chart', SDA_REPORT_DISTRIBUTION.byPriority, ['#E0A82E', '#8592A6']),
+    renderDistBar('sda-rel-chart', SDA_REPORT_DISTRIBUTION.byRelationshipType, ['#0476D9', '#14A8A0', '#7A5CC7', '#8592A6']),
+  ];
+}
+
+function renderSdaFunnel() {
+  const f = Aggregates.sdaReportFunnel();
+  const head = `<div class="funnel-table-head"><div>Stage</div><div style="text-align:right">Value</div><div style="text-align:right">Converted</div><div style="text-align:right">Source</div></div>`;
+  const rows = f.stages.map(s => {
+    const valueStr = s.kind === 'currency' ? fmtFull(s.count) : String(s.count);
+    return `
+      <div class="funnel-row">
+        <div class="funnel-row-label">${s.label}</div>
+        <div class="funnel-row-count tabular">${valueStr}</div>
+        <div class="funnel-row-conv tabular">${s.conversionFromPrevious === null ? '—' : fmtPct(s.conversionFromPrevious)}</div>
+        <div style="text-align:right;"><span class="scope-tag ${s.isReal ? 'real' : 'dashboard'}">${s.isReal ? 'Real' : 'Simulated'}</span></div>
+      </div>
+    `;
+  }).join('');
+  document.getElementById('sda-funnel-body').innerHTML = head + rows;
+}
+
+function renderSdaRoi() {
+  const roi = Aggregates.sdaReportRoi();
+  const cards = [
+    { label: 'Campaign Cost', value: fmtFull(roi.campaignCost), foot: 'dashboard-owned' },
+    { label: 'Cost per Report Delivered', value: '$' + roi.costPerDelivered.toFixed(2), foot: 'real ÷ real' },
+    { label: 'Cost per Meeting', value: '$' + roi.costPerMeeting.toFixed(2), foot: 'real ÷ simulated *' },
+    { label: 'Cost per Opportunity', value: '$' + roi.costPerOpportunity.toFixed(2), foot: 'real ÷ simulated *' },
+    { label: 'Pipeline Generated', value: fmtCompact(roi.pipelineGenerated), foot: 'real, from 3 SDA Report deals' },
+    { label: 'Settled Revenue', value: fmtCompact(roi.settledRevenue), foot: 'real, from 3 SDA Report deals' },
+    { label: 'Return Multiple', value: roi.returnMultiple === null ? '—' : roi.returnMultiple.toFixed(2) + 'x', foot: 'Settled Revenue ÷ Cost' },
+  ];
+  document.getElementById('sda-roi-row').innerHTML = cards.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value tabular">${c.value}</div>
+      <div class="kpi-foot">${c.foot}</div>
+    </div>
+  `).join('');
+
+  const targets = [
+    { label: 'Meetings vs Target', value: roi.meeting, target: roi.targetMeetings },
+    { label: 'Opportunities vs Target', value: roi.opportunity, target: roi.targetOpportunities },
+    { label: 'Pipeline vs Target', value: roi.pipelineGenerated, target: roi.targetPipeline, isCurrency: true },
+  ];
+  document.getElementById('sda-target-progress').innerHTML = targets.map(t => {
+    const pct = t.target ? Math.min(100, (t.value / t.target) * 100) : 0;
+    return `
+      <div class="target-progress-row">
+        <div class="target-progress-label">${t.label}</div>
+        <div class="target-progress-track"><div class="target-progress-fill" style="width:${pct}%"></div></div>
+        <div class="target-progress-value">${t.isCurrency ? fmtCompact(t.value) : t.value} / ${t.isCurrency ? fmtCompact(t.target) : t.target}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+/* ============================================================================
+   MARKET INTELLIGENCE PAGE
+   Light — a place to grow. Gauges and category cards are illustrative;
+   the deal-linked signals demonstrate the concept using real deal names.
+   ============================================================================ */
+
+let gaugeChartInstances = [];
+
+function renderMarketIntelPage() {
+  const root = document.getElementById('view-market-intel');
+  root.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Market Pulse</h3>
+          <div class="panel-sub">Illustrative indicators · *no live market-data feed yet, see Assumptions</div>
+        </div>
+      </div>
+      <div class="chart-body" style="padding:14px 20px 22px;"><div class="gauge-grid" id="gauge-grid"></div></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Intelligence Categories</h3>
+          <div class="panel-sub">Click a category to preview what it will hold</div>
+        </div>
+      </div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="category-grid" id="market-category-grid"></div></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Intelligence Impacting Active Deals</h3>
+          <div class="panel-sub">Illustrative only — shows how intelligence will feed commercial decisions</div>
+        </div>
+      </div>
+      <div style="padding:8px 24px 22px;"><div class="signal-list" id="signal-list"></div></div>
+    </div>
+  `;
+
+  renderGauges();
+  renderMarketCategories();
+  renderSignals();
+}
+
+function renderGauges() {
+  const grid = document.getElementById('gauge-grid');
+  grid.innerHTML = MARKET_PULSE.map(g => `
+    <div class="gauge-card">
+      <div class="gauge-canvas" id="gauge-${g.key}"></div>
+      <div class="gauge-card-label">${g.label}</div>
+      <div class="gauge-card-summary">${g.summary}</div>
+    </div>
+  `).join('');
+
+  gaugeChartInstances = MARKET_PULSE.map(g => {
+    const el = document.getElementById(`gauge-${g.key}`);
+    const instance = echarts.init(el);
+    const color = g.sentiment === 'positive' ? '#2FB37A' : g.sentiment === 'neutral' ? '#E0A82E' : '#D9534F';
+    instance.setOption({
+      series: [{
+        type: 'gauge', startAngle: 200, endAngle: -20, min: 0, max: 100,
+        radius: '92%', center: ['50%', '68%'],
+        axisLine: { lineStyle: { width: 8, color: [[1, '#EDF0F6']] } },
+        pointer: { show: false },
+        progress: { show: true, width: 8, itemStyle: { color } },
+        splitLine: { show: false }, axisTick: { show: false }, axisLabel: { show: false },
+        detail: { formatter: '{value}', fontSize: 22, fontFamily: 'IBM Plex Mono', fontWeight: 600, color: '#101828', offsetCenter: [0, '-6%'] },
+        data: [{ value: g.value }],
+      }],
+    });
+    return instance;
+  });
+}
+
+function renderMarketCategories() {
+  const grid = document.getElementById('market-category-grid');
+  grid.innerHTML = MARKET_INTEL_CATEGORIES.map(c => `
+    <div class="category-card" data-key="${c.key}">
+      <div class="category-card-head">
+        <div class="category-card-label">${c.label}</div>
+        <svg class="category-card-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="category-card-summary">${c.summary}</div>
+    </div>
+  `).join('');
+  grid.querySelectorAll('.category-card').forEach(card => card.addEventListener('click', () => card.classList.toggle('expanded')));
+}
+
+function renderSignals() {
+  document.getElementById('signal-list').innerHTML = MARKET_INTEL_SIGNALS.map(s => {
+    const deal = DEALS.find(d => d.name === s.dealName);
+    const stageLabel = deal ? getStage(deal.stage).short : '';
+    return `
+      <div class="signal-card">
+        <div class="signal-deal-chip">${s.dealName}${deal ? ' · ' + stageLabel : ''}</div>
+        <div class="signal-text">${s.signal}</div>
+        <div class="signal-implication">${s.implication}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+/* ============================================================================
+   SDAHC PLAYBOOK PAGE
+   Reference content — not derived from data.js, so not part of the
+   Assumptions Register (it's documentation, not a figure).
+   ============================================================================ */
+
+const ENGINE_COLORS = { 'deals-capital-markets': '#0476D9', 'transaction-advisory': '#7A5CC7', 'special-situations': '#E0A82E', 'operating-platform': '#14A8A0' };
+
+function renderPlaybookPage() {
+  const root = document.getElementById('view-playbook');
+  root.innerHTML = `
+    <div class="panel"><div class="playbook-intro">${PLAYBOOK_WHAT_WE_ARE}</div></div>
+
+    <div class="panel section-gap">
+      <div class="panel-head"><div><h3 class="panel-title">Four Engines</h3><div class="panel-sub">Click a card for a short explanation</div></div></div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="engine-grid" id="engine-grid"></div></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head"><div><h3 class="panel-title">How Value Moves</h3><div class="panel-sub">The loop every deal travels, feeding back into new intelligence</div></div></div>
+      <div class="value-loop" id="value-loop"></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head"><div><h3 class="panel-title">Who Does What</h3></div></div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="team-grid" id="team-grid"></div></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head"><div><h3 class="panel-title">Explore the Manual</h3><div class="panel-sub">Click a category for a short summary</div></div></div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="category-grid" id="manual-category-grid"></div></div>
+    </div>
+  `;
+
+  renderEngines();
+  renderValueLoop();
+  renderTeam();
+  renderManualCategories();
+}
+
+function renderEngines() {
+  const grid = document.getElementById('engine-grid');
+  grid.innerHTML = PLAYBOOK_ENGINES.map(e => `
+    <div class="engine-card" data-key="${e.key}">
+      <div class="engine-top">
+        <div class="engine-code" style="background:${ENGINE_COLORS[e.key]}">${e.code}</div>
+        <span class="engine-status ${e.status.toLowerCase()}">${e.status}</span>
+      </div>
+      <div class="engine-label">${e.label}</div>
+      <div class="engine-summary">${e.summary}</div>
+    </div>
+  `).join('');
+  grid.querySelectorAll('.engine-card').forEach(card => card.addEventListener('click', () => card.classList.toggle('expanded')));
+}
+
+function renderValueLoop() {
+  const el = document.getElementById('value-loop');
+  el.innerHTML = VALUE_LOOP.map((node, i) =>
+    `<span class="value-loop-node">${node}</span>${i < VALUE_LOOP.length - 1 ? '<span class="value-loop-arrow">→</span>' : ''}`
+  ).join('') + `<div class="value-loop-back">↺ feeds back into Relationship / Intelligence</div>`;
+}
+
+function renderTeam() {
+  document.getElementById('team-grid').innerHTML = TEAM.map(p => `
+    <div class="team-card">
+      <div class="team-avatar">${p.name[0]}</div>
+      <div class="team-name">${p.name}</div>
+      <div class="team-role">${p.role}</div>
+    </div>
+  `).join('');
+}
+
+function renderManualCategories() {
+  const grid = document.getElementById('manual-category-grid');
+  grid.innerHTML = PLAYBOOK_MANUAL_CATEGORIES.map(c => `
+    <div class="category-card" data-key="${c.key}">
+      <div class="category-card-head">
+        <div class="category-card-label">${c.label}</div>
+        <svg class="category-card-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="category-card-summary">${c.summary}</div>
+    </div>
+  `).join('');
+  grid.querySelectorAll('.category-card').forEach(card => card.addEventListener('click', () => card.classList.toggle('expanded')));
+}
+
+/* ============================================================================
+   SETTINGS PAGE
+   Demonstrates dashboard-owned data end-to-end. Saving persists to
+   localStorage via updateSettings() and reloads, so every other page picks
+   up the new values from a guaranteed-consistent fresh render.
+   ============================================================================ */
+
+let probTableEdits = null;
+
+function renderSettingsPage() {
+  const root = document.getElementById('view-settings');
+  const s = getSettings();
+  root.innerHTML = `
+    <div class="panel settings-section">
+      <div class="settings-section-head"><div class="settings-section-title">Business</div><span class="scope-tag dashboard">Dashboard-owned</span></div>
+      <div class="settings-field-grid">
+        <div class="field-block">
+          <label class="field-label">Annual Revenue Target</label>
+          <input class="field-input" type="number" id="set-annualTarget" value="${s.annualTarget}">
+          <div class="field-hint">Drives Overview's hero target bar and Revenue's KPIs.</div>
+        </div>
+        <div class="field-block">
+          <label class="field-label">Monthly Revenue Target</label>
+          <input class="field-input" type="number" id="set-monthlyTarget" value="${s.monthlyTarget}">
+          <div class="field-hint">Feeds the Target line on Revenue → Revenue Over Time.</div>
+        </div>
+        <div class="field-block">
+          <label class="field-label">Financial Year Start</label>
+          <select class="field-select" id="set-fyStartMonth">
+            <option value="0" ${s.fyStartMonth === 0 ? 'selected' : ''}>January (calendar year)</option>
+            <option value="3" ${s.fyStartMonth === 3 ? 'selected' : ''}>April</option>
+            <option value="6" ${s.fyStartMonth === 6 ? 'selected' : ''}>July</option>
+            <option value="9" ${s.fyStartMonth === 9 ? 'selected' : ''}>October</option>
+          </select>
+          <div class="field-hint">Changes the window every "YTD" figure uses across the app.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel settings-section section-gap">
+      <div class="settings-section-head"><div class="settings-section-title">Pipeline</div><span class="scope-tag dashboard">Dashboard-owned</span></div>
+      <div class="settings-field-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="field-block">
+          <label class="field-label">High-Value Deal Threshold</label>
+          <input class="field-input" type="number" id="set-highValueDealThreshold" value="${s.highValueDealThreshold}">
+          <div class="field-hint">Tags rows on the Pipeline table at or above this Transaction Value.</div>
+        </div>
+        <div class="field-block">
+          <label class="field-label">Stale Warning Threshold (days)</label>
+          <input class="field-input" type="number" id="set-staleWarningDays" value="${s.staleWarningDays}">
+          <div class="field-hint">Drives the Days Stale colour in the Deal Drawer — live, no reload needed.</div>
+        </div>
+      </div>
+      <div class="settings-section-head" style="padding-top:0;"><div class="settings-section-title" style="font-size:13.5px;">Default Stage Probabilities</div></div>
+      <div class="prob-table-wrap">
+        <div class="prob-table-head"><div>Stage</div><div style="text-align:right">Probability %</div><div style="text-align:right">Weighted Δ (this stage)</div></div>
+        <div id="prob-table-rows"></div>
+      </div>
+      <div class="settings-preview" id="prob-preview"></div>
+    </div>
+
+    <div class="panel settings-section section-gap">
+      <div class="settings-section-head"><div class="settings-section-title">SDA Report</div><span class="scope-tag dashboard">Dashboard-owned</span></div>
+      <div class="settings-field-grid">
+        <div class="field-block"><label class="field-label">Initial Print Run</label><input class="field-input" type="number" id="set-initialPrintRun" value="${s.sdaReport.initialPrintRun}"></div>
+        <div class="field-block"><label class="field-label">Campaign Cost</label><input class="field-input" type="number" id="set-campaignCost" value="${s.sdaReport.campaignCost}"></div>
+        <div class="field-block"><label class="field-label">Target Meetings</label><input class="field-input" type="number" id="set-targetMeetings" value="${s.sdaReport.targetMeetings}"></div>
+        <div class="field-block"><label class="field-label">Target Opportunities</label><input class="field-input" type="number" id="set-targetOpportunities" value="${s.sdaReport.targetOpportunities}"></div>
+        <div class="field-block"><label class="field-label">Target Pipeline</label><input class="field-input" type="number" id="set-targetPipeline" value="${s.sdaReport.targetPipeline}"></div>
+      </div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="settings-actions">
+        <button class="btn btn-primary" id="settings-save">Save Changes</button>
+        <button class="btn btn-secondary" id="settings-reset">Reset to Defaults</button>
+        <button class="btn btn-secondary" id="settings-view-assumptions">View Assumptions Register</button>
+      </div>
+    </div>
+
+    <div class="settings-toast" id="settings-toast"></div>
+  `;
+
+  renderProbTable();
+  document.getElementById('settings-save').addEventListener('click', saveSettingsForm);
+  document.getElementById('settings-reset').addEventListener('click', () => {
+    resetSettings();
+    showSettingsToast('Reset to defaults — reloading…');
+    setTimeout(() => location.reload(), 700);
+  });
+  document.getElementById('settings-view-assumptions').addEventListener('click', openAssumptionsModal);
+}
+
+function renderProbTable() {
+  const s = getSettings();
+  probTableEdits = { ...s.stageProbabilities };
+  const rows = document.getElementById('prob-table-rows');
+  rows.innerHTML = STAGES.map(stage => `
+    <div class="prob-table-row" data-stage="${stage.id}">
+      <div class="prob-table-stage">${stage.short}</div>
+      <input class="field-input prob-table-input" type="number" step="1" min="0" max="100" data-stage="${stage.id}" value="${Math.round(probTableEdits[stage.id] * 100)}">
+      <div class="prob-table-delta tabular" style="text-align:right; font-size:11.5px; color:var(--ink-faint);" data-delta="${stage.id}">—</div>
+    </div>
+  `).join('');
+
+  rows.querySelectorAll('input[data-stage]').forEach(input => {
+    input.addEventListener('input', () => {
+      const stageId = input.dataset.stage;
+      const val = Math.max(0, Math.min(100, parseFloat(input.value) || 0)) / 100;
+      probTableEdits[stageId] = val;
+      updateProbPreview();
+    });
+  });
+
+  updateProbPreview();
+}
+
+/* Two seeded deals (LVP Logan, Skychest) deliberately carry a probability
+   that differs from their stage's factory default (STAGES[i].defaultProbability
+   — not the editable settings copy). Editing a stage's default in Settings
+   should shift every OTHER deal at that stage, but must not silently override
+   those two explicit per-deal judgement calls. This keeps the preview's
+   baseline (no edits yet) exactly equal to the real weighted pipeline. */
+function previewProbabilityFor(deal) {
+  const stageDefault = getStage(deal.stage).defaultProbability;
+  const isAtFactoryDefault = Math.abs(deal.probability - stageDefault) < 1e-9;
+  return isAtFactoryDefault ? probTableEdits[deal.stage] : deal.probability;
+}
+
+function updateProbPreview() {
+  const currentWeighted = Aggregates.weightedPipelineRevenue();
+  const previewWeighted = Aggregates.active().reduce((sum, d) => sum + sdahcRevenue(d) * previewProbabilityFor(d), 0);
+  const delta = previewWeighted - currentWeighted;
+
+  document.getElementById('prob-preview').innerHTML = `
+    <div class="settings-preview-label">Weighted Pipeline — Live Preview</div>
+    <div class="settings-preview-value tabular">${fmtFull(previewWeighted)}</div>
+    <div class="settings-preview-delta ${delta >= 0 ? 'pos' : 'neg'} tabular">${delta >= 0 ? '+' : ''}${fmtCompact(delta)} vs current ${fmtCompact(currentWeighted)}</div>
+    <div class="settings-preview-hint">Preview only — saving persists these defaults for future reference but does not retroactively reweight the 25 seeded deals elsewhere in this prototype. See the Assumptions Register.</div>
+  `;
+
+  STAGES.forEach(stage => {
+    const el = document.querySelector(`[data-delta="${stage.id}"]`);
+    if (!el) return;
+    const stageDeals = DEALS.filter(d => d.stage === stage.id && d.outcome === 'In Progress');
+    const before = stageDeals.reduce((sum, d) => sum + sdahcRevenue(d) * d.probability, 0);
+    const after = stageDeals.reduce((sum, d) => sum + sdahcRevenue(d) * previewProbabilityFor(d), 0);
+    const rowDelta = after - before;
+    el.textContent = rowDelta === 0 ? '—' : (rowDelta > 0 ? '+' : '') + fmtCompact(rowDelta);
+    el.style.color = rowDelta > 0 ? 'var(--green)' : rowDelta < 0 ? 'var(--red)' : 'var(--ink-faint)';
+  });
+}
+
+function saveSettingsForm() {
+  const patch = {
+    annualTarget: parseFloat(document.getElementById('set-annualTarget').value) || 0,
+    monthlyTarget: parseFloat(document.getElementById('set-monthlyTarget').value) || 0,
+    fyStartMonth: parseInt(document.getElementById('set-fyStartMonth').value, 10),
+    highValueDealThreshold: parseFloat(document.getElementById('set-highValueDealThreshold').value) || 0,
+    staleWarningDays: parseInt(document.getElementById('set-staleWarningDays').value, 10) || 1,
+    stageProbabilities: { ...probTableEdits },
+    sdaReport: {
+      initialPrintRun: parseInt(document.getElementById('set-initialPrintRun').value, 10) || 0,
+      campaignCost: parseFloat(document.getElementById('set-campaignCost').value) || 0,
+      targetMeetings: parseInt(document.getElementById('set-targetMeetings').value, 10) || 0,
+      targetOpportunities: parseInt(document.getElementById('set-targetOpportunities').value, 10) || 0,
+      targetPipeline: parseFloat(document.getElementById('set-targetPipeline').value) || 0,
+    },
+  };
+  updateSettings(patch);
+  showSettingsToast('Saved — reloading dashboard…');
+  setTimeout(() => location.reload(), 700);
+}
+
+function showSettingsToast(msg) {
+  const toast = document.getElementById('settings-toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+}
+
+/* ============================================================================
    INIT
    ============================================================================ */
 
@@ -1080,11 +1742,12 @@ window.addEventListener('DOMContentLoaded', () => {
   initNav();
   initSyncStatus();
   initDrawer();
+  initAssumptionsModal();
   renderOverview();
   renderPipelinePage();
 
   window.addEventListener('resize', () => {
-    [pipelineChartInstance, waterfallChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, funnelChartInstance, prospectsChartInstance]
+    [pipelineChartInstance, waterfallChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, funnelChartInstance, prospectsChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
       .forEach(c => c && c.resize());
   });
 });
