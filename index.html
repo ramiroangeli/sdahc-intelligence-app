@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SDAHC Intelligence</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ============================== SIDEBAR ============================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">S</div>
+      <div class="brand-text">
+        <div class="brand-name">SDAHC Intelligence</div>
+        <div class="brand-sub">Internal Platform</div>
+      </div>
+    </div>
+
+    <nav class="nav-scroll">
+      <div class="nav-group">
+        <div class="nav-group-label">Core</div>
+        <button class="nav-item active" data-view="overview">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 13h4v8H3zM10 8h4v13h-4zM17 3h4v18h-4z"/></svg>
+          <span class="nav-label">Overview</span>
+        </button>
+        <button class="nav-item" data-view="pipeline">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5h18M6 5v5.5L3 17h10l-3-6.5V5M13 5h8M15 12h6M17 19h4"/></svg>
+          <span class="nav-label">Pipeline</span>
+        </button>
+        <button class="nav-item" data-view="revenue">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>
+          <span class="nav-label">Revenue</span>
+        </button>
+        <button class="nav-item" data-view="funnel">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16l-6 8v6l-4 2v-8z"/></svg>
+          <span class="nav-label">Sales Funnel</span>
+        </button>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Growth</div>
+        <button class="nav-item" data-view="sda-report">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/></svg>
+          <span class="nav-label">SDA Report</span>
+        </button>
+        <button class="nav-item" data-view="market-intel">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <span class="nav-label">Market Intelligence</span>
+        </button>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Reference</div>
+        <button class="nav-item" data-view="playbook">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z"/></svg>
+          <span class="nav-label">SDAHC Playbook</span>
+        </button>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">System</div>
+        <button class="nav-item" data-view="settings">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span class="nav-label">Settings</span>
+        </button>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sync-status" id="sync-status">
+        <div class="sync-dot" id="sync-dot"></div>
+        <div class="sync-text">
+          <div class="sync-title" id="sync-title">Synced with Notion</div>
+          <div class="sync-sub" id="sync-sub">2 min ago</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- =============================== MAIN ================================ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-heading">
+        <div class="page-eyebrow" id="page-eyebrow">Commercial Intelligence</div>
+        <h1 id="page-title">Executive Overview</h1>
+      </div>
+      <div class="topbar-right">
+        <span class="prototype-badge"><span class="dot"></span>Prototype — Mock Data</span>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- ============================ OVERVIEW ============================ -->
+      <section class="view active" id="view-overview"></section>
+
+      <!-- ============================ PIPELINE ============================ -->
+      <section class="view" id="view-pipeline"></section>
+
+      <!-- ============================ REVENUE (placeholder) ============== -->
+      <section class="view" id="view-revenue">
+        <div class="placeholder-page">
+          <div class="placeholder-card">
+            <div class="placeholder-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></div>
+            <h2>Revenue</h2>
+            <p>Deep revenue breakdowns by entity, deal type and owner will live here — settled vs forecast, margin mix, and trend over time.</p>
+            <span class="placeholder-tag">Coming in a later phase</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ FUNNEL (placeholder) ================ -->
+      <section class="view" id="view-funnel">
+        <div class="placeholder-page">
+          <div class="placeholder-card">
+            <div class="placeholder-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16l-6 8v6l-4 2v-8z"/></svg></div>
+            <h2>Sales Funnel</h2>
+            <p>A stage-conversion funnel with drop-off analysis, showing exactly where deals stall between prospecting and settlement.</p>
+            <span class="placeholder-tag">Coming in a later phase</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ SDA REPORT (placeholder) ============ -->
+      <section class="view" id="view-sda-report">
+        <div class="placeholder-page">
+          <div class="placeholder-card">
+            <div class="placeholder-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h1"/></svg></div>
+            <h2>SDA Report</h2>
+            <p>Inbound lead intelligence sourced from the SDA Report — volume, conversion quality and follow-up cadence.</p>
+            <span class="placeholder-tag">Coming in a later phase</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ MARKET INTEL (placeholder) ========== -->
+      <section class="view" id="view-market-intel">
+        <div class="placeholder-page">
+          <div class="placeholder-card">
+            <div class="placeholder-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
+            <h2>Market Intelligence</h2>
+            <p>Regional SDA supply/demand signals, pricing benchmarks and competitor activity to inform origination strategy.</p>
+            <span class="placeholder-tag">Coming in a later phase</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ PLAYBOOK (placeholder) ============== -->
+      <section class="view" id="view-playbook">
+        <div class="placeholder-page">
+          <div class="placeholder-card">
+            <div class="placeholder-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z"/></svg></div>
+            <h2>SDAHC Playbook</h2>
+            <p>The reference playbook for process, scripts and standards — codifying how SDAHC runs advisory and brokerage engagements.</p>
+            <span class="placeholder-tag">Coming in a later phase</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ SETTINGS (placeholder) ============== -->
+      <section class="view" id="view-settings">
+        <div class="placeholder-page">
+          <div class="placeholder-card">
+            <div class="placeholder-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+            <h2>Settings</h2>
+            <p>Targets, stage probabilities, print inventory and campaign cost inputs — the dashboard-owned figures that layer on top of Notion.</p>
+            <span class="placeholder-tag">Coming in a later phase</span>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ============================= DEAL DRAWER =============================== -->
+<div class="drawer-overlay" id="drawer-overlay"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <button class="drawer-close" id="drawer-close" aria-label="Close">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="drawer-stage-chip" id="drawer-stage-chip"></div>
+    <h2 id="drawer-name"></h2>
+    <div class="drawer-entity" id="drawer-entity"></div>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
