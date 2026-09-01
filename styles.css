@@ -1053,8 +1053,22 @@ thead th.num-head { text-align: right; }
 .engine-status.current { color: var(--green); background: #E5F6EE; }
 .engine-status.emerging { color: var(--gold); background: #FCF0D3; }
 .engine-label { font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 12px; line-height: 1.3; }
-.engine-summary { font-size: 12px; color: var(--ink-mute); line-height: 1.55; margin-top: 8px; max-height: 0; overflow: hidden; transition: max-height 0.25s ease, margin-top 0.25s ease; }
-.engine-card.expanded .engine-summary { max-height: 140px; margin-top: 8px; }
+.engine-teaser { font-size: 12px; color: var(--ink-mute); line-height: 1.5; margin-top: 6px; }
+
+.engine-subchip {
+  display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; color: var(--purple);
+  background: #F1ECFB; border-radius: 7px; padding: 5px 8px; margin-top: 10px;
+}
+.engine-subchip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); flex-shrink: 0; }
+.engine-substatus { margin-left: auto; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gold); }
+
+.engine-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.28s ease; }
+.engine-card.expanded .engine-body-wrap { grid-template-rows: 1fr; }
+.engine-body-inner { overflow: hidden; }
+.engine-body { padding-top: 12px; margin-top: 10px; border-top: 1px solid var(--panel-border-soft); }
+.engine-body p { font-size: 12px; color: var(--ink-soft); line-height: 1.6; margin: 0; }
+.engine-body p.engine-subbody { margin-top: 10px; color: var(--ink-mute); }
+.engine-body p.engine-subbody strong { color: var(--purple); font-weight: 700; }
 
 .value-loop { display: flex; flex-wrap: wrap; align-items: center; gap: 0; padding: 22px 26px 26px; }
 .value-loop-node {
@@ -1075,6 +1089,31 @@ thead th.num-head { text-align: right; }
 }
 .team-name { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--ink); }
 .team-role { font-size: 11.5px; color: var(--ink-mute); line-height: 1.5; margin-top: 8px; }
+
+/* Explore the Manual — single-column accordion, distinct from the shorter
+   .category-card grid used elsewhere (Market Intelligence), because each
+   entry here holds several sub-sections of prose rather than one line. */
+.manual-accordion { display: flex; flex-direction: column; gap: 10px; }
+.manual-card {
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px 18px;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.manual-card:hover { box-shadow: var(--shadow-sm); border-color: var(--panel-border-soft); }
+.manual-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; cursor: pointer; }
+.manual-card-label { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--ink); }
+.manual-card-teaser { font-size: 12px; color: var(--ink-mute); margin-top: 4px; line-height: 1.5; }
+.manual-card-chevron { color: var(--ink-faint); flex-shrink: 0; margin-top: 3px; transition: transform 0.2s ease; }
+.manual-card.expanded .manual-card-chevron { transform: rotate(180deg); }
+
+.manual-card-body-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.3s ease; }
+.manual-card.expanded .manual-card-body-wrap { grid-template-rows: 1fr; }
+.manual-card-body-inner { overflow: hidden; }
+.manual-card-body {
+  padding-top: 16px; margin-top: 14px; border-top: 1px solid var(--panel-border-soft);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.manual-subsection-heading { font-size: 11px; font-weight: 700; letter-spacing: 0.02em; color: var(--blue); margin-bottom: 4px; }
+.manual-subsection-text { font-size: 13px; color: var(--ink-soft); line-height: 1.62; }
 
 /* -------------------------------- SETTINGS ----------------------------------- */
 

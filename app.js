@@ -1496,15 +1496,20 @@ function renderPlaybookPage() {
     </div>
 
     <div class="panel section-gap">
-      <div class="panel-head"><div><h3 class="panel-title">Explore the Manual</h3><div class="panel-sub">Click a category for a short summary</div></div></div>
-      <div class="chart-body" style="padding:8px 20px 22px;"><div class="category-grid" id="manual-category-grid"></div></div>
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Explore the Manual</h3>
+          <div class="panel-sub">Click a category to expand it · condensed from the SDAHC Operating Manual, see Assumptions</div>
+        </div>
+      </div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="manual-accordion" id="manual-accordion"></div></div>
     </div>
   `;
 
   renderEngines();
   renderValueLoop();
   renderTeam();
-  renderManualCategories();
+  renderManualAccordion();
 }
 
 function renderEngines() {
@@ -1516,7 +1521,21 @@ function renderEngines() {
         <span class="engine-status ${e.status.toLowerCase()}">${e.status}</span>
       </div>
       <div class="engine-label">${e.label}</div>
-      <div class="engine-summary">${e.summary}</div>
+      <div class="engine-teaser">${e.teaser}</div>
+      ${e.subEngine ? `
+        <div class="engine-subchip">
+          <span class="engine-subchip-dot"></span>
+          Includes: ${e.subEngine.label} <span class="engine-substatus">${e.subEngine.status}</span>
+        </div>
+      ` : ''}
+      <div class="engine-body-wrap">
+        <div class="engine-body-inner">
+          <div class="engine-body">
+            <p>${e.body}</p>
+            ${e.subEngine ? `<p class="engine-subbody"><strong>${e.subEngine.label} (${e.subEngine.status}):</strong> ${e.subEngine.body}</p>` : ''}
+          </div>
+        </div>
+      </div>
     </div>
   `).join('');
   grid.querySelectorAll('.engine-card').forEach(card => card.addEventListener('click', () => card.classList.toggle('expanded')));
@@ -1539,18 +1558,34 @@ function renderTeam() {
   `).join('');
 }
 
-function renderManualCategories() {
-  const grid = document.getElementById('manual-category-grid');
-  grid.innerHTML = PLAYBOOK_MANUAL_CATEGORIES.map(c => `
-    <div class="category-card" data-key="${c.key}">
-      <div class="category-card-head">
-        <div class="category-card-label">${c.label}</div>
-        <svg class="category-card-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+function renderManualAccordion() {
+  const wrap = document.getElementById('manual-accordion');
+  wrap.innerHTML = PLAYBOOK_MANUAL_CATEGORIES.map(c => `
+    <div class="manual-card" data-key="${c.key}">
+      <div class="manual-card-head">
+        <div>
+          <div class="manual-card-label">${c.label}</div>
+          <div class="manual-card-teaser">${c.teaser}</div>
+        </div>
+        <svg class="manual-card-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
       </div>
-      <div class="category-card-summary">${c.summary}</div>
+      <div class="manual-card-body-wrap">
+        <div class="manual-card-body-inner">
+          <div class="manual-card-body">
+            ${c.sections.map(s => `
+              <div class="manual-subsection">
+                <div class="manual-subsection-heading">${s.heading}</div>
+                <div class="manual-subsection-text">${s.text}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
     </div>
   `).join('');
-  grid.querySelectorAll('.category-card').forEach(card => card.addEventListener('click', () => card.classList.toggle('expanded')));
+  wrap.querySelectorAll('.manual-card').forEach(card => {
+    card.querySelector('.manual-card-head').addEventListener('click', () => card.classList.toggle('expanded'));
+  });
 }
 
 /* ============================================================================

@@ -891,41 +891,177 @@ const MARKET_INTEL_SIGNALS = [
 ];
 
 /* --------------------------------- PLAYBOOK -------------------------------- */
+/* Distilled from the SDAHC Capability & Operating Manual (v1.0, 26 Aug 2026)
+   and the Identity & Direction Briefing (v1.0, 27 Aug 2026) — internal source
+   documents, not shipped with this app (see 00_context/, gitignored). This is
+   condensed reference copy, not a reproduction — see the Assumptions Register
+   for the "verify against source" note. */
 
-const PLAYBOOK_WHAT_WE_ARE = "SDA Home Choices is a specialist SDA transaction and advisory business. Our core engine is successful transactions — brokerage and divestment mandates that convert relationships into settled outcomes. That engine is supported by paid advisory work, market intelligence, investor relationships, and the systems, data and AI that make the whole operation legible and fast.";
+const PLAYBOOK_WHAT_WE_ARE = "SDA Home Choices is a specialist Specialist Disability Accommodation (SDA) transaction and commercial advisory business. Its core economic engine is successful SDA real estate transactions — property and portfolio sales to investors — supported by paid sell-side preparation, SDA-specific commercial analysis, investor relationships, market intelligence, and an increasingly systematised operating platform. One market, several disciplines applied to it: functionally, pieces of the work resemble real estate capital markets, transaction advisory, and — in a real but still-maturing way — M&A-style and special-situations work.";
 
 const PLAYBOOK_ENGINES = [
-  { key: 'deals-capital-markets', code: 'A', label: 'Deals & Capital Markets', status: 'Current', summary: 'Brokerage and divestment mandates — originating, marketing and closing SDA asset and portfolio sales for vendors and investors.' },
-  { key: 'transaction-advisory', code: 'B', label: 'Transaction Advisory', status: 'Current', summary: 'Paid due-diligence and advisory engagements — structuring, feasibility and transaction-readiness work ahead of a sale or acquisition.' },
-  { key: 'special-situations', code: 'C', label: 'Special Situations', status: 'Emerging', summary: 'Complex or distressed situations — restructures, provider exits and non-standard transaction structures requiring bespoke handling.' },
-  { key: 'operating-platform', code: 'D', label: 'Operating Platform — Systems, Data & AI', status: 'Emerging', summary: 'The internal systems, data pipelines and AI tooling — like this dashboard — that let a small team operate with institutional-grade rigour.' },
+  {
+    key: 'deals-capital-markets', code: 'A', label: 'Deals & Capital Markets', status: 'Current',
+    teaser: 'The commercial core — everything else in the business exists to make this engine run better.',
+    body: 'Originate → qualify → analyse → prepare → position → structure → negotiate → transact. Relationship-led origination — Steve\'s network — remains the proven channel. A second, marketing-led channel (LinkedIn, website, events, outbound) is now being stood up under Ali, from a standing start. Both feed the same qualification bar: the channel changes where a prospect is found, not who decides.',
+  },
+  {
+    key: 'transaction-advisory', code: 'B', label: 'Transaction Advisory', status: 'Current',
+    teaser: 'Structurally central — the filter and preparation layer sitting in front of Engine A.',
+    body: 'Vendor due diligence, transaction-readiness assessment and sale preparation — paid work, and a deliberate filter: it protects senior time, tests the commercial story before a buyer does, and is earned regardless of whether a transaction later proceeds.',
+    subEngine: {
+      label: 'Management Rights / M&A-style', status: 'Emerging',
+      body: 'Not every engagement is really about a freehold. Where the asset is a management book — recurring fees, contracts, staff and systems rather than land — the question becomes what sustainable value the platform creates for a buyer, and what must transfer intact for that value to survive. Real, evidenced work exists here, including a strategic introduction that led to a completed provider combination — but the methodology is still being institutionalised, not yet a repeatable practice. See the Management Rights / M&A-style Work category below.',
+    },
+  },
+  {
+    key: 'special-situations', code: 'C', label: 'Special Situations', status: 'Emerging',
+    teaser: 'Probably the least-named, most differentiating part of SDAHC\'s work.',
+    body: 'Material vacancy and arrears, a failing or exiting provider, a concerned lender, debt approaching realisable value — several interacting at once, on a compressed timeline. This is coordination, triage, sequencing and disclosure — never a receiver, administrator, liquidator or insolvency-practitioner role unless someone else legally holds that appointment.',
+  },
+  {
+    key: 'operating-platform', code: 'D', label: 'Operating Platform — Systems, Data & AI', status: 'Emerging',
+    teaser: 'What makes the other three repeatable — not IT support bolted on the side.',
+    body: 'The CRM\'s entity model, the Notion/SharePoint truth-layer split, the automation behind task creation, and AI-assisted workflows that draft, extract and summarise — always human-reviewed, never autonomous commercial authority. This is what turns "Steve knows how to do this" into "the business knows how to do this."',
+  },
 ];
 
 const VALUE_LOOP = [
-  'Relationship / Intelligence', 'Opportunity', 'Qualification', 'Advisory', 'Transaction Ready',
-  'Investor Campaign', 'Negotiation', 'Contract', 'Settlement', 'Revenue', 'New Market Intelligence',
+  'Relationship / Intelligence', 'Opportunity', 'Qualification', 'Paid Advisory / DD', 'Transaction Ready',
+  'Investor Campaign / Conjunction / Referral', 'Negotiation', 'Contract', 'Settlement', 'Revenue', 'New Market Intelligence',
 ];
 
 const TEAM = [
-  { name: 'Steve', role: 'Relationships, commercial judgement, qualification, pricing, negotiation.' },
-  { name: 'Ramiro', role: 'Systems, data, analysis, AI, market intelligence, deal enablement.' },
-  { name: 'Ali', role: 'Business operations, CRM hygiene, follow-up, marketing, outbound origination.' },
-  { name: 'Loretta', role: 'Finance, invoicing, accounts, revenue admin.' },
+  { name: 'Steve', role: 'Managing Director. Owns client and investor relationships, market judgement, negotiation, and listing go/no-go — the calls that carry real commercial weight.' },
+  { name: 'Ramiro', role: 'BDM / Systems Lead. Owns the CRM, data architecture and AI-workflow layer, and supports commercial and market analysis — the engine that decides how far the other three can scale.' },
+  { name: 'Ali', role: 'EA, Business Operations & Marketing. Runs CRM hygiene, information capture and follow-up, and now also owns SDAHC\'s outbound marketing and brand presence, built from a standing start.' },
+  { name: 'Loretta', role: 'Finance / Accounts. Runs the financial administration behind every engagement and settled transaction — invoicing, payments, accounts.' },
 ];
 
+/* Each category: a one-line teaser (shown collapsed) plus 3-4 sub-sections of
+   condensed prose. Selective depth, not reproduction — see the manual chapter
+   noted in each comment for the full source. */
 const PLAYBOOK_MANUAL_CATEGORIES = [
-  { key: 'business-model', label: 'Business Model', summary: 'How SDA Home Choices makes money across brokerage, advisory, conjunction and referral fee lines.' },
-  { key: 'transaction-value-chain', label: 'Transaction Value Chain', summary: 'The end-to-end path a deal takes from first contact through to settled revenue.' },
-  { key: 'transaction-advisory-manual', label: 'Transaction Advisory', summary: 'Scope, pricing and delivery standards for paid due-diligence and advisory engagements.' },
-  { key: 'investment-sales', label: 'Investment Sales', summary: 'Brokerage process for SDA asset and portfolio divestments, from appointment to settlement.' },
-  { key: 'management-rights', label: 'Management Rights / M&A-style Work', summary: 'Structuring and executing provider-level and management-rights style transactions.' },
-  { key: 'special-situations-manual', label: 'Special Situations', summary: 'Playbook for distressed, complex or non-standard transaction scenarios.' },
-  { key: 'origination', label: 'Origination', summary: 'How new relationships and prospects enter the pipeline — network, referral and marketing channels.' },
-  { key: 'market-intelligence-manual', label: 'Market Intelligence', summary: 'How transaction evidence, provider data and investor sentiment are gathered and applied.' },
-  { key: 'execution', label: 'Execution', summary: 'Standards for running a live mandate — marketing, buyer management, negotiation and contract.' },
-  { key: 'crm-systems', label: 'CRM & Systems', summary: 'How Notion, this dashboard and supporting tools are used together across the deal lifecycle.' },
-  { key: 'team-decision-rights', label: 'Team & Decision Rights', summary: 'Who owns which decisions — pricing, qualification, engagement terms and exceptions.' },
-  { key: 'sdahc-3dsda', label: 'SDAHC / 3DSDA', summary: 'How the two entities relate, and when a deal sits under each.' },
+  {
+    key: 'business-model', label: 'Business Model',
+    teaser: 'A funnel, not a menu — most relationships should never become a Deal.',
+    sections: [
+      { heading: 'The core engine', text: 'Relationship or market signal → potential opportunity → qualification → paid advisory/DD where needed → transaction-ready opportunity → listing, investor campaign, conjunction or referral path → offers and negotiation → contract → settlement. Completed transactions are what produce revenue; advisory, diligence and market intelligence exist to make those transactions more likely, better prepared and better priced — not as a separate business alongside them.' },
+      { heading: 'Four revenue paths', text: 'Brokerage / sale (divestment) revenue is success-based and the largest of the four, because the size of the asset drives the outcome, not just time spent. Paid advisory revenue is fee income for defined DD or readiness work, earned regardless of whether a transaction later proceeds. Agency collaboration / conjunction revenue is a fee share earned working alongside another agency or adviser. Referral revenue is earned by referring an opportunity SDAHC isn\'t best placed to run itself.' },
+      { heading: 'Why advisory is a filter, not the finish line', text: 'A vendor willing to pay for a proper commercial review has already shown a seriousness a free conversation doesn\'t. Advisory protects SDAHC\'s time and intellectual property and improves the information reaching buyers before a campaign starts — but it isn\'t intended to replace the larger economic opportunity a successful transaction creates.' },
+      { heading: 'Why Steve\'s time is the scarce resource', text: 'The model exists to keep answering one question, continuously: where is the next hour of senior judgement best spent. Qualification and the advisory filter are the two mechanisms that protect it from being spread evenly across every enquiry regardless of quality.' },
+    ],
+  },
+  {
+    key: 'transaction-value-chain', label: 'Transaction Value Chain',
+    teaser: 'One connected loop, not eight separate jobs.',
+    sections: [
+      { heading: 'The chain', text: 'Relationship / market intelligence → origination → qualification → paid advisory / commercial DD → transaction readiness → investment sales / investor engagement → negotiation → contract and execution → settlement — and back into relationship and market intelligence. A completed, or even a lost, transaction generates evidence and buyer intelligence that improves the next opportunity\'s qualification, pricing and buyer matching.' },
+      { heading: 'Why the loop matters more than any one stage', text: 'A good CRM without commercial judgement won\'t close a transaction; strong relationships without reliable information create execution risk. Value comes from how the stages connect, not from any one of them in isolation — understanding what happens immediately before and after your own task is what makes the system work.' },
+      { heading: 'Not every deal uses every stage', text: 'A standalone strategic review may stop well short of investment sales. A well-prepared listing may need little advisory work. A special situation adds provider-transition, lender or alternative-use analysis a clean transaction never touches.' },
+      { heading: 'Where SDAHC\'s role ends', text: 'Legal advice, formal independent valuation, tax advice, accounting assurance, insolvency appointments, and technical or planning advice all sit outside SDAHC\'s role even when they materially affect a transaction it\'s managing. SDAHC\'s job is to identify that a specialist input is needed and coordinate it — not to replace that specialist.' },
+    ],
+  },
+  {
+    key: 'transaction-advisory-manual', label: 'Transaction Advisory',
+    teaser: 'Testing whether the commercial story survives contact with a sophisticated buyer — before the campaign starts.',
+    sections: [
+      { heading: 'A ladder of terms, not synonyms', text: 'Transaction Advisory (the overall discipline), Transaction Readiness (is this asset fit to approach buyers?), Vendor Assistance / Sale Preparation (data room, materials, roadblock removal), and Vendor Commercial Due Diligence (testing income, occupancy, provider risk) sit on a ladder. Most engagements land in the middle two bands. Independent, bidder-facing VDD is a different, more formal undertaking and isn\'t the default description of SDAHC\'s advisory work.' },
+      { heading: 'What the work actually tests', text: 'Actual versus theoretical income, vacancy and its likely persistence, provider and management risk, market depth, and net income after real — not assumed — operating costs. The goal is surfacing the gap between vendor expectation and buyer underwriting before a campaign starts, not during it.' },
+      { heading: 'Risk sorted by what it demands', text: 'Fix before market, evidence before market, explain before market, price before market, or escalate to a specialist — legal, tax, technical, valuation or accounting. Recognising when a commercial issue has crossed into a regulated domain is as much a part of the job as the analysis itself.' },
+      { heading: 'What this is not', text: 'Not a valuation — pricing-related outputs are described as market-evidence review or pricing analysis, never "valuation," unless a qualified, independently engaged valuer has issued a formal report. Not a guarantee of transaction success, and not a substitute for independent financial, legal or technical due diligence.' },
+    ],
+  },
+  {
+    key: 'investment-sales', label: 'Investment Sales',
+    teaser: 'SDAHC\'s core economic engine — selling SDA property as an investment, not a home.',
+    sections: [
+      { heading: 'The process', text: 'Understand the asset as an investment → normalise the information (actual vs. theoretical income, current vs. forecast occupancy) → identify likely buyer underwriting → establish market position → select buyer segments and sale method → release information under confidentiality → negotiate → contract and settle → capture the evidence for next time.' },
+      { heading: 'Pricing logic, and its boundary', text: 'A capitalisation rate converts a stabilised income stream into an indicative price (Value = Income ÷ Cap Rate) — that\'s a pricing mechanism, not proof the income figure or rate chosen is correct, and never a valuation unless an independently engaged valuer has delivered one. Which income figure sits in the numerator matters: a yield on enrolled income and a yield on sustainable income aren\'t comparable, even at an identical percentage.' },
+      { heading: 'Buyer segmentation', text: 'Institutional capital typically brings different return hurdles, governance requirements and diligence expectations than private capital, which itself ranges from sophisticated family offices to first-time buyers. Matching the wrong buyer type to an opportunity wastes campaign time on both sides.' },
+      { heading: 'Judging an offer', text: 'Price, conditions, funding certainty, the buyer\'s proposed diligence process, timing, deal structure and execution probability all factor in together — the highest headline price is not always the most executable offer.' },
+    ],
+  },
+  {
+    key: 'management-rights', label: 'Management Rights / M&A-style Work',
+    teaser: 'A functional analogue to M&A and corporate finance — Emerging, not an institutional identity SDAHC holds.',
+    sections: [
+      { heading: 'A different question entirely', text: 'Selling a property asks what a building produces. A management-rights or business-divestment transaction asks what sustainable earnings or strategic value an operating platform creates for a buyer, and what exactly must transfer intact for that value to survive — because the value can sit in recurring fees, contracts, staff and systems rather than land.' },
+      { heading: 'What\'s genuinely Current vs. Emerging', text: 'Distinguishing freehold value from operating value early in an engagement is Current. The deeper advisory that follows it — management-rights commercial review, strategic buyer mapping, confidential sell-side preparation — is Emerging: real engagements exist, but the methodology is still being institutionalised, not yet repeatable the way investment sales is.' },
+      { heading: 'One verified, narrow proof point', text: 'SDAHC has facilitated a strategic introduction between two SDA providers that subsequently completed as an equity-based combination — genuine evidence the relationship network can create transactions beyond freehold property sales. That\'s an origination contribution, not the same thing as a full, repeatable M&A execution mandate, and the two are kept visibly distinct.' },
+      { heading: 'The guardrails that matter most here', text: 'EBITDA is not cash and not property NOI. Reported earnings are rarely maintainable earnings once a buyer adjusts for founder costs and one-off items. Contract transferability is critical, not incidental — a management book with weak assignment protection may be worth far less than its current revenue implies. And SDAHC is never described as an investment bank or M&A adviser — only as using concepts commonly found in corporate finance and sell-side M&A.' },
+    ],
+  },
+  {
+    key: 'special-situations-manual', label: 'Special Situations',
+    teaser: 'Strategic advisory under time pressure — coordination and triage, never a formal insolvency role.',
+    sections: [
+      { heading: 'Strategic advisory under normal conditions, first', text: 'Before urgency enters the picture, SDAHC compares whether an asset should stay as-is, be stabilised, sold now, grouped with others, separated, moved to alternative use, or need further analysis before capital is committed — a genuine standalone service, not always a precursor to a sale mandate.' },
+      { heading: 'What actually makes it a special situation', text: 'Material vacancy and arrears, SDA income that\'s stopped or gone uncertain, a failing or exiting provider, a concerned lender, debt approaching or exceeding realisable value, or participants needing continuity through a change of ownership — often several of these interacting at once, on a compressed timeline.' },
+      { heading: 'How SDAHC works it', text: 'Distressed portfolio triage sorts assets into tranches — saleable now, stabilise then sell, investigate a legal or planning issue, or alternative use / non-core exit. Buyer risk translation turns ambiguity — what\'s commercial, legal, temporary or structural — into something a buyer can actually underwrite and price.' },
+      { heading: 'The boundary that matters most', text: 'SDAHC coordinates the real-estate and transaction response around distress, arrears and provider failure. It does not act as receiver, administrator, liquidator or insolvency practitioner, and none of those terms describe SDAHC\'s role — unless that formal appointment is legally held by someone else and evidenced.' },
+    ],
+  },
+  {
+    key: 'origination', label: 'Origination',
+    teaser: 'A transaction rarely starts with a listing — it starts with a signal.',
+    sections: [
+      { heading: 'Where signals come from', text: 'An owner finding a portfolio hard to manage, a provider consolidating, a lender uneasy about an asset, an investor\'s return hurdle changing. Origination is noticing these signals and deciding whether they\'re worth pursuing; investor coverage is knowing the right buyers well enough to match an opportunity to them, rather than broadcasting it to everyone in the CRM.' },
+      { heading: 'Two channels now, not one', text: 'Relationship-led origination — Steve\'s network — remains the proven channel. A second, marketing-led channel (LinkedIn, website, events, outbound) is being stood up under Ali from a standing start — no prior public brand presence existed before it. Both feed the same qualification bar: the channel changes where a prospect is found, not who decides. Ali generates and does first-pass screening; Steve still qualifies, prices and negotiates.' },
+      { heading: 'Qualification is the gate', text: 'A genuine decision-maker, a real commercial problem, a credible asset, a realistic pathway to transaction, and enough economic value to justify SDAHC\'s time. Until that\'s confirmed, it stays a relationship or a contact in the CRM — not yet a Deal, which would otherwise inflate the pipeline and make it a less useful decision tool.' },
+      { heading: 'Controlled release, not a mailing list', text: 'Teaser → signed NDA → Information Memorandum and controlled data-room access → direct follow-up by call or meeting → qualifying genuine interest. Sensitive IM or due-diligence material is not released before a signed NDA unless Steve personally approves an exception.' },
+    ],
+  },
+  {
+    key: 'market-intelligence-manual', label: 'Market Intelligence',
+    teaser: 'Operating infrastructure, not a publishing exercise — it sharpens origination, advisory and negotiation.',
+    sections: [
+      { heading: 'The valuation boundary — the single most important rule here', text: 'Market-evidence review, pricing analysis, yield analysis and underwriting support are genuinely valuable commercial work — but none of it is a formal valuation unless a qualified, independently engaged valuer has delivered one under their own professional scope.' },
+      { heading: 'Income has layers, and blending them causes disputes', text: 'Enrolled / theoretical income is a ceiling, not a cash flow. Actual / collected income is what\'s genuinely been received. Sustainable / underwritten income — after vacancy and provider risk are accounted for — is usually the figure that actually drives price. A vendor expecting a price based on theoretical income is routinely disappointed by an offer built on sustainable income; evidence is how that gap gets explained, not just asserted.' },
+      { heading: 'Evidence is classified before it\'s reused', text: 'Public, Internal, Permission Required, or Do Not Publish. Off-market evidence — an off-market sale price, buyer feedback shared in confidence — is treated as at least Internal until its status is actually confirmed.' },
+      { heading: 'The SDA Report and the quarterly cycle', text: 'NDIS releases new quarterly data → it\'s imported and indicators recalculated → Steve adds market interpretation and transaction evidence → outputs feed dashboards and client conversations → responses feed back into the CRM. Buyer underwriting — what a sophisticated buyer actually accepts or rejects on cap rate and vacancy — is treated as a first-class source of evidence, often more revealing than an asking price.' },
+    ],
+  },
+  {
+    key: 'execution', label: 'Execution',
+    teaser: 'The practical playbook for a qualified opportunity actually moving through the market.',
+    sections: [
+      { heading: 'The sequence', text: 'Qualified Deal → sale preparation → target-buyer map → teaser → NDA → IM and controlled data-room access → buyer Q&A → offers → negotiation → contract → settlement → CRM close-out. Not every transaction uses every stage at the same intensity, but the sequence and its decision gates hold across the book.' },
+      { heading: 'The confidentiality gate', text: 'Sensitive IM or due-diligence information is not released before NDA execution, unless Steve personally approves an exception — this is current SOP, treated as a hard gate by default, not a suggestion.' },
+      { heading: 'Judging an offer is more than the headline number', text: 'What\'s preventing an offer from firming up, whether the real gap is price, structure or missing information, and who owns the next action. Negotiation authority sits with Steve; Ramiro and Ali support with analysis, comparison and coordination — not commitment.' },
+      { heading: 'Close-out feeds the next deal', text: 'A settled Deal is closed in the CRM, not deleted — buyer and vendor records are updated with what was actually learned. Where a deal was lost rather than settled, the reason (pricing gap, buyer objection, funding failure) is recorded deliberately, because it\'s exactly the signal that improves the next buyer match.' },
+    ],
+  },
+  {
+    key: 'crm-systems', label: 'CRM & Systems',
+    teaser: 'Notion is the operational truth layer. SharePoint is the document truth layer. They stay separate, on purpose.',
+    sections: [
+      { heading: 'Two sources of truth, not one', text: 'Notion holds current commercial activity — deals, relationships, status, next actions — and is not, and isn\'t meant to be, a complete historical transaction ledger. SharePoint is the controlled document repository and data room. A Deal record should point to its SharePoint folder rather than try to duplicate it.' },
+      { heading: 'What the CRM is actually for', text: 'It should help answer five recurring questions: is this a real deal, is this contact or organisation credible, what\'s the next action and who owns it, what\'s the economic potential, and where should Steve or Ramiro spend time. A sparse record that clearly answers all five is doing its job better than a full one that answers none.' },
+      { heading: 'The schema, briefly', text: 'Deals are the strategic layer, Tasks the action layer, Contacts the individuals, the organisation layer (Groups) the entities, Properties the assets. Deal Type is a multi-select field, so one Deal can legitimately carry more than one commercial pathway at once — an engagement that starts as paid advisory and converts to brokerage doesn\'t need a second record.' },
+      { heading: 'AI as leverage, not authority', text: 'Summarising a call, extracting proposed CRM updates, and drafting a first-pass information request are already part of how the team works. Pricing conclusions, formal market claims, client advice, confidential release and negotiation strategy are never AI\'s call to make — trusted source data in, a defined and traceable AI transformation, human review scaled to risk, then an approved action.' },
+    ],
+  },
+  {
+    key: 'team-decision-rights', label: 'Team & Decision Rights',
+    teaser: 'A small, deliberately non-hierarchical team — but every engine still needs someone who owns it.',
+    sections: [
+      { heading: 'Who owns what', text: 'Steve owns client and investor relationships, market judgement, negotiation, and listing go/no-go. Ramiro owns the CRM, data architecture, AI workflows and process design, and supports commercial and market analysis. Ali runs information capture, CRM hygiene and follow-up, and now also owns SDAHC\'s outbound marketing and brand presence, built from a standing start. Loretta runs invoicing, payments and accounts.' },
+      { heading: 'What always escalates to Steve', text: 'Anything touching price, legal position, confidentiality release, counterparty selection, client advice, strategic direction, or a possible SDAHC / 3DSDA overlap. The underlying discipline is to escalate a decision or a risk rather than resolve it by assumption — a clearly labelled unknown is more useful than a confident guess.' },
+      { heading: 'What should never land on Steve\'s desk', text: 'Chasing outstanding documents, basic CRM data entry, scheduling, organising an already-approved data room, or a first-pass summary for his own review. The test is whether it requires his judgement, not whether it\'s easy.' },
+      { heading: 'Marketing content has one extra rule', text: 'No external-facing brand content — a LinkedIn post, website copy, an outbound message — goes out without being checked against the approved wording rules first. It\'s a genuinely new function with no established approval workflow yet, so every piece currently defaults to Steve\'s review before it publishes.' },
+    ],
+  },
+  {
+    key: 'sdahc-3dsda', label: 'SDAHC / 3DSDA',
+    teaser: 'Separate legal entities, separate duties — the overlap is real, and so is the conflict risk.',
+    sections: [
+      { heading: 'Not "adviser vs. provider"', text: 'SDAHC is itself a currently registered NDIS SDA provider, so that old framing is out of date. The real boundary is separate legal entity, primary purpose, client duty, governance, assets and decision authority.' },
+      { heading: 'Two different kinds of organisation', text: 'SDAHC is a specialist transaction and advisory business earning advisory, brokerage, conjunction and referral revenue. 3DSDA Holdings is a public company limited by guarantee and registered charity, oriented toward acquiring or supporting underperforming SDA assets — a genuinely different purpose, with its own board and a director-recusal rule for anyone with a material personal interest in a matter before it.' },
+      { heading: 'Why the overlap is real risk, not just opportunity', text: 'SDAHC regularly encounters assets that might suit 3DSDA\'s mission better than a standard buyer pool — but SDAHC\'s vendor advice must never bend toward 3DSDA\'s acquisition interest, and confidential vendor information is never shared with 3DSDA simply because people or relationships overlap.' },
+      { heading: 'The safe default, until a formal protocol exists', text: 'A written related-party and opportunity-allocation protocol isn\'t documented yet. Until it is, any plausible SDAHC / 3DSDA overlap is treated as an escalation to Steve — never a decision made informally.' },
+    ],
+  },
 ];
 
 /* ---------------------------- ASSUMPTIONS REGISTER ------------------------- */
@@ -1052,5 +1188,12 @@ const ASSUMPTIONS = [
     usedIn: 'Settings → Business; Overview, Revenue (every "YTD" figure)',
     category: 'Dashboard-owned',
     why: 'Changes when "YTD" starts counting (defaults to January = calendar year, matching every figure verified in this prototype). Revenue Over Time\'s Jan–Dec chart is unaffected — it is always calendar-year for readability.',
+  },
+  {
+    id: 'playbook-source-condensation',
+    label: 'SDAHC Playbook copy — distilled from the Operating Manual',
+    usedIn: 'SDAHC Playbook (all sections)',
+    category: 'Definitional',
+    why: 'Distilled from the SDAHC Capability & Operating Manual and the Identity & Direction Briefing (internal source documents, not shipped with this app) — condensed to short reference sub-sections, not a reproduction. Verify against source before treating any sentence here as exact wording, a commitment, or a number to quote externally.',
   },
 ];
