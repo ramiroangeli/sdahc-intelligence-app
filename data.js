@@ -102,6 +102,16 @@ const DEALS = [
     lostReason: null, nextAction: 'Finalise settlement statement with vendor solicitor', daysStale: 4,
     organisations: ['Socia'], properties: ['12 Bellbird Cres, Logan QLD'],
     createdDate: '2026-03-10', closeDate: null,
+    progressPct: 88, health: 'On track',
+    deliverables: [
+      { name: 'Contract Execution', acceptanceCriteria: 'Contract of sale executed by both parties', status: 'Accepted' },
+      { name: 'Settlement Statement', acceptanceCriteria: 'Settlement statement prepared and agreed with vendor solicitor', status: 'In progress' },
+      { name: 'Final Settlement Coordination', acceptanceCriteria: 'Funds cleared and title transferred', status: 'Not started' },
+    ],
+    milestones: [
+      { name: 'Exchange Fee (10%)', dueDate: '2026-07-20', amount: 8000, status: 'Paid', unlockCondition: 'Contract exchanged' },
+      { name: 'Settlement Commission (90%)', dueDate: '2026-09-05', amount: 72000, status: 'Locked', unlockCondition: 'Settlement completes and funds clear to trust account' },
+    ],
   },
   {
     id: 'D-02', name: 'Paramount Disability Homes', stage: 'A4', outcome: 'In Progress',
@@ -111,6 +121,17 @@ const DEALS = [
     lostReason: null, nextAction: 'Deliver draft due-diligence report to investment committee', daysStale: 9,
     organisations: ['Paramount Disability Homes Pty Ltd'], properties: ['Portfolio — 6 SDA dwellings, Ipswich'],
     createdDate: '2026-02-01', closeDate: null,
+    progressPct: 55, health: 'On track',
+    deliverables: [
+      { name: 'Data Room Review', acceptanceCriteria: 'All vendor-supplied financial and occupancy data reviewed', status: 'Delivered' },
+      { name: 'Income & Occupancy Analysis', acceptanceCriteria: 'Actual vs theoretical income and occupancy normalised', status: 'Delivered' },
+      { name: 'Draft DD Report', acceptanceCriteria: 'Draft due-diligence report drafted for client review', status: 'In progress' },
+      { name: 'Investment Committee Sign-off', acceptanceCriteria: 'Report accepted by client investment committee', status: 'Not started' },
+    ],
+    milestones: [
+      { name: 'Engagement Retainer (50%)', dueDate: '2026-02-15', amount: 32500, status: 'Paid', unlockCondition: 'Engagement letter signed' },
+      { name: 'DD Completion Payment (50%)', dueDate: '2026-09-20', amount: 32500, status: 'Locked', unlockCondition: 'Draft DD report accepted by investment committee' },
+    ],
   },
   {
     id: 'D-03', name: 'Evergreen Built', stage: 'B3', outcome: 'In Progress',
@@ -120,6 +141,16 @@ const DEALS = [
     lostReason: null, nextAction: 'Finalise marketing collateral ahead of buyer outreach', daysStale: 15,
     organisations: ['Evergreen Built Pty Ltd'], properties: ['4 dwellings, Caboolture QLD'],
     createdDate: '2026-05-01', closeDate: null,
+    progressPct: 30, health: 'At risk',
+    deliverables: [
+      { name: 'Data Room Setup', acceptanceCriteria: 'Data room structured and populated with vendor documents', status: 'Delivered' },
+      { name: 'Marketing Collateral', acceptanceCriteria: 'Teaser, IM and campaign collateral finalised', status: 'In progress' },
+      { name: 'Buyer Target List', acceptanceCriteria: 'Target buyer segments identified and prioritised', status: 'Not started' },
+    ],
+    milestones: [
+      { name: 'Conjunction Fee (on buyer engagement)', dueDate: '2026-09-08', amount: 20000, status: 'Locked', unlockCondition: 'Conjunction agent engages a qualified buyer' },
+      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-11-15', amount: 112750, status: 'Locked', unlockCondition: 'Settlement completes' },
+    ],
   },
   {
     id: 'D-04', name: 'LVP Logan', stage: 'B6', outcome: 'In Progress',
@@ -165,6 +196,20 @@ const DEALS = [
     lostReason: null, nextAction: 'Awaiting client go-ahead to proceed to brokerage mandate', daysStale: 6,
     organisations: ['Horizon SDA Fund'], properties: ['Portfolio — 9 SDA dwellings, QLD-wide'],
     createdDate: '2026-01-20', closeDate: null,
+    progressPct: 95, health: 'On track',
+    deliverables: [
+      { name: 'Data Room Review', acceptanceCriteria: 'All vendor-supplied financial and occupancy data reviewed', status: 'Delivered' },
+      { name: 'Commercial DD Report', acceptanceCriteria: 'Final commercial due-diligence report delivered to client', status: 'Accepted' },
+      { name: 'Investment Committee Presentation', acceptanceCriteria: 'Findings presented and accepted by client investment committee', status: 'Accepted' },
+    ],
+    milestones: [
+      { name: 'Engagement Retainer (50%)', dueDate: '2026-01-25', amount: 40000, status: 'Paid', unlockCondition: 'Engagement letter signed' },
+      { name: 'DD Completion Payment (50%)', dueDate: '2026-09-10', amount: 40000, status: 'Unlocked', unlockCondition: 'Final DD report accepted by client — met, ready to invoice' },
+    ],
+    gatedBrokerage: {
+      potentialValue: 300000, commissionPctAssumed: 0.025,
+      condition: 'Client confirms go-ahead to list the 9-dwelling QLD portfolio for sale following DD sign-off',
+    },
   },
   {
     id: 'D-09', name: 'Northline Community Housing', stage: 'B7', outcome: 'In Progress',
@@ -174,6 +219,15 @@ const DEALS = [
     lostReason: null, nextAction: 'Awaiting signed contract return from buyer', daysStale: 2,
     organisations: ['Northline Community Housing Ltd'], properties: ['6 Wattle Ave, Ipswich QLD'],
     createdDate: '2026-03-25', closeDate: null,
+    progressPct: 80, health: 'On track',
+    deliverables: [
+      { name: 'Contract Preparation', acceptanceCriteria: 'Contract of sale prepared and issued to buyer', status: 'Delivered' },
+      { name: 'Buyer Signature', acceptanceCriteria: 'Signed contract returned by buyer', status: 'In progress' },
+      { name: 'Settlement Coordination', acceptanceCriteria: 'Settlement date confirmed with all parties', status: 'Not started' },
+    ],
+    milestones: [
+      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-09-25', amount: 93750, status: 'Locked', unlockCondition: 'Signed contract returned and settlement completes' },
+    ],
   },
   {
     id: 'D-10', name: 'Riverside Accessible Homes', stage: '1', outcome: 'In Progress',
@@ -192,6 +246,15 @@ const DEALS = [
     lostReason: null, nextAction: 'Follow up with shortlisted buyers post IM distribution', daysStale: 11,
     organisations: ['Bellbird Park Holdings'], properties: ['5 dwellings, Bellbird Park QLD'],
     createdDate: '2026-05-28', closeDate: null,
+    progressPct: 45, health: 'On track',
+    deliverables: [
+      { name: 'IM Distribution', acceptanceCriteria: 'Information memorandum distributed to shortlisted buyers', status: 'Delivered' },
+      { name: 'Buyer Follow-up', acceptanceCriteria: 'Shortlisted buyers followed up post-distribution', status: 'In progress' },
+      { name: 'Offer Collection', acceptanceCriteria: 'Formal offers collected from interested buyers', status: 'Not started' },
+    ],
+    milestones: [
+      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-10-20', amount: 115000, status: 'Locked', unlockCondition: 'Buyer signs contract and settlement completes' },
+    ],
   },
   {
     id: 'D-12', name: 'Wattle Grove Residences', stage: '0', outcome: 'In Progress',
@@ -745,6 +808,141 @@ const Aggregates = {
   },
 };
 
+/* -------------------------------- DELIVERY -------------------------------- */
+/* Commercial delivery layer. NOT a task manager — granular subtasks, time
+   tracking and kanban stay in Notion. This models the commercial rollup only:
+   which deals have unfinished deliverables gating a billing milestone, and
+   how much revenue sits behind that work.
+
+   Engagements are DERIVED from the existing DEALS array — a deal becomes an
+   "engagement" simply by carrying a `milestones` array (added to 6 deals
+   above: the two active advisory/DD deals at A4/A5, and four brokerage deals
+   mid-campaign through to under contract). There is no parallel dataset.
+
+   Milestone amounts for a given deal always sum to exactly sdahcRevenue(deal)
+   — each milestone is a tranche of the SAME authoritative revenue figure used
+   everywhere else, not a new number. That's what keeps Locked/Unlocked
+   revenue here reconciled with Revenue and Overview by construction: this
+   page can only ever re-slice a deal's existing revenue, never add to it.
+
+   deliverables[], milestones[], progressPct, health and gatedBrokerage do not
+   exist in Notion today (see ASSUMPTIONS — 'delivery-milestone-model'). */
+
+const DELIVERABLE_STATUSES = ['Not started', 'In progress', 'Delivered', 'Accepted'];
+const MILESTONE_STATUSES = ['Locked', 'Unlocked', 'Invoiced', 'Paid'];
+const ENGAGEMENT_HEALTH = ['On track', 'At risk', 'Slipped'];
+
+/* Full calendar-quarter window containing `date` (not quarter-to-date — this
+   page needs the forward-looking end of the current quarter to test whether
+   a milestone's due date falls inside it). Distinct from periodRange('quarter')
+   above, which is deliberately quarter-to-date for the Overview waterfall. */
+function quarterBounds(date) {
+  const q = Math.floor(date.getMonth() / 3);
+  const start = new Date(date.getFullYear(), q * 3, 1);
+  const end = new Date(date.getFullYear(), q * 3 + 3, 0);
+  return { start, end };
+}
+
+Object.assign(Aggregates, {
+  engagements: () => DEALS.filter(d => Array.isArray(d.milestones) && d.milestones.length > 0),
+
+  engagementLocked: (deal) => deal.milestones.filter(m => m.status === 'Locked').reduce((s, m) => s + m.amount, 0),
+  engagementUnlocked: (deal) => deal.milestones.filter(m => m.status !== 'Locked').reduce((s, m) => s + m.amount, 0),
+
+  /* Soonest not-yet-paid milestone across all engagements — used for the
+     "Next Milestone" KPI and to seed the timeline view's default sort. */
+  nextMilestone: () => {
+    const all = [];
+    Aggregates.engagements().forEach(d => {
+      d.milestones.forEach(m => { if (m.status !== 'Paid') all.push({ deal: d, milestone: m }); });
+    });
+    all.sort((a, b) => parseDate(a.milestone.dueDate) - parseDate(b.milestone.dueDate));
+    return all[0] || null;
+  },
+
+  deliveryKpis: () => {
+    const engagements = Aggregates.engagements();
+    const { end: quarterEnd } = quarterBounds(TODAY);
+
+    let lockedRevenue = 0, unlockableThisQuarter = 0, revenueAtRisk = 0;
+    engagements.forEach(d => {
+      d.milestones.forEach(m => {
+        if (m.status !== 'Locked') return;
+        lockedRevenue += m.amount;
+        const due = parseDate(m.dueDate);
+        if (due <= quarterEnd) unlockableThisQuarter += m.amount;
+        if (d.health === 'At risk' || d.health === 'Slipped') revenueAtRisk += m.amount;
+      });
+    });
+
+    return {
+      lockedRevenue, unlockableThisQuarter, revenueAtRisk,
+      activeEngagements: engagements.length,
+      nextMilestone: Aggregates.nextMilestone(),
+    };
+  },
+
+  /* Flat list of every milestone across every engagement, for the timeline
+     view — one point per milestone, not one bar per engagement, since a
+     billing milestone is a due date, not a worked date range. */
+  deliveryTimelinePoints: () => {
+    const points = [];
+    Aggregates.engagements().forEach(d => {
+      d.milestones.forEach(m => points.push({
+        dealId: d.id, dealName: d.name, owner: d.owner, health: d.health,
+        name: m.name, dueDate: m.dueDate, amount: m.amount, status: m.status,
+      }));
+    });
+    return points.sort((a, b) => parseDate(a.dueDate) - parseDate(b.dueDate));
+  },
+
+  /* Simulated AI panel — see ASSUMPTIONS 'delivery-ai-insights'. The insight
+     selection and phrasing are hardcoded (a real model would rank these);
+     every number inside is read live from the deal/milestone data above,
+     so an insight can never assert a figure that contradicts the rest of
+     the page. */
+  deliveryInsights: () => {
+    const insights = [];
+    const engagements = Aggregates.engagements();
+
+    const atRiskDeal = engagements.find(d => d.health === 'At risk');
+    if (atRiskDeal) {
+      const soonMilestone = [...atRiskDeal.milestones].filter(m => m.status === 'Locked')
+        .sort((a, b) => parseDate(a.dueDate) - parseDate(b.dueDate))[0];
+      if (soonMilestone) {
+        const days = Math.round((parseDate(soonMilestone.dueDate) - TODAY) / 86400000);
+        insights.push({
+          key: 'risk',
+          text: `${soonMilestone.name} on ${atRiskDeal.name} is due in ${days} day${days === 1 ? '' : 's'} and its gating deliverable is still in progress — ${fmtFullDelivery(soonMilestone.amount)} at risk of slipping into next quarter.`,
+        });
+      }
+    }
+
+    const gatedDeal = engagements.find(d => d.gatedBrokerage);
+    if (gatedDeal) {
+      const remaining = gatedDeal.milestones.filter(m => m.status !== 'Paid').reduce((s, m) => s + m.amount, 0);
+      insights.push({
+        key: 'gating',
+        text: `Completing ${gatedDeal.name} unlocks ${fmtFullDelivery(remaining)} of remaining consultancy revenue and opens ~${fmtFullDelivery(gatedDeal.gatedBrokerage.potentialValue)} of potential downstream brokerage mandate*.`,
+      });
+    }
+
+    const onTrackCount = engagements.filter(d => d.health === 'On track').length;
+    const kpis = Aggregates.deliveryKpis();
+    insights.push({
+      key: 'portfolio',
+      text: `${onTrackCount} of ${engagements.length} engagements are on track. ${fmtFullDelivery(kpis.revenueAtRisk)} of locked revenue sits behind at-risk deliverables — the rest (${fmtFullDelivery(kpis.lockedRevenue - kpis.revenueAtRisk)}) is locked but on schedule.`,
+    });
+
+    return insights;
+  },
+});
+
+/* Local currency formatter — data.js has no dependency on app.js's fmtFull,
+   and Delivery's insight strings are assembled here so their numbers can
+   never drift from the aggregates above. */
+function fmtFullDelivery(n) { return '$' + Math.round(n).toLocaleString('en-AU'); }
+
 /* ------------------------------ SETTINGS --------------------------------- */
 /* Dashboard-owned data. Simulated with localStorage so the Settings page can
    edit it without touching Notion. Seeded once on first load; edits persist
@@ -1195,5 +1393,26 @@ const ASSUMPTIONS = [
     usedIn: 'SDAHC Playbook (all sections)',
     category: 'Definitional',
     why: 'Distilled from the SDAHC Capability & Operating Manual and the Identity & Direction Briefing (internal source documents, not shipped with this app) — condensed to short reference sub-sections, not a reproduction. Verify against source before treating any sentence here as exact wording, a commitment, or a number to quote externally.',
+  },
+  {
+    id: 'delivery-milestone-model',
+    label: 'Delivery deliverables, milestones, progress % and health',
+    usedIn: 'Delivery (all sections)',
+    category: 'Modelled',
+    why: 'Notion does not track deliverables, billing milestones, % complete or a health flag — Deals holds current stage and next action only. This models a plausible milestone/payment-tranche structure (advisory: 50% on engagement / 50% on completion; brokerage: commission on settlement, sometimes with an exchange-fee tranche) for 6 of the 25 deals already in this file. Every milestone amount sums exactly to that deal\'s existing sdahcRevenue() figure, so this can only re-slice real revenue, never add to it — but the tranche split, due dates, deliverable statuses, progress % and health are dashboard-owned judgement calls, not Notion facts. Production would need a new Notion structure (a Milestones or Deliverables database) or dashboard-owned modelling with finance sign-off.',
+  },
+  {
+    id: 'delivery-brokerage-gating',
+    label: 'Brokerage-gating dependency (Horizon SDA Fund → potential brokerage mandate)',
+    usedIn: 'Delivery → Engagement detail drawer, Simulated AI panel',
+    category: 'Modelled',
+    why: 'Illustrates a real commercial pattern — an advisory/DD engagement completing can open a downstream brokerage mandate on the same asset — using a real deal. But there is no second Deal record for that future mandate (the client hasn\'t confirmed it), so the $300k potential is an estimate: Horizon SDA Fund\'s existing transaction value × a typical commission rate seen elsewhere in this dataset. Not a forecast to commit to; would become a real Deal once Notion has one.',
+  },
+  {
+    id: 'delivery-ai-insights',
+    label: 'Delivery "Simulated AI" insight cards',
+    usedIn: 'Delivery → Simulated AI panel',
+    category: 'Estimated constant',
+    why: 'Not a real model call — no API is invoked. The insight selection and phrasing are hardcoded, but every figure inside each card is read live from the same milestone/deliverable data as the rest of the page, so an insight can never assert a number that contradicts the KPI strip or timeline.',
   },
 ];

@@ -36,6 +36,10 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>
           <span class="nav-label">Revenue</span>
         </button>
+        <button class="nav-item" data-view="delivery">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          <span class="nav-label">Delivery</span>
+        </button>
         <button class="nav-item" data-view="funnel">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16l-6 8v6l-4 2v-8z"/></svg>
           <span class="nav-label">Sales Funnel</span>
@@ -126,6 +130,9 @@
         </div>
       </section>
 
+      <!-- ============================ DELIVERY ============================= -->
+      <section class="view" id="view-delivery"></section>
+
       <!-- ============================ SDA REPORT =========================== -->
       <section class="view" id="view-sda-report"></section>
 
@@ -154,6 +161,20 @@
     <div class="drawer-entity" id="drawer-entity"></div>
   </div>
   <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<!-- ======================= ENGAGEMENT DETAIL DRAWER (Delivery) ============== -->
+<div class="drawer-overlay" id="engagement-drawer-overlay"></div>
+<aside class="drawer" id="engagement-drawer">
+  <div class="drawer-head">
+    <button class="drawer-close" id="engagement-drawer-close" aria-label="Close">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="drawer-stage-chip" id="engagement-drawer-stage-chip"></div>
+    <h2 id="engagement-drawer-name"></h2>
+    <div class="drawer-entity" id="engagement-drawer-entity"></div>
+  </div>
+  <div class="drawer-body" id="engagement-drawer-body"></div>
 </aside>
 
 <!-- ============================= ASSUMPTIONS MODAL =========================== -->

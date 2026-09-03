@@ -35,6 +35,13 @@ function fmtDate(d) {
   return dt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/* Same formatting as fmtDate, for callers that already hold a Date object
+   (e.g. quarterBounds()) rather than a 'YYYY-MM-DD' string. */
+function fmtDateObj(dt) {
+  if (!dt) return '—';
+  return dt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 const METRIC_LABELS = {
   count: 'Deal Count',
   transactionValue: 'Transaction Value',
@@ -51,6 +58,7 @@ const PAGE_META = {
   overview:      { eyebrow: 'Commercial Intelligence', title: 'Executive Overview' },
   pipeline:      { eyebrow: 'Deals Database',           title: 'Pipeline' },
   revenue:       { eyebrow: 'Commercial Intelligence', title: 'Revenue' },
+  delivery:      { eyebrow: 'Commercial Intelligence', title: 'Delivery' },
   funnel:        { eyebrow: 'Commercial Intelligence', title: 'Sales Funnel' },
   'sda-report':  { eyebrow: 'Growth',                   title: 'SDA Report' },
   'market-intel':{ eyebrow: 'Growth',                   title: 'Market Intelligence' },
@@ -63,7 +71,7 @@ const PAGE_META = {
    those two pages render lazily, the first time their nav item is opened —
    by then the view already has .active applied and a real size. */
 const LAZY_PAGE_RENDERERS = {
-  revenue: renderRevenuePage, funnel: renderFunnelPage,
+  revenue: renderRevenuePage, delivery: renderDeliveryPage, funnel: renderFunnelPage,
   'sda-report': renderSdaReportPage, 'market-intel': renderMarketIntelPage,
   playbook: renderPlaybookPage, settings: renderSettingsPage,
 };
@@ -753,6 +761,315 @@ function renderRevenueByStageList() {
       <div class="stage-list-value tabular">${fmtCompact(r.revenue)}</div>
     </div>
   `).join('');
+}
+
+/* ============================================================================
+   DELIVERY PAGE
+   Commercial delivery layer, NOT a task manager — deliverables/milestones are
+   a rollup of work already modelled on the deals themselves (see data.js
+   'DELIVERY' section). Answers: how much revenue is locked behind unfinished
+   work, what unlocks next, and what downstream brokerage is gated on current
+   advisory work. Granular subtasks/time tracking stay in Notion.
+   ============================================================================ */
+
+let deliveryTimelineChartInstance = null;
+
+const HEALTH_COLOR = { 'On track': 'var(--green)', 'At risk': 'var(--gold)', 'Slipped': 'var(--red)' };
+const MILESTONE_STATUS_COLOR = { Locked: '#D9534F', Unlocked: '#E0A82E', Invoiced: '#0476D9', Paid: '#2FB37A' };
+
+function renderDeliveryPage() {
+  const root = document.getElementById('view-delivery');
+  root.innerHTML = `
+    <div class="delivery-subtitle">Engagements, milestones &amp; revenue unlock</div>
+
+    <div class="kpi-row" id="delivery-kpi-row"></div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Engagements</h3>
+          <div class="panel-sub">Derived from the Advisory/DD and Brokerage deals already in the pipeline · click a card for full delivery detail</div>
+        </div>
+      </div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="engagement-grid" id="engagement-grid"></div></div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Milestone Timeline</h3>
+          <div class="panel-sub">Every billing milestone across active engagements, by due date</div>
+        </div>
+      </div>
+      <div class="chart-body">
+        <div class="chart-canvas tall" id="delivery-timeline-chart"></div>
+        <div class="timeline-legend">
+          ${Object.entries(MILESTONE_STATUS_COLOR).map(([label, color]) => `<span class="timeline-legend-item"><span class="dot" style="background:${color}"></span>${label}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Delivery Insights</h3>
+          <div class="panel-sub"><span class="ai-badge">✦ Simulated AI — prototype</span> Hardcoded insights computed live from this page's data — no model is called.</div>
+        </div>
+      </div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="ai-card-list" id="delivery-ai-list"></div></div>
+    </div>
+
+    <div class="revenue-recognition-note">
+      <strong>Unlocked ≠ paid.</strong> "Unlocked" means the gating deliverable is complete and the tranche is eligible to invoice — not that cash has been received. Whether revenue is recognised on a milestone basis or a % -of-completion basis is a finance decision, not asserted here — confirm treatment with finance before reporting externally. See the Assumptions Register.
+    </div>
+  `;
+
+  renderDeliveryKpis();
+  renderEngagementGrid();
+  renderDeliveryTimeline();
+  renderDeliveryAi();
+}
+
+function renderDeliveryKpis() {
+  const k = Aggregates.deliveryKpis();
+  const { end: qEnd } = quarterBounds(TODAY);
+  const nm = k.nextMilestone;
+  const cards = [
+    { label: 'Locked Revenue', value: fmtCompact(k.lockedRevenue), foot: 'behind unfinished deliverables' },
+    { label: 'Unlockable This Quarter', value: fmtCompact(k.unlockableThisQuarter), foot: `due by ${fmtDateObj(qEnd)}` },
+    { label: 'Revenue At Risk', value: fmtCompact(k.revenueAtRisk), foot: 'locked milestones on at-risk engagements', footClass: k.revenueAtRisk > 0 ? 'neg' : 'pos' },
+    { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'advisory + brokerage in delivery' },
+    { label: 'Next Milestone', value: nm ? fmtCompact(nm.milestone.amount) : '—', foot: nm ? `${fmtDate(nm.milestone.dueDate)} · ${nm.deal.name}` : 'none scheduled' },
+  ];
+  document.getElementById('delivery-kpi-row').innerHTML = cards.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value tabular">${c.value}</div>
+      <div class="kpi-foot ${c.footClass || ''}">${c.foot}</div>
+    </div>
+  `).join('');
+}
+
+function healthBadgeClass(health) {
+  return 'health-' + health.toLowerCase().replace(/\s+/g, '-');
+}
+
+function renderEngagementGrid() {
+  const engagements = Aggregates.engagements();
+  document.getElementById('engagement-grid').innerHTML = engagements.map(d => {
+    const stage = getStage(d.stage);
+    const meta = STAGE_GROUPS[stage.group];
+    const locked = Aggregates.engagementLocked(d);
+    const unlocked = Aggregates.engagementUnlocked(d);
+    const total = locked + unlocked;
+    const nextM = [...d.milestones].filter(m => m.status !== 'Paid').sort((a, b) => parseDate(a.dueDate) - parseDate(b.dueDate))[0];
+
+    return `
+      <div class="engagement-card" data-id="${d.id}">
+        <div class="engagement-card-top">
+          <div>
+            <div class="engagement-card-name">${d.name}</div>
+            <span class="stage-chip" style="background:${hexToRgba(meta.color, 0.12)}; color:${meta.color}"><span class="dot" style="background:${meta.color}"></span>${stage.short}</span>
+          </div>
+          <span class="health-badge ${healthBadgeClass(d.health)}">${d.health}</span>
+        </div>
+
+        <div class="engagement-progress-row">
+          <div class="engagement-progress-track"><div class="engagement-progress-fill" style="width:${d.progressPct}%"></div></div>
+          <div class="engagement-progress-pct tabular">${d.progressPct}%</div>
+        </div>
+
+        <div class="engagement-split-track">
+          <div class="engagement-split-locked" style="width:${total ? (locked / total) * 100 : 0}%"></div>
+          <div class="engagement-split-unlocked" style="width:${total ? (unlocked / total) * 100 : 0}%"></div>
+        </div>
+        <div class="engagement-split-legend">
+          <span><span class="dot locked"></span>Locked <strong class="tabular">${fmtCompact(locked)}</strong></span>
+          <span><span class="dot unlocked"></span>Unlocked <strong class="tabular">${fmtCompact(unlocked)}</strong></span>
+        </div>
+
+        <div class="engagement-next-milestone">
+          ${nextM ? `Next milestone: <strong class="tabular">${fmtCompact(nextM.amount)}</strong> · ${fmtDate(nextM.dueDate)}` : 'All milestones paid'}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.engagement-card').forEach(card => {
+    card.addEventListener('click', () => openEngagementDrawer(card.dataset.id));
+  });
+}
+
+function renderDeliveryTimeline() {
+  const el = document.getElementById('delivery-timeline-chart');
+  if (!deliveryTimelineChartInstance) deliveryTimelineChartInstance = echarts.init(el);
+  const points = Aggregates.deliveryTimelinePoints();
+  const engagementNames = Aggregates.engagements().map(d => d.name);
+  const maxAmount = Math.max(1, ...points.map(p => p.amount));
+
+  deliveryTimelineChartInstance.setOption({
+    grid: { left: 8, right: 24, top: 16, bottom: 32, containLabel: true },
+    tooltip: {
+      trigger: 'item',
+      formatter: (p) => {
+        const d = p.data.point;
+        return `<strong>${d.dealName}</strong><br/>${d.name}<br/>${fmtFull(d.amount)} · ${d.status}<br/>${fmtDate(d.dueDate)}`;
+      },
+      backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 },
+    },
+    xAxis: {
+      type: 'time',
+      axisLine: { lineStyle: { color: '#E3E8F0' } }, axisTick: { show: false },
+      axisLabel: { color: '#6B7688', fontSize: 10.5, fontFamily: 'IBM Plex Sans' },
+      splitLine: { lineStyle: { color: '#EDF0F6' } },
+    },
+    yAxis: {
+      type: 'category', data: engagementNames,
+      axisLine: { lineStyle: { color: '#E3E8F0' } }, axisTick: { show: false },
+      axisLabel: { color: '#3B4657', fontSize: 11, fontFamily: 'IBM Plex Sans', fontWeight: 600 },
+    },
+    series: [{
+      type: 'scatter',
+      markLine: {
+        symbol: 'none', silent: true,
+        label: { formatter: 'Today', color: '#0476D9', fontSize: 10, fontFamily: 'IBM Plex Sans', fontWeight: 600 },
+        lineStyle: { color: '#0476D9', type: 'dashed', width: 1.5 },
+        data: [{ xAxis: TODAY.getTime() }],
+      },
+      data: points.map(p => ({
+        value: [parseDate(p.dueDate).getTime(), p.dealName],
+        point: p,
+        symbolSize: 9 + (p.amount / maxAmount) * 22,
+        itemStyle: { color: MILESTONE_STATUS_COLOR[p.status], opacity: 0.88, borderColor: '#fff', borderWidth: 1.5 },
+      })),
+    }],
+  });
+}
+
+function renderDeliveryAi() {
+  const insights = Aggregates.deliveryInsights();
+  document.getElementById('delivery-ai-list').innerHTML = insights.map(i => `
+    <div class="ai-card">
+      <div class="ai-card-badge">✦ Simulated AI</div>
+      <div class="ai-card-text">${i.text}</div>
+    </div>
+  `).join('');
+}
+
+/* ---------------------------- ENGAGEMENT DRAWER ---------------------------- */
+/* A second, dedicated drawer (separate DOM elements, same shared CSS classes
+   as the Pipeline deal drawer) so Delivery's commercial detail — deliverables,
+   payment schedule, brokerage-gating — never has to branch inside the
+   existing openDrawer() used by the other 8 pages. */
+
+function openEngagementDrawer(id) {
+  const deal = DEALS.find(d => d.id === id);
+  if (!deal || !deal.milestones) return;
+  const stage = getStage(deal.stage);
+  const meta = STAGE_GROUPS[stage.group];
+  const locked = Aggregates.engagementLocked(deal);
+  const unlocked = Aggregates.engagementUnlocked(deal);
+
+  document.getElementById('engagement-drawer-stage-chip').innerHTML =
+    `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${stage.label}</span>`;
+  document.getElementById('engagement-drawer-name').textContent = deal.name;
+  document.getElementById('engagement-drawer-entity').textContent = `${deal.entity} · ${deal.owner}`;
+
+  const deliverablesHtml = deal.deliverables.map(dl => `
+    <div class="deliverable-row">
+      <div>
+        <div class="deliverable-name">${dl.name}</div>
+        <div class="deliverable-criteria">${dl.acceptanceCriteria}</div>
+      </div>
+      <span class="deliverable-status status-${dl.status.toLowerCase().replace(/\s+/g, '-')}">${dl.status}</span>
+    </div>
+  `).join('');
+
+  const milestonesHtml = deal.milestones.map(m => `
+    <div class="milestone-row">
+      <div class="milestone-row-top">
+        <div class="milestone-name">${m.name}</div>
+        <span class="milestone-status status-${m.status.toLowerCase()}">${m.status}</span>
+      </div>
+      <div class="milestone-meta">${fmtDate(m.dueDate)} · <span class="tabular">${fmtFull(m.amount)}</span></div>
+      <div class="milestone-condition">Unlocks when: ${m.unlockCondition}</div>
+    </div>
+  `).join('');
+
+  const gatingHtml = deal.gatedBrokerage ? `
+    <div class="drawer-section">
+      <div class="drawer-section-label">Downstream Dependency</div>
+      <div class="gating-card">
+        <div class="gating-card-text">Completing this engagement is expected to open a downstream brokerage mandate on the same asset.</div>
+        <div class="gating-card-value tabular">~${fmtFull(deal.gatedBrokerage.potentialValue)}<span class="gating-card-unit">potential brokerage revenue*</span></div>
+        <div class="gating-card-condition">${deal.gatedBrokerage.condition}</div>
+        <div class="gating-card-flag">*Estimated — no Deal record exists for this yet. See Assumptions Register.</div>
+      </div>
+    </div>
+  ` : '';
+
+  document.getElementById('engagement-drawer-body').innerHTML = `
+    <div class="drawer-metric-row">
+      <div class="drawer-metric"><div class="drawer-metric-label">Progress</div><div class="drawer-metric-value tabular">${deal.progressPct}%</div></div>
+      <div class="drawer-metric"><div class="drawer-metric-label">Health</div><div class="drawer-metric-value" style="color:${HEALTH_COLOR[deal.health]}">${deal.health}</div></div>
+      <div class="drawer-metric"><div class="drawer-metric-label">Locked Revenue</div><div class="drawer-metric-value tabular">${fmtFull(locked)}</div></div>
+      <div class="drawer-metric"><div class="drawer-metric-label">Unlocked Revenue</div><div class="drawer-metric-value tabular">${fmtFull(unlocked)}</div></div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-label">Deliverables</div>
+      <div class="deliverable-list">${deliverablesHtml}</div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-label">Payment Schedule</div>
+      <div class="milestone-list">${milestonesHtml}</div>
+    </div>
+
+    ${gatingHtml}
+
+    <div class="drawer-section">
+      <div class="drawer-section-label">Owner</div>
+      <div class="drawer-section-text">${deal.owner}</div>
+    </div>
+
+    <a class="notion-link" href="#" id="engagement-notion-link">
+      Open in Notion
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 17L17 7M17 7H9M17 7v8"/></svg>
+    </a>
+  `;
+
+  document.getElementById('engagement-notion-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    showEngagementDrawerToast('Prototype — this would deep-link to the live Notion record.');
+  });
+
+  document.getElementById('engagement-drawer').classList.add('open');
+  document.getElementById('engagement-drawer-overlay').classList.add('open');
+}
+
+function showEngagementDrawerToast(msg) {
+  let toast = document.querySelector('#engagement-drawer .drawer-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'drawer-toast';
+    document.getElementById('engagement-drawer').appendChild(toast);
+  }
+  toast.textContent = msg;
+  requestAnimationFrame(() => toast.classList.add('show'));
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toast.classList.remove('show'), 2400);
+}
+
+function closeEngagementDrawer() {
+  document.getElementById('engagement-drawer').classList.remove('open');
+  document.getElementById('engagement-drawer-overlay').classList.remove('open');
+}
+
+function initEngagementDrawer() {
+  document.getElementById('engagement-drawer-close').addEventListener('click', closeEngagementDrawer);
+  document.getElementById('engagement-drawer-overlay').addEventListener('click', closeEngagementDrawer);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeEngagementDrawer(); });
 }
 
 /* ============================================================================
@@ -1777,12 +2094,13 @@ window.addEventListener('DOMContentLoaded', () => {
   initNav();
   initSyncStatus();
   initDrawer();
+  initEngagementDrawer();
   initAssumptionsModal();
   renderOverview();
   renderPipelinePage();
 
   window.addEventListener('resize', () => {
-    [pipelineChartInstance, waterfallChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, funnelChartInstance, prospectsChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
+    [pipelineChartInstance, waterfallChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
       .forEach(c => c && c.resize());
   });
 });
