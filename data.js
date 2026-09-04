@@ -102,6 +102,18 @@ const DEALS = [
     lostReason: null, nextAction: 'Finalise settlement statement with vendor solicitor', daysStale: 4,
     organisations: ['Socia'], properties: ['12 Bellbird Cres, Logan QLD'],
     createdDate: '2026-03-10', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-03-09' },
+      { stage: '1', enteredDate: '2026-03-28' },
+      { stage: 'B1', enteredDate: '2026-04-17' },
+      { stage: 'B2', enteredDate: '2026-05-06' },
+      { stage: 'B3', enteredDate: '2026-05-25' },
+      { stage: 'B4', enteredDate: '2026-06-14' },
+      { stage: 'B5', enteredDate: '2026-07-03' },
+      { stage: 'B6', enteredDate: '2026-07-22' },
+      { stage: 'B7', enteredDate: '2026-08-11' },
+      { stage: 'B8', enteredDate: '2026-08-30' },
+    ],
     progressPct: 88, health: 'On track',
     deliverables: [
       { name: 'Contract Execution', acceptanceCriteria: 'Contract of sale executed by both parties', status: 'Accepted' },
@@ -117,10 +129,18 @@ const DEALS = [
     id: 'D-02', name: 'Paramount Disability Homes', stage: 'A4', outcome: 'In Progress',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Emma Voss',
     source: 'Referral', transactionValue: 8500000, commissionPct: 0,
-    advisoryFee: 65000, conjunctionFee: 0, referralFee: 0, probability: 0.55,
+    conjunctionFee: 0, referralFee: 0, probability: 0.55,
     lostReason: null, nextAction: 'Deliver draft due-diligence report to investment committee', daysStale: 9,
     organisations: ['Paramount Disability Homes Pty Ltd'], properties: ['Portfolio — 6 SDA dwellings, Ipswich'],
     createdDate: '2026-02-01', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-01-31' },
+      { stage: '1', enteredDate: '2026-03-14' },
+      { stage: 'A1', enteredDate: '2026-04-25' },
+      { stage: 'A2', enteredDate: '2026-06-07' },
+      { stage: 'A3', enteredDate: '2026-07-19' },
+      { stage: 'A4', enteredDate: '2026-08-30' },
+    ],
     progressPct: 55, health: 'On track',
     deliverables: [
       { name: 'Data Room Review', acceptanceCriteria: 'All vendor-supplied financial and occupancy data reviewed', status: 'Delivered' },
@@ -128,10 +148,12 @@ const DEALS = [
       { name: 'Draft DD Report', acceptanceCriteria: 'Draft due-diligence report drafted for client review', status: 'In progress' },
       { name: 'Investment Committee Sign-off', acceptanceCriteria: 'Report accepted by client investment committee', status: 'Not started' },
     ],
-    milestones: [
-      { name: 'Engagement Retainer (50%)', dueDate: '2026-02-15', amount: 32500, status: 'Paid', unlockCondition: 'Engagement letter signed' },
-      { name: 'DD Completion Payment (50%)', dueDate: '2026-09-20', amount: 32500, status: 'Locked', unlockCondition: 'Draft DD report accepted by investment committee' },
-    ],
+    /* Explicit advisory billing tranches — manually entered, mirroring the
+       Notion fields these will become (see ASSUMPTIONS 'delivery-tranche-fields').
+       Not a fixed 50/50 split: this engagement was billed 60/40. */
+    consultancyFeeTotal: 65000,
+    tranche1Amount: 39000, tranche1Status: 'Paid', tranche1Date: '2026-02-15',
+    tranche2Amount: 26000, tranche2Status: 'Locked', tranche2Date: '2026-09-20',
   },
   {
     id: 'D-03', name: 'Evergreen Built', stage: 'B3', outcome: 'In Progress',
@@ -141,6 +163,13 @@ const DEALS = [
     lostReason: null, nextAction: 'Finalise marketing collateral ahead of buyer outreach', daysStale: 15,
     organisations: ['Evergreen Built Pty Ltd'], properties: ['4 dwellings, Caboolture QLD'],
     createdDate: '2026-05-01', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-04-30' },
+      { stage: '1', enteredDate: '2026-05-31' },
+      { stage: 'B1', enteredDate: '2026-06-30' },
+      { stage: 'B2', enteredDate: '2026-07-31' },
+      { stage: 'B3', enteredDate: '2026-08-30' },
+    ],
     progressPct: 30, health: 'At risk',
     deliverables: [
       { name: 'Data Room Setup', acceptanceCriteria: 'Data room structured and populated with vendor documents', status: 'Delivered' },
@@ -160,6 +189,19 @@ const DEALS = [
     lostReason: null, nextAction: 'Review buyer counter-offer with vendor', daysStale: 3,
     organisations: ['LVP Investments'], properties: ['8 Kingfisher St, Logan QLD'],
     createdDate: '2026-04-12', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-04-12' },
+      { stage: '1', enteredDate: '2026-04-25' },
+      { stage: 'B1', enteredDate: '2026-05-08' },
+      { stage: 'B2', enteredDate: '2026-05-22' },
+      { stage: 'B3', enteredDate: '2026-06-05' },
+      { stage: 'B4', enteredDate: '2026-06-19' },
+      { stage: 'B5', enteredDate: '2026-07-03' },
+      { stage: 'B6', enteredDate: '2026-07-20' },
+      { stage: 'B4', enteredDate: '2026-08-05' },
+      { stage: 'B5', enteredDate: '2026-08-15' },
+      { stage: 'B6', enteredDate: '2026-08-28' },
+    ],
   },
   {
     id: 'D-05', name: 'Living Well Solutions', stage: 'A2', outcome: 'In Progress',
@@ -169,6 +211,12 @@ const DEALS = [
     lostReason: null, nextAction: 'Follow up on advisory proposal sent 8 days ago', daysStale: 12,
     organisations: ['Living Well Solutions'], properties: ['Portfolio under review — 3 assets'],
     createdDate: '2026-06-20', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-06-19' },
+      { stage: '1', enteredDate: '2026-07-13' },
+      { stage: 'A1', enteredDate: '2026-08-06' },
+      { stage: 'A2', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-06', name: 'Skychest', stage: 'B2', outcome: 'In Progress',
@@ -178,6 +226,12 @@ const DEALS = [
     lostReason: null, nextAction: 'Present brokerage proposal to fund board', daysStale: 20,
     organisations: ['Skychest Capital'], properties: ['Portfolio — 5 SDA assets, SE QLD'],
     createdDate: '2026-05-15', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-05-14' },
+      { stage: '1', enteredDate: '2026-06-19' },
+      { stage: 'B1', enteredDate: '2026-07-25' },
+      { stage: 'B2', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-07', name: 'Williams Landing', stage: '9', outcome: 'Won',
@@ -187,25 +241,49 @@ const DEALS = [
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Williams Landing SDA Trust'], properties: ['3 Grevillea Ct, Williams Landing VIC'],
     createdDate: '2025-11-02', closeDate: '2026-02-10',
+    stageHistory: [
+      { stage: '0', enteredDate: '2025-11-01' },
+      { stage: '1', enteredDate: '2025-11-11' },
+      { stage: 'B1', enteredDate: '2025-11-21' },
+      { stage: 'B2', enteredDate: '2025-12-01' },
+      { stage: 'B3', enteredDate: '2025-12-11' },
+      { stage: 'B4', enteredDate: '2025-12-21' },
+      { stage: 'B5', enteredDate: '2025-12-31' },
+      { stage: 'B6', enteredDate: '2026-01-10' },
+      { stage: 'B7', enteredDate: '2026-01-20' },
+      { stage: 'B8', enteredDate: '2026-01-30' },
+      { stage: '9', enteredDate: '2026-02-09' },
+    ],
   },
   {
     id: 'D-08', name: 'Horizon SDA Fund', stage: 'A5', outcome: 'In Progress',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Emma Voss',
     source: 'Existing Client', transactionValue: 12000000, commissionPct: 0,
-    advisoryFee: 80000, conjunctionFee: 0, referralFee: 0, probability: 0.70,
+    conjunctionFee: 0, referralFee: 0, probability: 0.70,
     lostReason: null, nextAction: 'Awaiting client go-ahead to proceed to brokerage mandate', daysStale: 6,
     organisations: ['Horizon SDA Fund'], properties: ['Portfolio — 9 SDA dwellings, QLD-wide'],
     createdDate: '2026-01-20', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-01-19' },
+      { stage: '1', enteredDate: '2026-02-25' },
+      { stage: 'A1', enteredDate: '2026-04-03' },
+      { stage: 'A2', enteredDate: '2026-05-11' },
+      { stage: 'A3', enteredDate: '2026-06-17' },
+      { stage: 'A4', enteredDate: '2026-07-24' },
+      { stage: 'A5', enteredDate: '2026-08-30' },
+    ],
     progressPct: 95, health: 'On track',
     deliverables: [
       { name: 'Data Room Review', acceptanceCriteria: 'All vendor-supplied financial and occupancy data reviewed', status: 'Delivered' },
       { name: 'Commercial DD Report', acceptanceCriteria: 'Final commercial due-diligence report delivered to client', status: 'Accepted' },
       { name: 'Investment Committee Presentation', acceptanceCriteria: 'Findings presented and accepted by client investment committee', status: 'Accepted' },
     ],
-    milestones: [
-      { name: 'Engagement Retainer (50%)', dueDate: '2026-01-25', amount: 40000, status: 'Paid', unlockCondition: 'Engagement letter signed' },
-      { name: 'DD Completion Payment (50%)', dueDate: '2026-09-10', amount: 40000, status: 'Unlocked', unlockCondition: 'Final DD report accepted by client — met, ready to invoice' },
-    ],
+    /* Explicit advisory billing tranches — manually entered, mirroring the
+       Notion fields these will become (see ASSUMPTIONS 'delivery-tranche-fields').
+       Billed 70/30, not a fixed split. */
+    consultancyFeeTotal: 80000,
+    tranche1Amount: 56000, tranche1Status: 'Paid', tranche1Date: '2026-01-25',
+    tranche2Amount: 24000, tranche2Status: 'Unlocked', tranche2Date: '2026-09-10',
     gatedBrokerage: {
       potentialValue: 300000, commissionPctAssumed: 0.025,
       condition: 'Client confirms go-ahead to list the 9-dwelling QLD portfolio for sale following DD sign-off',
@@ -219,6 +297,17 @@ const DEALS = [
     lostReason: null, nextAction: 'Awaiting signed contract return from buyer', daysStale: 2,
     organisations: ['Northline Community Housing Ltd'], properties: ['6 Wattle Ave, Ipswich QLD'],
     createdDate: '2026-03-25', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-03-24' },
+      { stage: '1', enteredDate: '2026-04-13' },
+      { stage: 'B1', enteredDate: '2026-05-03' },
+      { stage: 'B2', enteredDate: '2026-05-23' },
+      { stage: 'B3', enteredDate: '2026-06-12' },
+      { stage: 'B4', enteredDate: '2026-07-01' },
+      { stage: 'B5', enteredDate: '2026-07-21' },
+      { stage: 'B6', enteredDate: '2026-08-10' },
+      { stage: 'B7', enteredDate: '2026-08-30' },
+    ],
     progressPct: 80, health: 'On track',
     deliverables: [
       { name: 'Contract Preparation', acceptanceCriteria: 'Contract of sale prepared and issued to buyer', status: 'Delivered' },
@@ -237,6 +326,10 @@ const DEALS = [
     lostReason: null, nextAction: 'Qualify opportunity and confirm investor intent', daysStale: 7,
     organisations: ['Riverside Accessible Homes'], properties: ['2 dwellings, Redbank Plains QLD'],
     createdDate: '2026-08-24', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-08-23' },
+      { stage: '1', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-11', name: 'Bellbird Park SDA', stage: 'B4', outcome: 'In Progress',
@@ -246,6 +339,14 @@ const DEALS = [
     lostReason: null, nextAction: 'Follow up with shortlisted buyers post IM distribution', daysStale: 11,
     organisations: ['Bellbird Park Holdings'], properties: ['5 dwellings, Bellbird Park QLD'],
     createdDate: '2026-05-28', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-05-27' },
+      { stage: '1', enteredDate: '2026-06-15' },
+      { stage: 'B1', enteredDate: '2026-07-04' },
+      { stage: 'B2', enteredDate: '2026-07-23' },
+      { stage: 'B3', enteredDate: '2026-08-11' },
+      { stage: 'B4', enteredDate: '2026-08-30' },
+    ],
     progressPct: 45, health: 'On track',
     deliverables: [
       { name: 'IM Distribution', acceptanceCriteria: 'Information memorandum distributed to shortlisted buyers', status: 'Delivered' },
@@ -264,6 +365,9 @@ const DEALS = [
     lostReason: null, nextAction: 'Initial outreach call to gauge appetite', daysStale: 4,
     organisations: ['Wattle Grove Residences'], properties: ['Single dwelling, Wattle Grove NSW'],
     createdDate: '2026-08-27', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-08-26' },
+    ],
   },
   {
     id: 'D-13', name: 'Coomera SDA Portfolio', stage: 'B5', outcome: 'In Progress',
@@ -273,6 +377,14 @@ const DEALS = [
     lostReason: null, nextAction: 'Chase buyer finance approval status', daysStale: 8,
     organisations: ['Coomera SDA Portfolio Trust'], properties: ['Portfolio — 4 SDA assets, Coomera QLD'],
     createdDate: '2026-04-02', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-04-01' },
+      { stage: '1', enteredDate: '2026-04-26' },
+      { stage: 'B1', enteredDate: '2026-05-21' },
+      { stage: 'B2', enteredDate: '2026-06-16' },
+      { stage: 'B4', enteredDate: '2026-08-05' },
+      { stage: 'B5', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-14', name: 'Sunshine Coast Disability Housing', stage: 'A1', outcome: 'In Progress',
@@ -282,6 +394,11 @@ const DEALS = [
     lostReason: null, nextAction: 'Send information pack and engagement scope', daysStale: 6,
     organisations: ['Sunshine Coast Disability Housing Co-op'], properties: ['3 dwellings, Sippy Downs QLD'],
     createdDate: '2026-07-18', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-07-17' },
+      { stage: '1', enteredDate: '2026-08-08' },
+      { stage: 'A1', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-15', name: 'Ipswich Central SDA', stage: '9', outcome: 'Won',
@@ -291,6 +408,19 @@ const DEALS = [
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Ipswich Central SDA Holdings'], properties: ['2 dwellings, Ipswich Central QLD'],
     createdDate: '2025-09-10', closeDate: '2025-12-18',
+    stageHistory: [
+      { stage: '0', enteredDate: '2025-09-09' },
+      { stage: '1', enteredDate: '2025-09-19' },
+      { stage: 'B1', enteredDate: '2025-09-29' },
+      { stage: 'B2', enteredDate: '2025-10-09' },
+      { stage: 'B3', enteredDate: '2025-10-19' },
+      { stage: 'B4', enteredDate: '2025-10-29' },
+      { stage: 'B5', enteredDate: '2025-11-07' },
+      { stage: 'B6', enteredDate: '2025-11-17' },
+      { stage: 'B7', enteredDate: '2025-11-27' },
+      { stage: 'B8', enteredDate: '2025-12-07' },
+      { stage: '9', enteredDate: '2025-12-17' },
+    ],
   },
   {
     id: 'D-16', name: 'Meadowbrook Supported Living', stage: 'A3', outcome: 'Lost',
@@ -300,6 +430,13 @@ const DEALS = [
     lostReason: 'Investor found alternative', nextAction: 'Closed — no further action', daysStale: 0,
     organisations: ['Meadowbrook Supported Living'], properties: ['3 dwellings, Meadowbrook QLD'],
     createdDate: '2026-01-08', closeDate: '2026-03-15',
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-01-07' },
+      { stage: '1', enteredDate: '2026-01-24' },
+      { stage: 'A1', enteredDate: '2026-02-09' },
+      { stage: 'A2', enteredDate: '2026-02-26' },
+      { stage: 'A3', enteredDate: '2026-03-14' },
+    ],
   },
   {
     id: 'D-17', name: 'Caboolture SDA Development', stage: 'B3', outcome: 'Lost',
@@ -309,6 +446,13 @@ const DEALS = [
     lostReason: 'Price too high', nextAction: 'Closed — no further action', daysStale: 0,
     organisations: ['Caboolture SDA Development Co'], properties: ['Portfolio — 5 dwellings, Caboolture QLD'],
     createdDate: '2026-02-12', closeDate: '2026-04-22',
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-02-11' },
+      { stage: '1', enteredDate: '2026-02-28' },
+      { stage: 'B1', enteredDate: '2026-03-18' },
+      { stage: 'B2', enteredDate: '2026-04-04' },
+      { stage: 'B3', enteredDate: '2026-04-21' },
+    ],
   },
   {
     id: 'D-18', name: 'Redland Bay Accessible Homes', stage: 'A2', outcome: 'Paused',
@@ -318,6 +462,12 @@ const DEALS = [
     lostReason: null, nextAction: 'On hold — investor reviewing finance position', daysStale: 45,
     organisations: ['Redland Bay Accessible Homes'], properties: ['2 dwellings, Redland Bay QLD'],
     createdDate: '2026-02-14', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-02-13' },
+      { stage: '1', enteredDate: '2026-04-20' },
+      { stage: 'A1', enteredDate: '2026-06-25' },
+      { stage: 'A2', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-19', name: 'Springfield Lakes SDA', stage: 'B1', outcome: 'In Progress',
@@ -327,6 +477,11 @@ const DEALS = [
     lostReason: null, nextAction: 'Gather property information pack from vendor', daysStale: 11,
     organisations: ['Springfield Lakes SDA Group'], properties: ['3 dwellings, Springfield Lakes QLD'],
     createdDate: '2026-08-20', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-08-19' },
+      { stage: '1', enteredDate: '2026-08-25' },
+      { stage: 'B1', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-20', name: 'Toowoomba Disability Housing Trust', stage: '9', outcome: 'Won',
@@ -336,6 +491,24 @@ const DEALS = [
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Toowoomba Disability Housing Trust'], properties: ['Portfolio — 7 SDA dwellings, Toowoomba QLD'],
     createdDate: '2025-10-05', closeDate: '2026-01-22',
+    stageHistory: [
+      { stage: '0', enteredDate: '2025-10-04' },
+      { stage: '1', enteredDate: '2025-10-11' },
+      { stage: 'A1', enteredDate: '2025-10-19' },
+      { stage: 'A2', enteredDate: '2025-10-26' },
+      { stage: 'A3', enteredDate: '2025-11-02' },
+      { stage: 'A4', enteredDate: '2025-11-09' },
+      { stage: 'A5', enteredDate: '2025-11-17' },
+      { stage: 'B1', enteredDate: '2025-11-24' },
+      { stage: 'B2', enteredDate: '2025-12-01' },
+      { stage: 'B3', enteredDate: '2025-12-08' },
+      { stage: 'B4', enteredDate: '2025-12-16' },
+      { stage: 'B5', enteredDate: '2025-12-23' },
+      { stage: 'B6', enteredDate: '2025-12-30' },
+      { stage: 'B7', enteredDate: '2026-01-07' },
+      { stage: 'B8', enteredDate: '2026-01-14' },
+      { stage: '9', enteredDate: '2026-01-21' },
+    ],
   },
   {
     id: 'D-21', name: 'Gold Coast SDA Collective', stage: 'B6', outcome: 'Lost',
@@ -345,6 +518,16 @@ const DEALS = [
     lostReason: 'Vendor chose direct buyer', nextAction: 'Closed — no further action', daysStale: 0,
     organisations: ['Gold Coast SDA Collective'], properties: ['Portfolio — 6 SDA assets, Gold Coast QLD'],
     createdDate: '2026-01-05', closeDate: '2026-06-05',
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-01-04' },
+      { stage: '1', enteredDate: '2026-01-26' },
+      { stage: 'B1', enteredDate: '2026-02-16' },
+      { stage: 'B2', enteredDate: '2026-03-10' },
+      { stage: 'B3', enteredDate: '2026-03-31' },
+      { stage: 'B4', enteredDate: '2026-04-22' },
+      { stage: 'B5', enteredDate: '2026-05-14' },
+      { stage: 'B6', enteredDate: '2026-06-04' },
+    ],
   },
   {
     id: 'D-22', name: 'Logan Reserve Homes', stage: 'B8', outcome: 'In Progress',
@@ -354,6 +537,18 @@ const DEALS = [
     lostReason: null, nextAction: 'Coordinate settlement date with all parties', daysStale: 5,
     organisations: ['Logan Reserve Homes Pty Ltd'], properties: ['3 Ironbark Way, Logan Reserve QLD'],
     createdDate: '2026-05-10', closeDate: null,
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-05-09' },
+      { stage: '1', enteredDate: '2026-05-22' },
+      { stage: 'B1', enteredDate: '2026-06-03' },
+      { stage: 'B2', enteredDate: '2026-06-16' },
+      { stage: 'B3', enteredDate: '2026-06-28' },
+      { stage: 'B4', enteredDate: '2026-07-11' },
+      { stage: 'B5', enteredDate: '2026-07-23' },
+      { stage: 'B6', enteredDate: '2026-08-05' },
+      { stage: 'B7', enteredDate: '2026-08-18' },
+      { stage: 'B8', enteredDate: '2026-08-30' },
+    ],
   },
   {
     id: 'D-23', name: 'Bayview SDA Portfolio', stage: '9', outcome: 'Won',
@@ -363,6 +558,19 @@ const DEALS = [
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Bayview SDA Holdings'], properties: ['Portfolio — 4 SDA dwellings, Bayview VIC'],
     createdDate: '2025-12-20', closeDate: '2026-05-05',
+    stageHistory: [
+      { stage: '0', enteredDate: '2025-12-19' },
+      { stage: '1', enteredDate: '2026-01-02' },
+      { stage: 'B1', enteredDate: '2026-01-15' },
+      { stage: 'B2', enteredDate: '2026-01-29' },
+      { stage: 'B3', enteredDate: '2026-02-11' },
+      { stage: 'B4', enteredDate: '2026-02-25' },
+      { stage: 'B5', enteredDate: '2026-03-11' },
+      { stage: 'B6', enteredDate: '2026-03-24' },
+      { stage: 'B7', enteredDate: '2026-04-07' },
+      { stage: 'B8', enteredDate: '2026-04-20' },
+      { stage: '9', enteredDate: '2026-05-04' },
+    ],
   },
   {
     id: 'D-24', name: 'Kallangur Supported Homes', stage: '9', outcome: 'Won',
@@ -372,6 +580,24 @@ const DEALS = [
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Kallangur Supported Homes'], properties: ['Portfolio — 3 SDA dwellings, Kallangur QLD'],
     createdDate: '2026-02-18', closeDate: '2026-06-20',
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-02-17' },
+      { stage: '1', enteredDate: '2026-02-25' },
+      { stage: 'A1', enteredDate: '2026-03-05' },
+      { stage: 'A2', enteredDate: '2026-03-13' },
+      { stage: 'A3', enteredDate: '2026-03-22' },
+      { stage: 'A4', enteredDate: '2026-03-30' },
+      { stage: 'A5', enteredDate: '2026-04-07' },
+      { stage: 'B1', enteredDate: '2026-04-15' },
+      { stage: 'B2', enteredDate: '2026-04-23' },
+      { stage: 'B3', enteredDate: '2026-05-01' },
+      { stage: 'B4', enteredDate: '2026-05-09' },
+      { stage: 'B5', enteredDate: '2026-05-18' },
+      { stage: 'B6', enteredDate: '2026-05-26' },
+      { stage: 'B7', enteredDate: '2026-06-03' },
+      { stage: 'B8', enteredDate: '2026-06-11' },
+      { stage: '9', enteredDate: '2026-06-19' },
+    ],
   },
   {
     id: 'D-25', name: 'Marsden Park SDA', stage: '9', outcome: 'Won',
@@ -381,13 +607,37 @@ const DEALS = [
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Marsden Park SDA Group'], properties: ['4 dwellings, Marsden Park NSW'],
     createdDate: '2026-03-30', closeDate: '2026-08-15',
+    stageHistory: [
+      { stage: '0', enteredDate: '2026-03-29' },
+      { stage: '1', enteredDate: '2026-04-12' },
+      { stage: 'B1', enteredDate: '2026-04-26' },
+      { stage: 'B2', enteredDate: '2026-05-09' },
+      { stage: 'B3', enteredDate: '2026-05-23' },
+      { stage: 'B4', enteredDate: '2026-06-06' },
+      { stage: 'B5', enteredDate: '2026-06-20' },
+      { stage: 'B6', enteredDate: '2026-07-04' },
+      { stage: 'B7', enteredDate: '2026-07-17' },
+      { stage: 'B8', enteredDate: '2026-07-31' },
+      { stage: '9', enteredDate: '2026-08-14' },
+    ],
   },
 ];
 
 /* --------------------------- COMPUTE HELPERS ----------------------------- */
 
+/* Advisory/consultancy revenue component. Most deals still carry a flat
+   advisoryFee literal. A deal billed via the explicit tranche fields (see
+   PART A rework in the DELIVERY section below, and ASSUMPTIONS
+   'delivery-tranche-fields') has no advisoryFee field at all — its advisory
+   revenue reads from tranche1Amount + tranche2Amount instead, so there is
+   still exactly one number for "this deal's advisory revenue," never two
+   that could drift apart. */
+function advisoryRevenue(deal) {
+  return deal.tranche1Amount != null ? deal.tranche1Amount + deal.tranche2Amount : (deal.advisoryFee || 0);
+}
+
 function sdahcRevenue(deal) {
-  return deal.transactionValue * deal.commissionPct + deal.advisoryFee + deal.conjunctionFee + deal.referralFee;
+  return deal.transactionValue * deal.commissionPct + advisoryRevenue(deal) + deal.conjunctionFee + deal.referralFee;
 }
 
 function weightedRevenue(deal) {
@@ -593,13 +843,14 @@ const Aggregates = {
 
   /* Revenue composition by fee source. Scoped to Won + In Progress + Paused
      (excludes Lost, which never generates revenue). Fully real — each
-     component reads a distinct per-deal fee field. */
+     component reads a distinct per-deal fee field (advisory via
+     advisoryRevenue(), which is tranche-aware — see PART A rework). */
   revenueBySource: () => {
     const deals = DEALS.filter(d => d.outcome !== 'Lost');
     const totals = { brokerage: 0, advisory: 0, conjunction: 0, referral: 0 };
     deals.forEach(d => {
       totals.brokerage += d.transactionValue * d.commissionPct;
-      totals.advisory += d.advisoryFee;
+      totals.advisory += advisoryRevenue(d);
       totals.conjunction += d.conjunctionFee;
       totals.referral += d.referralFee;
     });
@@ -815,18 +1066,31 @@ const Aggregates = {
    how much revenue sits behind that work.
 
    Engagements are DERIVED from the existing DEALS array — a deal becomes an
-   "engagement" simply by carrying a `milestones` array (added to 6 deals
-   above: the two active advisory/DD deals at A4/A5, and four brokerage deals
-   mid-campaign through to under contract). There is no parallel dataset.
+   "engagement" by carrying either a `milestones` array (brokerage deals: a
+   generic list of billing tranches with their own status) or the explicit
+   consultancyFeeTotal/tranche1.../tranche2... fields (advisory deals — see
+   the PART A rework below). There is no parallel dataset.
 
-   Milestone amounts for a given deal always sum to exactly sdahcRevenue(deal)
-   — each milestone is a tranche of the SAME authoritative revenue figure used
-   everywhere else, not a new number. That's what keeps Locked/Unlocked
-   revenue here reconciled with Revenue and Overview by construction: this
-   page can only ever re-slice a deal's existing revenue, never add to it.
+   PART A REWORK: advisory engagements used to have their two milestone
+   amounts hardcoded as an implicit 50/50 split of sdahcRevenue(deal). That's
+   now inverted — consultancyFeeTotal, tranche1Amount/Status/Date and
+   tranche2Amount/Status/Date are the manually-entered, single source of
+   truth (mirroring fields to be created in Notion — see ASSUMPTIONS
+   'delivery-tranche-fields'), and advisoryRevenue() (compute helpers, above)
+   reads sdahcRevenue()'s advisory component FROM tranche1+tranche2. Brokerage
+   engagements are untouched: their milestones[] amounts still sum to exactly
+   sdahcRevenue(deal), same as before.
 
-   deliverables[], milestones[], progressPct, health and gatedBrokerage do not
-   exist in Notion today (see ASSUMPTIONS — 'delivery-milestone-model'). */
+   Because two different shapes now exist, everything below reads through
+   engagementTranches(deal), which normalises either shape into the same
+   {name, dueDate, amount, status, unlockCondition} list — Locked vs Unlocked
+   always comes from each tranche/milestone's own explicit `status` field,
+   never derived from stage.
+
+   deliverables[], progressPct, health and gatedBrokerage still do not exist
+   in Notion today for any engagement (see ASSUMPTIONS — 'delivery-milestone-model'
+   for the brokerage billing model specifically, 'delivery-tranche-fields' for
+   the advisory billing fields). */
 
 const DELIVERABLE_STATUSES = ['Not started', 'In progress', 'Delivered', 'Accepted'];
 const MILESTONE_STATUSES = ['Locked', 'Unlocked', 'Invoiced', 'Paid'];
@@ -843,18 +1107,48 @@ function quarterBounds(date) {
   return { start, end };
 }
 
-Object.assign(Aggregates, {
-  engagements: () => DEALS.filter(d => Array.isArray(d.milestones) && d.milestones.length > 0),
+/* Normalises an engagement's billing structure into a flat tranche list,
+   regardless of which of the two shapes it's stored as. Brokerage deals pass
+   their milestones[] straight through unchanged. Advisory deals synthesize
+   two entries from the explicit tranche fields, labelled with the actual
+   manually-entered split (e.g. "60%") rather than an assumed 50/50. */
+function engagementTranches(deal) {
+  if (Array.isArray(deal.milestones)) return deal.milestones;
+  if (deal.tranche1Amount != null) {
+    const pct1 = deal.consultancyFeeTotal ? Math.round((deal.tranche1Amount / deal.consultancyFeeTotal) * 100) : null;
+    const pct2 = pct1 !== null ? 100 - pct1 : null;
+    return [
+      { name: `Tranche 1 — Engagement Retainer${pct1 !== null ? ` (${pct1}%)` : ''}`, dueDate: deal.tranche1Date, amount: deal.tranche1Amount, status: deal.tranche1Status, unlockCondition: 'Engagement letter signed' },
+      { name: `Tranche 2 — Completion Payment${pct2 !== null ? ` (${pct2}%)` : ''}`, dueDate: deal.tranche2Date, amount: deal.tranche2Amount, status: deal.tranche2Status, unlockCondition: 'Final deliverable accepted by client' },
+    ];
+  }
+  return [];
+}
 
-  engagementLocked: (deal) => deal.milestones.filter(m => m.status === 'Locked').reduce((s, m) => s + m.amount, 0),
-  engagementUnlocked: (deal) => deal.milestones.filter(m => m.status !== 'Locked').reduce((s, m) => s + m.amount, 0),
+/* Notion "Tranche Reconciliation" formula equivalent — flags if the
+   manually-entered tranche1+tranche2 no longer matches the manually-entered
+   consultancyFeeTotal (e.g. someone fat-fingered a tranche amount). Returns
+   null for deals with no explicit tranche fields (brokerage engagements —
+   their milestones[] have no separate "total" to check against). */
+function trancheReconciliation(deal) {
+  if (deal.consultancyFeeTotal == null) return null;
+  const sum = deal.tranche1Amount + deal.tranche2Amount;
+  return { ok: Math.abs(sum - deal.consultancyFeeTotal) < 0.01, sum, total: deal.consultancyFeeTotal };
+}
+
+Object.assign(Aggregates, {
+  engagements: () => DEALS.filter(d => (Array.isArray(d.milestones) && d.milestones.length > 0) || d.tranche1Amount != null),
+
+  engagementLocked: (deal) => engagementTranches(deal).filter(m => m.status === 'Locked').reduce((s, m) => s + m.amount, 0),
+  engagementUnlocked: (deal) => engagementTranches(deal).filter(m => m.status !== 'Locked').reduce((s, m) => s + m.amount, 0),
+  trancheReconciliation,
 
   /* Soonest not-yet-paid milestone across all engagements — used for the
      "Next Milestone" KPI and to seed the timeline view's default sort. */
   nextMilestone: () => {
     const all = [];
     Aggregates.engagements().forEach(d => {
-      d.milestones.forEach(m => { if (m.status !== 'Paid') all.push({ deal: d, milestone: m }); });
+      engagementTranches(d).forEach(m => { if (m.status !== 'Paid') all.push({ deal: d, milestone: m }); });
     });
     all.sort((a, b) => parseDate(a.milestone.dueDate) - parseDate(b.milestone.dueDate));
     return all[0] || null;
@@ -866,7 +1160,7 @@ Object.assign(Aggregates, {
 
     let lockedRevenue = 0, unlockableThisQuarter = 0, revenueAtRisk = 0;
     engagements.forEach(d => {
-      d.milestones.forEach(m => {
+      engagementTranches(d).forEach(m => {
         if (m.status !== 'Locked') return;
         lockedRevenue += m.amount;
         const due = parseDate(m.dueDate);
@@ -888,7 +1182,7 @@ Object.assign(Aggregates, {
   deliveryTimelinePoints: () => {
     const points = [];
     Aggregates.engagements().forEach(d => {
-      d.milestones.forEach(m => points.push({
+      engagementTranches(d).forEach(m => points.push({
         dealId: d.id, dealName: d.name, owner: d.owner, health: d.health,
         name: m.name, dueDate: m.dueDate, amount: m.amount, status: m.status,
       }));
@@ -907,7 +1201,7 @@ Object.assign(Aggregates, {
 
     const atRiskDeal = engagements.find(d => d.health === 'At risk');
     if (atRiskDeal) {
-      const soonMilestone = [...atRiskDeal.milestones].filter(m => m.status === 'Locked')
+      const soonMilestone = engagementTranches(atRiskDeal).filter(m => m.status === 'Locked')
         .sort((a, b) => parseDate(a.dueDate) - parseDate(b.dueDate))[0];
       if (soonMilestone) {
         const days = Math.round((parseDate(soonMilestone.dueDate) - TODAY) / 86400000);
@@ -920,7 +1214,7 @@ Object.assign(Aggregates, {
 
     const gatedDeal = engagements.find(d => d.gatedBrokerage);
     if (gatedDeal) {
-      const remaining = gatedDeal.milestones.filter(m => m.status !== 'Paid').reduce((s, m) => s + m.amount, 0);
+      const remaining = engagementTranches(gatedDeal).filter(m => m.status !== 'Paid').reduce((s, m) => s + m.amount, 0);
       insights.push({
         key: 'gating',
         text: `Completing ${gatedDeal.name} unlocks ${fmtFullDelivery(remaining)} of remaining consultancy revenue and opens ~${fmtFullDelivery(gatedDeal.gatedBrokerage.potentialValue)} of potential downstream brokerage mandate*.`,
@@ -942,6 +1236,75 @@ Object.assign(Aggregates, {
    and Delivery's insight strings are assembled here so their numbers can
    never drift from the aggregates above. */
 function fmtFullDelivery(n) { return '$' + Math.round(n).toLocaleString('en-AU'); }
+
+/* ----------------------------- STAGE HISTORY ------------------------------ */
+/* PART B. Notion's Stage field is a single select — it only ever holds the
+   CURRENT stage, with no transition log. `stageHistory[]` on each deal is a
+   simulated backfill for this prototype (see ASSUMPTIONS
+   'delivery-stage-history'): every deal's past stages and entry dates,
+   interpolated between its createdDate and closeDate/today. Most journeys
+   are clean and sequential; two (LVP Logan, Coomera SDA Portfolio) are
+   deliberately irregular to exercise the anomaly detector below.
+
+   Used by the Pipeline deal drawer for the vertical stage-journey timeline
+   and the "stage anomaly" flag — display-only, it flags an unusual journey
+   for review, it never blocks or corrects one. */
+
+/* A deal's own track can mix groups (e.g. an advisory engagement that later
+   converted to brokerage), so "did this jump a stage" can't be judged
+   against the full 16-stage STAGES array — that would flag every pure
+   brokerage deal for "skipping" A1-A5, which it never entered. Instead this
+   builds a LOCAL order using only the groups this deal's own history
+   actually passed through, re-indexed from 0 — adjacent stages in that
+   filtered list are exactly the ones this deal's real journey should have
+   passed through one at a time. */
+function localStageOrder(stageHistory) {
+  const groupsPresent = new Set(stageHistory.map(h => getStage(h.stage).group));
+  const localSeq = STAGES.filter(s => groupsPresent.has(s.group));
+  return Object.fromEntries(localSeq.map((s, i) => [s.id, i]));
+}
+
+function detectStageAnomaly(stageHistory) {
+  if (!Array.isArray(stageHistory) || stageHistory.length < 2) return { skipped: false, backward: false };
+  const order = localStageOrder(stageHistory);
+  let skipped = false, backward = false;
+  for (let i = 1; i < stageHistory.length; i++) {
+    const diff = order[stageHistory[i].stage] - order[stageHistory[i - 1].stage];
+    if (diff < 0) backward = true;
+    else if (diff > 1) skipped = true;
+  }
+  return { skipped, backward };
+}
+
+Object.assign(Aggregates, {
+  /* { skipped, backward } — either or both may be true; a deal with a clean
+     journey (the overwhelming majority) gets { skipped: false, backward: false }. */
+  stageAnomaly: (deal) => detectStageAnomaly(deal.stageHistory),
+
+  /* Stage journey enriched with time-in-stage and a per-transition anomaly
+     flag, for the drawer timeline. Time-in-stage is the gap to the NEXT
+     entry, or to closeDate/today for the current (last) stage — always
+     computed here, never stored. transitionFlag on entry i describes the
+     hop INTO that stage from entry i-1 ('skip' | 'backward' | null), so the
+     drawer can call out exactly where the journey went off the clean path. */
+  stageJourney: (deal) => {
+    const history = deal.stageHistory || [];
+    const order = localStageOrder(history);
+    const end = deal.closeDate ? parseDate(deal.closeDate) : TODAY;
+    return history.map((h, i) => {
+      const entered = parseDate(h.enteredDate);
+      const next = i < history.length - 1 ? parseDate(history[i + 1].enteredDate) : end;
+      const daysInStage = Math.max(0, Math.round((next - entered) / 86400000));
+      let transitionFlag = null;
+      if (i > 0) {
+        const diff = order[h.stage] - order[history[i - 1].stage];
+        if (diff < 0) transitionFlag = 'backward';
+        else if (diff > 1) transitionFlag = 'skip';
+      }
+      return { ...h, stageMeta: getStage(h.stage), isCurrent: i === history.length - 1, daysInStage, transitionFlag };
+    });
+  },
+});
 
 /* ------------------------------ SETTINGS --------------------------------- */
 /* Dashboard-owned data. Simulated with localStorage so the Settings page can
@@ -1396,10 +1759,24 @@ const ASSUMPTIONS = [
   },
   {
     id: 'delivery-milestone-model',
-    label: 'Delivery deliverables, milestones, progress % and health',
-    usedIn: 'Delivery (all sections)',
+    label: 'Delivery deliverables, milestones, progress % and health (brokerage engagements)',
+    usedIn: 'Delivery (all sections) — SDA Abodes / Socia, Evergreen Built, Northline Community Housing, Bellbird Park SDA',
     category: 'Modelled',
-    why: 'Notion does not track deliverables, billing milestones, % complete or a health flag — Deals holds current stage and next action only. This models a plausible milestone/payment-tranche structure (advisory: 50% on engagement / 50% on completion; brokerage: commission on settlement, sometimes with an exchange-fee tranche) for 6 of the 25 deals already in this file. Every milestone amount sums exactly to that deal\'s existing sdahcRevenue() figure, so this can only re-slice real revenue, never add to it — but the tranche split, due dates, deliverable statuses, progress % and health are dashboard-owned judgement calls, not Notion facts. Production would need a new Notion structure (a Milestones or Deliverables database) or dashboard-owned modelling with finance sign-off.',
+    why: 'Notion does not track deliverables, billing milestones, % complete or a health flag — Deals holds current stage and next action only. This models a plausible billing-milestone structure (commission on settlement, sometimes with an exchange-fee or conjunction-fee tranche first) for the 4 brokerage engagements on this page. Every milestone amount still sums exactly to that deal\'s sdahcRevenue() figure, so this can only re-slice real revenue, never add to it — but the split, due dates, deliverable statuses, progress % and health are dashboard-owned judgement calls, not Notion facts. Advisory engagements (Paramount Disability Homes, Horizon SDA Fund) no longer use this model — see \'delivery-tranche-fields\'. Production would need a new Notion structure (a Milestones or Deliverables database) or dashboard-owned modelling with finance sign-off.',
+  },
+  {
+    id: 'delivery-tranche-fields',
+    label: 'Explicit advisory billing tranches (consultancyFeeTotal, tranche1/2 Amount/Status/Date)',
+    usedIn: 'Delivery — Paramount Disability Homes, Horizon SDA Fund (Engagements grid + drawer, KPI strip, Milestone Timeline)',
+    category: 'Modelled',
+    why: 'These are NEW fields — they do not exist in Notion today. Production would need them created there (per-deal, on the Deals database or a linked Advisory Billing table) and filled in manually by whoever negotiates the engagement, exactly as entered here: a total fee, and two tranche amounts/statuses/dates that are NOT derived from a fixed 50/50 rule or from stage (Paramount is billed 60/40, Horizon 70/30 — real engagements are rarely an even split). Field names are chosen to map 1:1 to that future Notion schema. Statuses (Locked/Unlocked/Invoiced/Paid) are also manually set per tranche — Locked vs Unlocked on this page reads directly from them, never inferred from the deal\'s stage. Because two manually-entered numbers (a total, and two tranches) can drift apart by data-entry error, each engagement carries a live Tranche Reconciliation check (mirrors the equivalent Notion formula) — shown as a subtle ✓/⚠ indicator on the card and in the drawer. All mock data reconciles cleanly today, but the check runs unconditionally, not just for show.',
+  },
+  {
+    id: 'delivery-stage-history',
+    label: 'Deal stage-journey history (stageHistory[]) and stage-anomaly flags',
+    usedIn: 'Pipeline → Deal Detail Drawer (stage-journey timeline, anomaly flag)',
+    category: 'Modelled',
+    why: 'Notion\'s Stage field is a single select with no transition history — it only ever holds the deal\'s current stage. stageHistory[] here is simulated for this prototype: each deal\'s past stages and entry dates are backfilled/interpolated, not real recorded transitions. In production this would NOT be a manual data-entry burden and would NOT require any new Notion field: the Notion→Supabase sync already runs nightly, and diffing each night\'s Stage value against the previous snapshot is enough to build a real transition log automatically, entirely outside Notion. The skipped-stage and moved-backwards anomalies flagged here are deliberately seeded (2 of the 25 deals) to demonstrate the detector; the dashboard only flags an unusual journey for review — it does not block or enforce valid stage transitions.',
   },
   {
     id: 'delivery-brokerage-gating',

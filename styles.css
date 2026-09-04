@@ -796,7 +796,35 @@ thead th.num-head { text-align: right; }
 
 .drawer-section { margin-bottom: 20px; }
 .drawer-section-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
+.drawer-section-label .drawer-section-note { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink-faint); font-size: 10.5px; margin-left: 4px; }
 .drawer-section-text { font-size: 13px; color: var(--ink-soft); line-height: 1.55; }
+
+/* Stage-anomaly flag, shown inline with the current-stage chip at the top
+   of the Pipeline deal drawer. Display-only — see ASSUMPTIONS 'delivery-stage-history'. */
+.stage-anomaly-badge {
+  display: inline-flex; align-items: center; margin-left: 8px; vertical-align: middle;
+  font-size: 10.5px; font-weight: 700; color: #FFD9D6; background: rgba(217,83,79,0.28);
+  padding: 4px 9px 4px 7px; border-radius: 20px; letter-spacing: 0.02em;
+}
+
+/* Vertical stage-journey timeline, Pipeline deal drawer only. */
+.journey-list { display: flex; flex-direction: column; }
+.journey-item { display: flex; gap: 12px; }
+.journey-rail { display: flex; flex-direction: column; align-items: center; width: 12px; flex-shrink: 0; }
+.journey-rail::before {
+  content: ''; width: 2px; flex: 1; background: var(--panel-border); margin-top: 2px;
+}
+.journey-item:last-child .journey-rail::before { display: none; }
+.journey-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 3px var(--panel); }
+.journey-item.current .journey-dot { box-shadow: 0 0 0 3px var(--panel), 0 0 0 5px rgba(4,118,217,0.25); }
+.journey-content { flex: 1; padding-bottom: 16px; }
+.journey-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.journey-stage-name { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.journey-item.current .journey-stage-name { color: var(--blue); }
+.journey-days { font-size: 10.5px; color: var(--ink-faint); font-weight: 500; white-space: nowrap; }
+.journey-date { font-size: 11px; color: var(--ink-mute); margin-top: 2px; }
+.journey-anomaly-note { font-size: 10.5px; font-weight: 600; color: var(--red); margin-top: 4px; }
+.journey-item.anomaly .journey-dot { box-shadow: 0 0 0 3px var(--panel), 0 0 0 5px rgba(217,83,79,0.3); }
 
 .drawer-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .drawer-chip { font-size: 11.5px; font-weight: 500; background: var(--bg-inset); color: var(--ink-soft); padding: 5px 10px; border-radius: 8px; }
@@ -906,6 +934,14 @@ thead th.num-head { text-align: right; }
 
 .engagement-next-milestone { font-size: 11.5px; color: var(--ink-mute); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--panel-border-soft); }
 .engagement-next-milestone strong { color: var(--ink); font-weight: 600; }
+
+.tranche-recon { font-size: 10.5px; font-weight: 600; margin-top: 8px; }
+.tranche-recon.ok { color: var(--green); }
+.tranche-recon.mismatch { color: var(--red); }
+
+.tranche-recon-detail { font-size: 11px; line-height: 1.5; margin-top: 10px; padding: 9px 11px; border-radius: 8px; }
+.tranche-recon-detail.ok { color: var(--green); background: #E5F6EE; }
+.tranche-recon-detail.mismatch { color: var(--red); background: #FBEAEA; font-weight: 600; }
 
 .timeline-legend { display: flex; flex-wrap: wrap; gap: 16px; padding: 0 12px 6px; margin-top: -8px; }
 .timeline-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-mute); font-weight: 500; }

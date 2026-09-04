@@ -862,7 +862,8 @@ function renderEngagementGrid() {
     const locked = Aggregates.engagementLocked(d);
     const unlocked = Aggregates.engagementUnlocked(d);
     const total = locked + unlocked;
-    const nextM = [...d.milestones].filter(m => m.status !== 'Paid').sort((a, b) => parseDate(a.dueDate) - parseDate(b.dueDate))[0];
+    const nextM = engagementTranches(d).filter(m => m.status !== 'Paid').sort((a, b) => parseDate(a.dueDate) - parseDate(b.dueDate))[0];
+    const recon = Aggregates.trancheReconciliation(d);
 
     return `
       <div class="engagement-card" data-id="${d.id}">
@@ -891,6 +892,7 @@ function renderEngagementGrid() {
         <div class="engagement-next-milestone">
           ${nextM ? `Next milestone: <strong class="tabular">${fmtCompact(nextM.amount)}</strong> · ${fmtDate(nextM.dueDate)}` : 'All milestones paid'}
         </div>
+        ${recon ? `<div class="tranche-recon ${recon.ok ? 'ok' : 'mismatch'}">${recon.ok ? '✓ Tranches reconcile' : '⚠ Tranches don’t match consultancy fee total'}</div>` : ''}
       </div>
     `;
   }).join('');
@@ -964,11 +966,12 @@ function renderDeliveryAi() {
 
 function openEngagementDrawer(id) {
   const deal = DEALS.find(d => d.id === id);
-  if (!deal || !deal.milestones) return;
+  if (!deal || !Aggregates.engagements().includes(deal)) return;
   const stage = getStage(deal.stage);
   const meta = STAGE_GROUPS[stage.group];
   const locked = Aggregates.engagementLocked(deal);
   const unlocked = Aggregates.engagementUnlocked(deal);
+  const recon = Aggregates.trancheReconciliation(deal);
 
   document.getElementById('engagement-drawer-stage-chip').innerHTML =
     `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${stage.label}</span>`;
@@ -985,7 +988,7 @@ function openEngagementDrawer(id) {
     </div>
   `).join('');
 
-  const milestonesHtml = deal.milestones.map(m => `
+  const milestonesHtml = engagementTranches(deal).map(m => `
     <div class="milestone-row">
       <div class="milestone-row-top">
         <div class="milestone-name">${m.name}</div>
@@ -1024,6 +1027,13 @@ function openEngagementDrawer(id) {
     <div class="drawer-section">
       <div class="drawer-section-label">Payment Schedule</div>
       <div class="milestone-list">${milestonesHtml}</div>
+      ${recon ? `
+        <div class="tranche-recon-detail ${recon.ok ? 'ok' : 'mismatch'}">
+          ${recon.ok
+            ? `✓ Tranche Reconciliation: ${fmtFull(recon.sum)} across both tranches matches the ${fmtFull(recon.total)} consultancy fee total.`
+            : `⚠ Tranche Reconciliation: tranches sum to ${fmtFull(recon.sum)}, which does not match the ${fmtFull(recon.total)} consultancy fee total — check entry in Notion.`}
+        </div>
+      ` : ''}
     </div>
 
     ${gatingHtml}
@@ -1295,9 +1305,13 @@ function openDrawer(id) {
   const meta = STAGE_GROUPS[stage.group];
   const rev = sdahcRevenue(deal);
   const wtd = weightedRevenue(deal);
+  const anomaly = Aggregates.stageAnomaly(deal);
+  const anomalyBadge = (anomaly.skipped || anomaly.backward)
+    ? `<span class="stage-anomaly-badge" title="Display-only — the dashboard flags this, it does not enforce valid transitions">⚠ ${[anomaly.skipped && 'Skipped a stage', anomaly.backward && 'Moved backward'].filter(Boolean).join(' · ')}</span>`
+    : '';
 
   document.getElementById('drawer-stage-chip').innerHTML =
-    `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${stage.label}</span>`;
+    `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${stage.label}</span>${anomalyBadge}`;
   document.getElementById('drawer-name').textContent = deal.name;
   document.getElementById('drawer-entity').textContent = `${deal.entity} · ${deal.owner}`;
 
@@ -1321,12 +1335,39 @@ function openDrawer(id) {
     `;
   }
 
+  const journey = Aggregates.stageJourney(deal);
+  const journeyHtml = journey.map(j => {
+    const transitionNote = j.transitionFlag === 'backward'
+      ? '<div class="journey-anomaly-note">⚠ Moved backward from the previous stage</div>'
+      : j.transitionFlag === 'skip'
+        ? '<div class="journey-anomaly-note">⚠ Skipped a stage on the way here</div>'
+        : '';
+    return `
+      <div class="journey-item ${j.isCurrent ? 'current' : ''} ${j.transitionFlag ? 'anomaly' : ''}">
+        <div class="journey-rail"><div class="journey-dot" style="background:${STAGE_GROUPS[j.stageMeta.group].color}"></div></div>
+        <div class="journey-content">
+          <div class="journey-top">
+            <span class="journey-stage-name">${j.stageMeta.short}</span>
+            <span class="journey-days">${j.isCurrent ? `${j.daysInStage} day${j.daysInStage === 1 ? '' : 's'} so far` : `${j.daysInStage} day${j.daysInStage === 1 ? '' : 's'} in stage`}</span>
+          </div>
+          <div class="journey-date">Entered ${fmtDate(j.enteredDate)}</div>
+          ${transitionNote}
+        </div>
+      </div>
+    `;
+  }).join('');
+
   document.getElementById('drawer-body').innerHTML = `
     <div class="drawer-metric-row">
       <div class="drawer-metric"><div class="drawer-metric-label">Transaction Value</div><div class="drawer-metric-value tabular">${fmtFull(deal.transactionValue)}</div></div>
       <div class="drawer-metric"><div class="drawer-metric-label">Expected SDAHC Revenue</div><div class="drawer-metric-value tabular">${fmtFull(rev)}</div></div>
       <div class="drawer-metric"><div class="drawer-metric-label">Probability</div><div class="drawer-metric-value tabular">${fmtPct(deal.probability)}</div></div>
       <div class="drawer-metric"><div class="drawer-metric-label">Weighted Revenue</div><div class="drawer-metric-value tabular">${fmtFull(wtd)}</div></div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-label">Stage Journey <span class="drawer-section-note">simulated — see Assumptions Register</span></div>
+      <div class="journey-list">${journeyHtml}</div>
     </div>
 
     <div class="drawer-section">
