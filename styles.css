@@ -493,6 +493,40 @@ a { color: inherit; }
   align-items: center;
   gap: 6px;
 }
+
+/* ------------------------------ INFO ICON / POPOVER ------------------------ */
+/* Small "how is this calculated" affordance next to KPI cards and major
+   chart panel titles, across every page. One shared popover element
+   (#info-popover in index.html) is positioned and filled on click. */
+
+.info-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%; flex-shrink: 0;
+  border: 1px solid var(--panel-border); background: var(--panel); color: var(--ink-faint);
+  font-family: var(--font-display); font-size: 10px; font-weight: 700; font-style: italic;
+  line-height: 1; cursor: pointer; padding: 0; text-transform: none; letter-spacing: 0;
+  transition: all 0.15s ease;
+}
+.info-icon:hover, .info-icon.active { border-color: var(--blue); color: var(--blue); background: #EAF3FD; }
+.panel-title .info-icon, h3 .info-icon { margin-left: 4px; vertical-align: middle; }
+
+/* Variant for icons sitting on the dark navy hero panel / drawer heads. */
+.info-icon-on-dark { border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.08); color: var(--on-navy-mute); }
+.info-icon-on-dark:hover, .info-icon-on-dark.active { border-color: #fff; color: #fff; background: rgba(255,255,255,0.18); }
+
+.info-popover {
+  position: fixed; z-index: 200; width: 300px; max-width: calc(100vw - 32px);
+  background: var(--ink); color: #fff; border-radius: 10px; padding: 13px 15px;
+  box-shadow: var(--shadow-lg); font-size: 12.5px; line-height: 1.55;
+  opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.info-popover.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.info-popover-text { color: #E7EDF7; }
+.info-popover-link {
+  display: inline-block; margin-top: 9px; font-size: 11.5px; font-weight: 600;
+  color: #8FC4F5; text-decoration: none; border-top: 1px solid rgba(255,255,255,0.14); padding-top: 9px; width: 100%;
+}
+.info-popover-link:hover { color: #B8DBFA; }
 .kpi-value {
   font-family: var(--font-mono);
   font-size: 23px;
@@ -668,14 +702,15 @@ table.deals-table {
   padding: 0 16px 12px;
   border-bottom: 1px solid var(--panel-border);
   white-space: nowrap;
-  cursor: pointer;
   user-select: none;
 }
-.deals-table thead th:hover { color: var(--ink-mute); }
+/* Score is the one fixed, non-negotiable sort key (see ASSUMPTIONS
+   'pipeline-score-mock') — no other header is interactive or sortable. */
 .deals-table thead th.sorted { color: var(--blue); }
-.deals-table thead tr { }
 .deals-table thead th:first-child { padding-left: 24px; }
 .deals-table thead th:last-child { padding-right: 24px; }
+
+.score-cell { font-weight: 700; color: var(--blue); }
 
 .deals-table tbody td {
   padding: 13px 16px;
@@ -979,8 +1014,8 @@ thead th.num-head { text-align: right; }
 .milestone-row-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .milestone-name { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .milestone-status { font-size: 9.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; padding: 3px 7px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
-.milestone-status.status-locked { color: var(--red); background: #FBEAEA; }
-.milestone-status.status-unlocked { color: #8A6A16; background: #FCF0D3; }
+.milestone-status.status-not-started { color: var(--ink-mute); background: var(--panel-border-soft); }
+.milestone-status.status-wip { color: #8A6A16; background: #FCF0D3; }
 .milestone-status.status-invoiced { color: var(--blue); background: #EAF3FD; }
 .milestone-status.status-paid { color: var(--green); background: #E5F6EE; }
 .milestone-meta { font-size: 12px; color: var(--ink-soft); margin-top: 5px; font-weight: 500; }
@@ -1081,8 +1116,17 @@ thead th.num-head { text-align: right; }
 .modal-sub { font-size: 12.5px; color: var(--ink-mute); margin-top: 5px; max-width: 480px; line-height: 1.5; }
 .modal-body { padding: 8px 26px 26px; overflow-y: auto; }
 
-.assumption-item { padding: 15px 0; border-bottom: 1px solid var(--panel-border-soft); }
+.assumption-page-group { margin-bottom: 6px; }
+.assumption-page-group:last-child { margin-bottom: 0; }
+.assumption-page-heading {
+  font-family: var(--font-display); font-size: 14.5px; font-weight: 600; color: var(--navy);
+  padding: 18px 0 6px; border-top: 1px solid var(--panel-border);
+}
+.assumption-page-group:first-child .assumption-page-heading { border-top: none; padding-top: 4px; }
+
+.assumption-item { padding: 15px 0; border-bottom: 1px solid var(--panel-border-soft); border-radius: 8px; transition: background 0.4s ease; }
 .assumption-item:last-child { border-bottom: none; }
+.assumption-item.flash { background: #FCF0D3; }
 .assumption-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .assumption-label { font-size: 13.5px; font-weight: 600; color: var(--ink); }
 .assumption-category {
@@ -1243,21 +1287,6 @@ thead th.num-head { text-align: right; }
 .settings-section-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 4px; }
 .settings-section-title { font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--ink); }
 .settings-field-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; padding: 14px 24px 22px; }
-
-.prob-table-wrap { padding: 4px 24px 20px; }
-.prob-table-head { display: grid; grid-template-columns: 1fr 90px 90px; gap: 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); padding-bottom: 8px; border-bottom: 1px solid var(--panel-border); }
-.prob-table-row { display: grid; grid-template-columns: 1fr 90px 90px; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--panel-border-soft); }
-.prob-table-row:last-child { border-bottom: none; }
-.prob-table-stage { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
-.prob-table-input { width: 74px; padding: 6px 8px; font-size: 12px; }
-
-.settings-preview { margin: 4px 24px 20px; background: var(--bg-inset); border-radius: 12px; padding: 16px 18px; }
-.settings-preview-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-mute); }
-.settings-preview-value { font-family: var(--font-mono); font-size: 22px; font-weight: 600; color: var(--ink); margin-top: 6px; }
-.settings-preview-delta { font-size: 11.5px; margin-top: 4px; font-weight: 600; }
-.settings-preview-delta.pos { color: var(--green); }
-.settings-preview-delta.neg { color: var(--red); }
-.settings-preview-hint { font-size: 11px; color: var(--ink-faint); margin-top: 8px; line-height: 1.5; }
 
 .settings-actions { display: flex; align-items: center; gap: 10px; padding: 20px 24px 24px; }
 

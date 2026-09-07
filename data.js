@@ -12,27 +12,28 @@
    ============================================================================ */
 
 /* ----------------------------- STAGES --------------------------------- */
-/* Ordered exactly as the real Notion pipeline. `defaultProbability` is the
-   probability used to compute weighted revenue when a deal does not carry
-   an explicit override. Settings (future phase) will allow editing these. */
+/* Ordered exactly as the real Notion pipeline. Probability is NOT derived
+   from stage — it comes from each deal's own `probability` field, exactly
+   as Steve sets it in Notion (see DEALS below). There is no stage-based
+   default or fallback anywhere in this file. */
 
 const STAGES = [
-  { id: '0',  label: '0. Prospect',                        short: 'Prospect',            group: 'prospecting', defaultProbability: 0.05 },
-  { id: '1',  label: '1. Contacted',                        short: 'Contacted',           group: 'prospecting', defaultProbability: 0.10 },
-  { id: 'A1', label: 'A1. Information Requested',           short: 'Info Requested',      group: 'advisory',    defaultProbability: 0.15 },
-  { id: 'A2', label: 'A2. Advisory Proposal Sent',          short: 'Proposal Sent',       group: 'advisory',    defaultProbability: 0.25 },
-  { id: 'A3', label: 'A3. Advisory / DD Engaged',           short: 'DD Engaged',          group: 'advisory',    defaultProbability: 0.40 },
-  { id: 'A4', label: 'A4. DD / Advisory In Progress',       short: 'DD In Progress',      group: 'advisory',    defaultProbability: 0.55 },
-  { id: 'A5', label: 'A5. Advisory Complete',                short: 'Advisory Complete',   group: 'advisory',    defaultProbability: 0.70 },
-  { id: 'B1', label: 'B1. Information Request',             short: 'Info Request',        group: 'brokerage',   defaultProbability: 0.15 },
-  { id: 'B2', label: 'B2. Brokerage Proposal Sent',         short: 'Proposal Sent',       group: 'brokerage',   defaultProbability: 0.25 },
-  { id: 'B3', label: 'B3. Appointed & Market Preparation',  short: 'Appointed',           group: 'brokerage',   defaultProbability: 0.35 },
-  { id: 'B4', label: 'B4. Buyer Outreach / IM Sent',        short: 'Buyer Outreach',      group: 'brokerage',   defaultProbability: 0.45 },
-  { id: 'B5', label: 'B5. Buyer Follow-up',                  short: 'Buyer Follow-up',     group: 'brokerage',   defaultProbability: 0.55 },
-  { id: 'B6', label: 'B6. Negotiation',                      short: 'Negotiation',         group: 'negotiation', defaultProbability: 0.70 },
-  { id: 'B7', label: 'B7. Contract Issued',                  short: 'Contract Issued',     group: 'negotiation', defaultProbability: 0.85 },
-  { id: 'B8', label: 'B8. Under Contract',                   short: 'Under Contract',      group: 'negotiation', defaultProbability: 0.92 },
-  { id: '9',  label: '9. Settlement',                        short: 'Settlement',          group: 'settlement',  defaultProbability: 1.00 },
+  { id: '0',  label: '0. Prospect',                        short: 'Prospect',            group: 'prospecting' },
+  { id: '1',  label: '1. Contacted',                        short: 'Contacted',           group: 'prospecting' },
+  { id: 'A1', label: 'A1. Information Requested',           short: 'Info Requested',      group: 'advisory' },
+  { id: 'A2', label: 'A2. Advisory Proposal Sent',          short: 'Proposal Sent',       group: 'advisory' },
+  { id: 'A3', label: 'A3. Advisory / DD Engaged',           short: 'DD Engaged',          group: 'advisory' },
+  { id: 'A4', label: 'A4. DD / Advisory In Progress',       short: 'DD In Progress',      group: 'advisory' },
+  { id: 'A5', label: 'A5. Advisory Complete',                short: 'Advisory Complete',   group: 'advisory' },
+  { id: 'B1', label: 'B1. Information Request',             short: 'Info Request',        group: 'brokerage' },
+  { id: 'B2', label: 'B2. Brokerage Proposal Sent',         short: 'Proposal Sent',       group: 'brokerage' },
+  { id: 'B3', label: 'B3. Appointed & Market Preparation',  short: 'Appointed',           group: 'brokerage' },
+  { id: 'B4', label: 'B4. Buyer Outreach / IM Sent',        short: 'Buyer Outreach',      group: 'brokerage' },
+  { id: 'B5', label: 'B5. Buyer Follow-up',                  short: 'Buyer Follow-up',     group: 'brokerage' },
+  { id: 'B6', label: 'B6. Negotiation',                      short: 'Negotiation',         group: 'negotiation' },
+  { id: 'B7', label: 'B7. Contract Issued',                  short: 'Contract Issued',     group: 'negotiation' },
+  { id: 'B8', label: 'B8. Under Contract',                   short: 'Under Contract',      group: 'negotiation' },
+  { id: '9',  label: '9. Settlement',                        short: 'Settlement',          group: 'settlement' },
 ];
 
 const STAGE_GROUPS = {
@@ -90,15 +91,17 @@ const OWNERS = ['Steve Harrington', 'Emma Voss', 'Daniel Reyes', 'Priya Nathan',
 /* ------------------------------- DEALS ----------------------------------- */
 /* transactionValue: underlying asset/portfolio price — NOT SDAHC income.
    commissionPct is a decimal fraction (0.025 = 2.5%). All fee fields are
-   flat AUD amounts. `probability` defaults to the stage's defaultProbability
-   but may be overridden per-deal to reflect deal-specific confidence. */
+   flat AUD amounts. `probability` is a per-deal Notion value Steve sets
+   directly on the deal — never a stage-based default. `score` is a mock
+   stand-in for the Score Notion computes as a formula (see ASSUMPTIONS
+   'pipeline-score-mock') — it drives the Pipeline table's fixed sort order. */
 
 const DEALS = [
   {
     id: 'D-01', name: 'SDA Abodes / Socia', stage: 'B8', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Steve Harrington',
     source: 'Steve Relationship Network', transactionValue: 3200000, commissionPct: 0.025,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.92,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.92, score: 78,
     lostReason: null, nextAction: 'Finalise settlement statement with vendor solicitor', daysStale: 4,
     organisations: ['Socia'], properties: ['12 Bellbird Cres, Logan QLD'],
     createdDate: '2026-03-10', closeDate: null,
@@ -122,14 +125,14 @@ const DEALS = [
     ],
     milestones: [
       { name: 'Exchange Fee (10%)', dueDate: '2026-07-20', amount: 8000, status: 'Paid', unlockCondition: 'Contract exchanged' },
-      { name: 'Settlement Commission (90%)', dueDate: '2026-09-05', amount: 72000, status: 'Locked', unlockCondition: 'Settlement completes and funds clear to trust account' },
+      { name: 'Settlement Commission (90%)', dueDate: '2026-09-05', amount: 72000, status: 'WIP', unlockCondition: 'Settlement completes and funds clear to trust account' },
     ],
   },
   {
     id: 'D-02', name: 'Paramount Disability Homes', stage: 'A4', outcome: 'In Progress',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Emma Voss',
     source: 'Referral', transactionValue: 8500000, commissionPct: 0,
-    conjunctionFee: 0, referralFee: 0, probability: 0.55,
+    conjunctionFee: 0, referralFee: 0, probability: 0.55, score: 53,
     lostReason: null, nextAction: 'Deliver draft due-diligence report to investment committee', daysStale: 9,
     organisations: ['Paramount Disability Homes Pty Ltd'], properties: ['Portfolio — 6 SDA dwellings, Ipswich'],
     createdDate: '2026-02-01', closeDate: null,
@@ -153,13 +156,13 @@ const DEALS = [
        Not a fixed 50/50 split: this engagement was billed 60/40. */
     consultancyFeeTotal: 65000,
     tranche1Amount: 39000, tranche1Status: 'Paid', tranche1Date: '2026-02-15',
-    tranche2Amount: 26000, tranche2Status: 'Locked', tranche2Date: '2026-09-20',
+    tranche2Amount: 26000, tranche2Status: 'WIP', tranche2Date: '2026-09-20',
   },
   {
     id: 'D-03', name: 'Evergreen Built', stage: 'B3', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment', 'Strategic Partnership / Agency Collaboration'], entity: 'SDA Home Choices', owner: 'Daniel Reyes',
     source: 'SDA Report', transactionValue: 4100000, commissionPct: 0.0275,
-    advisoryFee: 0, conjunctionFee: 20000, referralFee: 0, probability: 0.35,
+    advisoryFee: 0, conjunctionFee: 20000, referralFee: 0, probability: 0.35, score: 56,
     lostReason: null, nextAction: 'Finalise marketing collateral ahead of buyer outreach', daysStale: 15,
     organisations: ['Evergreen Built Pty Ltd'], properties: ['4 dwellings, Caboolture QLD'],
     createdDate: '2026-05-01', closeDate: null,
@@ -177,15 +180,15 @@ const DEALS = [
       { name: 'Buyer Target List', acceptanceCriteria: 'Target buyer segments identified and prioritised', status: 'Not started' },
     ],
     milestones: [
-      { name: 'Conjunction Fee (on buyer engagement)', dueDate: '2026-09-08', amount: 20000, status: 'Locked', unlockCondition: 'Conjunction agent engages a qualified buyer' },
-      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-11-15', amount: 112750, status: 'Locked', unlockCondition: 'Settlement completes' },
+      { name: 'Conjunction Fee (on buyer engagement)', dueDate: '2026-09-08', amount: 20000, status: 'Not started', unlockCondition: 'Conjunction agent engages a qualified buyer' },
+      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-11-15', amount: 112750, status: 'Not started', unlockCondition: 'Settlement completes' },
     ],
   },
   {
     id: 'D-04', name: 'LVP Logan', stage: 'B6', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Steve Harrington',
     source: 'Steve Relationship Network', transactionValue: 2650000, commissionPct: 0.03,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.75,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.75, score: 70,
     lostReason: null, nextAction: 'Review buyer counter-offer with vendor', daysStale: 3,
     organisations: ['LVP Investments'], properties: ['8 Kingfisher St, Logan QLD'],
     createdDate: '2026-04-12', closeDate: null,
@@ -207,7 +210,7 @@ const DEALS = [
     id: 'D-05', name: 'Living Well Solutions', stage: 'A2', outcome: 'In Progress',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Priya Nathan',
     source: 'LinkedIn / Marketing', transactionValue: 5000000, commissionPct: 0,
-    advisoryFee: 28000, conjunctionFee: 0, referralFee: 0, probability: 0.25,
+    advisoryFee: 28000, conjunctionFee: 0, referralFee: 0, probability: 0.25, score: 28,
     lostReason: null, nextAction: 'Follow up on advisory proposal sent 8 days ago', daysStale: 12,
     organisations: ['Living Well Solutions'], properties: ['Portfolio under review — 3 assets'],
     createdDate: '2026-06-20', closeDate: null,
@@ -222,7 +225,7 @@ const DEALS = [
     id: 'D-06', name: 'Skychest', stage: 'B2', outcome: 'In Progress',
     dealType: ['Strategic Partnership / Agency Collaboration', 'Brokerage / Divestment'], entity: '3DSDA', owner: 'Chris Bell',
     source: 'Valuer / Adviser', transactionValue: 6300000, commissionPct: 0.0225,
-    advisoryFee: 0, conjunctionFee: 15000, referralFee: 0, probability: 0.20,
+    advisoryFee: 0, conjunctionFee: 15000, referralFee: 0, probability: 0.20, score: 50,
     lostReason: null, nextAction: 'Present brokerage proposal to fund board', daysStale: 20,
     organisations: ['Skychest Capital'], properties: ['Portfolio — 5 SDA assets, SE QLD'],
     createdDate: '2026-05-15', closeDate: null,
@@ -237,7 +240,7 @@ const DEALS = [
     id: 'D-07', name: 'Williams Landing', stage: '9', outcome: 'Won',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Steve Harrington',
     source: 'Existing Client', transactionValue: 2900000, commissionPct: 0.0275,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 1.0,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 1.0, score: 84,
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Williams Landing SDA Trust'], properties: ['3 Grevillea Ct, Williams Landing VIC'],
     createdDate: '2025-11-02', closeDate: '2026-02-10',
@@ -259,7 +262,7 @@ const DEALS = [
     id: 'D-08', name: 'Horizon SDA Fund', stage: 'A5', outcome: 'In Progress',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Emma Voss',
     source: 'Existing Client', transactionValue: 12000000, commissionPct: 0,
-    conjunctionFee: 0, referralFee: 0, probability: 0.70,
+    conjunctionFee: 0, referralFee: 0, probability: 0.70, score: 66,
     lostReason: null, nextAction: 'Awaiting client go-ahead to proceed to brokerage mandate', daysStale: 6,
     organisations: ['Horizon SDA Fund'], properties: ['Portfolio — 9 SDA dwellings, QLD-wide'],
     createdDate: '2026-01-20', closeDate: null,
@@ -282,8 +285,8 @@ const DEALS = [
        Notion fields these will become (see ASSUMPTIONS 'delivery-tranche-fields').
        Billed 70/30, not a fixed split. */
     consultancyFeeTotal: 80000,
-    tranche1Amount: 56000, tranche1Status: 'Paid', tranche1Date: '2026-01-25',
-    tranche2Amount: 24000, tranche2Status: 'Unlocked', tranche2Date: '2026-09-10',
+    tranche1Amount: 56000, tranche1Status: 'Invoiced', tranche1Date: '2026-01-25',
+    tranche2Amount: 24000, tranche2Status: 'Not started', tranche2Date: '2026-09-10',
     gatedBrokerage: {
       potentialValue: 300000, commissionPctAssumed: 0.025,
       condition: 'Client confirms go-ahead to list the 9-dwelling QLD portfolio for sale following DD sign-off',
@@ -293,7 +296,7 @@ const DEALS = [
     id: 'D-09', name: 'Northline Community Housing', stage: 'B7', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Daniel Reyes',
     source: 'Referral', transactionValue: 3750000, commissionPct: 0.025,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.85,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.85, score: 78,
     lostReason: null, nextAction: 'Awaiting signed contract return from buyer', daysStale: 2,
     organisations: ['Northline Community Housing Ltd'], properties: ['6 Wattle Ave, Ipswich QLD'],
     createdDate: '2026-03-25', closeDate: null,
@@ -315,14 +318,14 @@ const DEALS = [
       { name: 'Settlement Coordination', acceptanceCriteria: 'Settlement date confirmed with all parties', status: 'Not started' },
     ],
     milestones: [
-      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-09-25', amount: 93750, status: 'Locked', unlockCondition: 'Signed contract returned and settlement completes' },
+      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-09-25', amount: 93750, status: 'WIP', unlockCondition: 'Signed contract returned and settlement completes' },
     ],
   },
   {
     id: 'D-10', name: 'Riverside Accessible Homes', stage: '1', outcome: 'In Progress',
     dealType: ['Referral'], entity: 'SDA Home Choices', owner: 'Priya Nathan',
     source: 'Referral', transactionValue: 1800000, commissionPct: 0,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 9000, probability: 0.10,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 9000, probability: 0.10, score: 19,
     lostReason: null, nextAction: 'Qualify opportunity and confirm investor intent', daysStale: 7,
     organisations: ['Riverside Accessible Homes'], properties: ['2 dwellings, Redbank Plains QLD'],
     createdDate: '2026-08-24', closeDate: null,
@@ -335,7 +338,7 @@ const DEALS = [
     id: 'D-11', name: 'Bellbird Park SDA', stage: 'B4', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Steve Harrington',
     source: 'Steve Relationship Network', transactionValue: 4600000, commissionPct: 0.025,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.45,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.45, score: 59,
     lostReason: null, nextAction: 'Follow up with shortlisted buyers post IM distribution', daysStale: 11,
     organisations: ['Bellbird Park Holdings'], properties: ['5 dwellings, Bellbird Park QLD'],
     createdDate: '2026-05-28', closeDate: null,
@@ -354,14 +357,14 @@ const DEALS = [
       { name: 'Offer Collection', acceptanceCriteria: 'Formal offers collected from interested buyers', status: 'Not started' },
     ],
     milestones: [
-      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-10-20', amount: 115000, status: 'Locked', unlockCondition: 'Buyer signs contract and settlement completes' },
+      { name: 'Brokerage Commission (on settlement)', dueDate: '2026-10-20', amount: 115000, status: 'WIP', unlockCondition: 'Buyer signs contract and settlement completes' },
     ],
   },
   {
     id: 'D-12', name: 'Wattle Grove Residences', stage: '0', outcome: 'In Progress',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Chris Bell',
     source: 'SDA Report', transactionValue: 2200000, commissionPct: 0,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.05,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.05, score: 16,
     lostReason: null, nextAction: 'Initial outreach call to gauge appetite', daysStale: 4,
     organisations: ['Wattle Grove Residences'], properties: ['Single dwelling, Wattle Grove NSW'],
     createdDate: '2026-08-27', closeDate: null,
@@ -373,7 +376,7 @@ const DEALS = [
     id: 'D-13', name: 'Coomera SDA Portfolio', stage: 'B5', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment'], entity: '3DSDA', owner: 'Emma Voss',
     source: 'Valuer / Adviser', transactionValue: 7200000, commissionPct: 0.0225,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.55,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.55, score: 74,
     lostReason: null, nextAction: 'Chase buyer finance approval status', daysStale: 8,
     organisations: ['Coomera SDA Portfolio Trust'], properties: ['Portfolio — 4 SDA assets, Coomera QLD'],
     createdDate: '2026-04-02', closeDate: null,
@@ -390,7 +393,7 @@ const DEALS = [
     id: 'D-14', name: 'Sunshine Coast Disability Housing', stage: 'A1', outcome: 'In Progress',
     dealType: ['Paid advisory / DD'], entity: '3DSDA', owner: 'Daniel Reyes',
     source: 'LinkedIn / Marketing', transactionValue: 3400000, commissionPct: 0,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.15,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.15, score: 20,
     lostReason: null, nextAction: 'Send information pack and engagement scope', daysStale: 6,
     organisations: ['Sunshine Coast Disability Housing Co-op'], properties: ['3 dwellings, Sippy Downs QLD'],
     createdDate: '2026-07-18', closeDate: null,
@@ -404,7 +407,7 @@ const DEALS = [
     id: 'D-15', name: 'Ipswich Central SDA', stage: '9', outcome: 'Won',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Steve Harrington',
     source: 'Steve Relationship Network', transactionValue: 1950000, commissionPct: 0.03,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 1.0,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 1.0, score: 79,
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Ipswich Central SDA Holdings'], properties: ['2 dwellings, Ipswich Central QLD'],
     createdDate: '2025-09-10', closeDate: '2025-12-18',
@@ -426,7 +429,7 @@ const DEALS = [
     id: 'D-16', name: 'Meadowbrook Supported Living', stage: 'A3', outcome: 'Lost',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Priya Nathan',
     source: 'Referral', transactionValue: 2750000, commissionPct: 0,
-    advisoryFee: 18000, conjunctionFee: 0, referralFee: 0, probability: 0.40,
+    advisoryFee: 18000, conjunctionFee: 0, referralFee: 0, probability: 0.40, score: 39,
     lostReason: 'Investor found alternative', nextAction: 'Closed — no further action', daysStale: 0,
     organisations: ['Meadowbrook Supported Living'], properties: ['3 dwellings, Meadowbrook QLD'],
     createdDate: '2026-01-08', closeDate: '2026-03-15',
@@ -442,7 +445,7 @@ const DEALS = [
     id: 'D-17', name: 'Caboolture SDA Development', stage: 'B3', outcome: 'Lost',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Chris Bell',
     source: 'SDA Report', transactionValue: 5500000, commissionPct: 0.025,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.35,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.35, score: 65,
     lostReason: 'Price too high', nextAction: 'Closed — no further action', daysStale: 0,
     organisations: ['Caboolture SDA Development Co'], properties: ['Portfolio — 5 dwellings, Caboolture QLD'],
     createdDate: '2026-02-12', closeDate: '2026-04-22',
@@ -458,7 +461,7 @@ const DEALS = [
     id: 'D-18', name: 'Redland Bay Accessible Homes', stage: 'A2', outcome: 'Paused',
     dealType: ['Referral'], entity: 'SDA Home Choices', owner: 'Emma Voss',
     source: 'Referral', transactionValue: 1600000, commissionPct: 0,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 6500, probability: 0.25,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 6500, probability: 0.25, score: 14,
     lostReason: null, nextAction: 'On hold — investor reviewing finance position', daysStale: 45,
     organisations: ['Redland Bay Accessible Homes'], properties: ['2 dwellings, Redland Bay QLD'],
     createdDate: '2026-02-14', closeDate: null,
@@ -473,7 +476,7 @@ const DEALS = [
     id: 'D-19', name: 'Springfield Lakes SDA', stage: 'B1', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Daniel Reyes',
     source: 'Existing Client', transactionValue: 3100000, commissionPct: 0.025,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.15,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.15, score: 35,
     lostReason: null, nextAction: 'Gather property information pack from vendor', daysStale: 11,
     organisations: ['Springfield Lakes SDA Group'], properties: ['3 dwellings, Springfield Lakes QLD'],
     createdDate: '2026-08-20', closeDate: null,
@@ -487,7 +490,7 @@ const DEALS = [
     id: 'D-20', name: 'Toowoomba Disability Housing Trust', stage: '9', outcome: 'Won',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Priya Nathan',
     source: 'Valuer / Adviser', transactionValue: 9800000, commissionPct: 0,
-    advisoryFee: 72000, conjunctionFee: 0, referralFee: 0, probability: 1.0,
+    advisoryFee: 72000, conjunctionFee: 0, referralFee: 0, probability: 1.0, score: 82,
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Toowoomba Disability Housing Trust'], properties: ['Portfolio — 7 SDA dwellings, Toowoomba QLD'],
     createdDate: '2025-10-05', closeDate: '2026-01-22',
@@ -514,7 +517,7 @@ const DEALS = [
     id: 'D-21', name: 'Gold Coast SDA Collective', stage: 'B6', outcome: 'Lost',
     dealType: ['Strategic Partnership / Agency Collaboration'], entity: 'SDA Home Choices', owner: 'Steve Harrington',
     source: 'Steve Relationship Network', transactionValue: 6900000, commissionPct: 0.02,
-    advisoryFee: 0, conjunctionFee: 10000, referralFee: 0, probability: 0.70,
+    advisoryFee: 0, conjunctionFee: 10000, referralFee: 0, probability: 0.70, score: 85,
     lostReason: 'Vendor chose direct buyer', nextAction: 'Closed — no further action', daysStale: 0,
     organisations: ['Gold Coast SDA Collective'], properties: ['Portfolio — 6 SDA assets, Gold Coast QLD'],
     createdDate: '2026-01-05', closeDate: '2026-06-05',
@@ -533,7 +536,7 @@ const DEALS = [
     id: 'D-22', name: 'Logan Reserve Homes', stage: 'B8', outcome: 'In Progress',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Chris Bell',
     source: 'Referral', transactionValue: 2450000, commissionPct: 0.03,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.92,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 0.92, score: 76,
     lostReason: null, nextAction: 'Coordinate settlement date with all parties', daysStale: 5,
     organisations: ['Logan Reserve Homes Pty Ltd'], properties: ['3 Ironbark Way, Logan Reserve QLD'],
     createdDate: '2026-05-10', closeDate: null,
@@ -554,7 +557,7 @@ const DEALS = [
     id: 'D-23', name: 'Bayview SDA Portfolio', stage: '9', outcome: 'Won',
     dealType: ['Brokerage / Divestment'], entity: 'SDA Home Choices', owner: 'Steve Harrington',
     source: 'Steve Relationship Network', transactionValue: 5200000, commissionPct: 0.025,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 1.0,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 0, probability: 1.0, score: 95,
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Bayview SDA Holdings'], properties: ['Portfolio — 4 SDA dwellings, Bayview VIC'],
     createdDate: '2025-12-20', closeDate: '2026-05-05',
@@ -576,7 +579,7 @@ const DEALS = [
     id: 'D-24', name: 'Kallangur Supported Homes', stage: '9', outcome: 'Won',
     dealType: ['Paid advisory / DD'], entity: 'SDA Home Choices', owner: 'Emma Voss',
     source: 'Existing Client', transactionValue: 6000000, commissionPct: 0,
-    advisoryFee: 45000, conjunctionFee: 0, referralFee: 0, probability: 1.0,
+    advisoryFee: 45000, conjunctionFee: 0, referralFee: 0, probability: 1.0, score: 76,
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Kallangur Supported Homes'], properties: ['Portfolio — 3 SDA dwellings, Kallangur QLD'],
     createdDate: '2026-02-18', closeDate: '2026-06-20',
@@ -603,7 +606,7 @@ const DEALS = [
     id: 'D-25', name: 'Marsden Park SDA', stage: '9', outcome: 'Won',
     dealType: ['Brokerage / Divestment', 'Referral'], entity: '3DSDA', owner: 'Chris Bell',
     source: 'Referral', transactionValue: 3400000, commissionPct: 0.0275,
-    advisoryFee: 0, conjunctionFee: 0, referralFee: 8000, probability: 1.0,
+    advisoryFee: 0, conjunctionFee: 0, referralFee: 8000, probability: 1.0, score: 89,
     lostReason: null, nextAction: 'Archived — settled', daysStale: 0,
     organisations: ['Marsden Park SDA Group'], properties: ['4 dwellings, Marsden Park NSW'],
     createdDate: '2026-03-30', closeDate: '2026-08-15',
@@ -841,12 +844,14 @@ const Aggregates = {
     return { target, settled, contracted, weighted, totalPotential, gap, onTrack };
   },
 
-  /* Revenue composition by fee source. Scoped to Won + In Progress + Paused
-     (excludes Lost, which never generates revenue). Fully real — each
-     component reads a distinct per-deal fee field (advisory via
-     advisoryRevenue(), which is tranche-aware — see PART A rework). */
+  /* Revenue composition by fee source. Scoped to Won + In Progress only —
+     Lost never generates revenue, and Paused is explicitly zero monetary
+     value / out of active pipeline (see ASSUMPTIONS 'paused-exclusion').
+     Fully real — each component reads a distinct per-deal fee field
+     (advisory via advisoryRevenue(), which is tranche-aware — see PART A
+     rework). */
   revenueBySource: () => {
-    const deals = DEALS.filter(d => d.outcome !== 'Lost');
+    const deals = DEALS.filter(d => d.outcome === 'Won' || d.outcome === 'In Progress');
     const totals = { brokerage: 0, advisory: 0, conjunction: 0, referral: 0 };
     deals.forEach(d => {
       totals.brokerage += d.transactionValue * d.commissionPct;
@@ -861,7 +866,7 @@ const Aggregates = {
   /* Concentration risk: what share of expected revenue sits in the top N
      deals. Same scope as revenueBySource for consistency. */
   revenueConcentration: (n = 3) => {
-    const deals = DEALS.filter(d => d.outcome !== 'Lost');
+    const deals = DEALS.filter(d => d.outcome === 'Won' || d.outcome === 'In Progress');
     const sorted = [...deals].sort((a, b) => sdahcRevenue(b) - sdahcRevenue(a));
     const total = sorted.reduce((s, d) => s + sdahcRevenue(d), 0);
     const top = sorted.slice(0, n);
@@ -1083,18 +1088,29 @@ const Aggregates = {
 
    Because two different shapes now exist, everything below reads through
    engagementTranches(deal), which normalises either shape into the same
-   {name, dueDate, amount, status, unlockCondition} list — Locked vs Unlocked
-   always comes from each tranche/milestone's own explicit `status` field,
-   never derived from stage.
+   {name, dueDate, amount, status, unlockCondition} list.
 
-   deliverables[], progressPct, health and gatedBrokerage still do not exist
-   in Notion today for any engagement (see ASSUMPTIONS — 'delivery-milestone-model'
-   for the brokerage billing model specifically, 'delivery-tranche-fields' for
-   the advisory billing fields). */
+   TRANCHE STATES (this turn's rework): every tranche/milestone status is now
+   one of exactly four values, mirroring the real Notion field — "Not
+   started", "WIP", "Invoiced", "Paid". Each carries real financial meaning,
+   applied via isTrancheLocked() below: Paid is cash (Settled), Invoiced is
+   committed but not yet cash (Contracted), and WIP / Not started are neither
+   — they stay part of the deal's open/weighted pipeline only. Locked vs
+   Unlocked on this page is derived from that mapping, never from stage. */
 
 const DELIVERABLE_STATUSES = ['Not started', 'In progress', 'Delivered', 'Accepted'];
-const MILESTONE_STATUSES = ['Locked', 'Unlocked', 'Invoiced', 'Paid'];
+const MILESTONE_STATUSES = ['Not started', 'WIP', 'Invoiced', 'Paid'];
 const ENGAGEMENT_HEALTH = ['On track', 'At risk', 'Slipped'];
+
+/* A tranche/milestone is "Locked" (still just pipeline, not committed
+   revenue) while it's Not started or WIP. Invoiced and Paid are both
+   "Unlocked" for this page's Locked/Unlocked split — the further financial
+   distinction between them (committed-but-uncollected vs. cash) is what
+   "Invoiced → Contracted" / "Paid → Settled" describes, surfaced via each
+   tranche's own status badge rather than a third bucket here. */
+function isTrancheLocked(status) {
+  return status === 'Not started' || status === 'WIP';
+}
 
 /* Full calendar-quarter window containing `date` (not quarter-to-date — this
    page needs the forward-looking end of the current quarter to test whether
@@ -1139,19 +1155,26 @@ function trancheReconciliation(deal) {
 Object.assign(Aggregates, {
   engagements: () => DEALS.filter(d => (Array.isArray(d.milestones) && d.milestones.length > 0) || d.tranche1Amount != null),
 
-  engagementLocked: (deal) => engagementTranches(deal).filter(m => m.status === 'Locked').reduce((s, m) => s + m.amount, 0),
-  engagementUnlocked: (deal) => engagementTranches(deal).filter(m => m.status !== 'Locked').reduce((s, m) => s + m.amount, 0),
+  engagementLocked: (deal) => engagementTranches(deal).filter(m => isTrancheLocked(m.status)).reduce((s, m) => s + m.amount, 0),
+  engagementUnlocked: (deal) => engagementTranches(deal).filter(m => !isTrancheLocked(m.status)).reduce((s, m) => s + m.amount, 0),
   trancheReconciliation,
 
-  /* Soonest not-yet-paid milestone across all engagements — used for the
-     "Next Milestone" KPI and to seed the timeline view's default sort. */
+  /* Soonest UPCOMING not-yet-paid milestone across all engagements — used
+     for the "Next Milestone" KPI. Prefers a future due date; a tranche can
+     now sit unpaid past its due date (e.g. Invoiced but not yet collected —
+     see Horizon SDA Fund's retainer), and that overdue item is real but
+     isn't "next", so it's only surfaced as a fallback when nothing upcoming
+     exists (soonest-overdue first, i.e. closest to today). */
   nextMilestone: () => {
     const all = [];
     Aggregates.engagements().forEach(d => {
       engagementTranches(d).forEach(m => { if (m.status !== 'Paid') all.push({ deal: d, milestone: m }); });
     });
-    all.sort((a, b) => parseDate(a.milestone.dueDate) - parseDate(b.milestone.dueDate));
-    return all[0] || null;
+    const upcoming = all.filter(x => parseDate(x.milestone.dueDate) >= TODAY)
+      .sort((a, b) => parseDate(a.milestone.dueDate) - parseDate(b.milestone.dueDate));
+    if (upcoming.length) return upcoming[0];
+    const overdue = all.sort((a, b) => parseDate(b.milestone.dueDate) - parseDate(a.milestone.dueDate));
+    return overdue[0] || null;
   },
 
   deliveryKpis: () => {
@@ -1161,7 +1184,7 @@ Object.assign(Aggregates, {
     let lockedRevenue = 0, unlockableThisQuarter = 0, revenueAtRisk = 0;
     engagements.forEach(d => {
       engagementTranches(d).forEach(m => {
-        if (m.status !== 'Locked') return;
+        if (!isTrancheLocked(m.status)) return;
         lockedRevenue += m.amount;
         const due = parseDate(m.dueDate);
         if (due <= quarterEnd) unlockableThisQuarter += m.amount;
@@ -1201,7 +1224,7 @@ Object.assign(Aggregates, {
 
     const atRiskDeal = engagements.find(d => d.health === 'At risk');
     if (atRiskDeal) {
-      const soonMilestone = engagementTranches(atRiskDeal).filter(m => m.status === 'Locked')
+      const soonMilestone = engagementTranches(atRiskDeal).filter(m => isTrancheLocked(m.status))
         .sort((a, b) => parseDate(a.dueDate) - parseDate(b.dueDate))[0];
       if (soonMilestone) {
         const days = Math.round((parseDate(soonMilestone.dueDate) - TODAY) / 86400000);
@@ -1321,7 +1344,6 @@ const DEFAULT_SETTINGS = {
   // Pipeline
   highValueDealThreshold: 4000000,
   staleWarningDays: 21,
-  stageProbabilities: Object.fromEntries(STAGES.map(s => [s.id, s.defaultProbability])),
 
   // SDA Report — dashboard-owned print/campaign inventory
   sdaReport: {
@@ -1355,7 +1377,6 @@ function initSettings() {
     const saved = JSON.parse(raw);
     return {
       ...DEFAULT_SETTINGS, ...saved,
-      stageProbabilities: { ...DEFAULT_SETTINGS.stageProbabilities, ...(saved.stageProbabilities || {}) },
       sdaReport: { ...DEFAULT_SETTINGS.sdaReport, ...(saved.sdaReport || {}) },
       syncStatus: { ...DEFAULT_SETTINGS.syncStatus, ...(saved.syncStatus || {}) },
     };
@@ -1369,12 +1390,11 @@ function structuredCloneSettings(obj) { return JSON.parse(JSON.stringify(obj)); 
 function getSettings() { return initSettings(); }
 
 /* Deep-merges `patch` over the current saved settings and persists. Nested
-   objects (stageProbabilities, sdaReport) are merged key-by-key rather than
-   replaced wholesale, so a partial patch never clobbers sibling fields. */
+   objects (sdaReport) are merged key-by-key rather than replaced wholesale,
+   so a partial patch never clobbers sibling fields. */
 function updateSettings(patch) {
   const current = getSettings();
   const next = { ...current, ...patch };
-  if (patch.stageProbabilities) next.stageProbabilities = { ...current.stageProbabilities, ...patch.stageProbabilities };
   if (patch.sdaReport) next.sdaReport = { ...current.sdaReport, ...patch.sdaReport };
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
   return next;
@@ -1628,13 +1648,21 @@ const PLAYBOOK_MANUAL_CATEGORIES = [
 /* ---------------------------- ASSUMPTIONS REGISTER ------------------------- */
 /* Every simulated, estimated or placeholder figure in this prototype, in one
    place. If something in the UI carries an asterisk, it has an entry here.
-   Surfaced via the "Prototype — Mock Data" badge and in Settings. */
+   Surfaced via the "Prototype — Mock Data" badge and in Settings.
+
+   `pages` groups each entry under the page(s) it's used on, so the modal can
+   render one heading per page (a user on a given page finds only that
+   page's assumptions quickly) instead of one long flat list. An entry
+   affecting more than one page (e.g. fiscal year) is listed — and shown —
+   under all of them. Order here doesn't matter; ASSUMPTION_PAGE_ORDER
+   (app.js) controls heading order in the modal. */
 
 const ASSUMPTIONS = [
   {
     id: 'value-added-rate',
     label: 'Commercial Flow "Value Added" (35% annualised rate)',
     usedIn: 'Overview → Commercial Flow waterfall',
+    pages: ['Overview'],
     category: 'Modelled',
     why: 'No stage-history log exists to measure how much carried-over pipeline gained value during a period. Modelled as a fixed annualised re-rating rate applied to the current weighted pipeline, pro-rated to the period length.',
   },
@@ -1642,6 +1670,7 @@ const ASSUMPTIONS = [
     id: 'opening-pipeline-derivation',
     label: 'Commercial Flow "Opening Pipeline" (back-solved, not stored)',
     usedIn: 'Overview → Commercial Flow waterfall',
+    pages: ['Overview'],
     category: 'Modelled',
     why: 'There is no historical snapshot of pipeline value at the start of a period. Opening is derived algebraically from Closing, New, Value Added, Lost and Settled so the bridge always balances exactly.',
   },
@@ -1649,6 +1678,7 @@ const ASSUMPTIONS = [
     id: 'estimated-close-date',
     label: 'Estimated close month (derived from stage probability)',
     usedIn: 'Revenue → Revenue Over Time (Forecast bars)',
+    pages: ['Revenue'],
     category: 'Modelled',
     why: 'Notion does not track an expected close date. A rough one is derived from each deal\'s probability so forecast revenue can be bucketed into months — directional only, not an operational fact.',
   },
@@ -1656,6 +1686,7 @@ const ASSUMPTIONS = [
     id: 'monthly-target-split',
     label: 'Monthly Revenue Target (defaults to annual target ÷ 12, editable)',
     usedIn: 'Revenue → Revenue Over Time (Target line); Settings → Business',
+    pages: ['Revenue', 'Settings'],
     category: 'Dashboard-owned',
     why: 'No seasonality is modelled for the target — it assumes even monthly pacing unless overridden in Settings.',
   },
@@ -1663,6 +1694,7 @@ const ASSUMPTIONS = [
     id: 'market-relationships-estimate',
     label: '"Market / Relationships" top-of-funnel = 60',
     usedIn: 'Sales Funnel → Conversion Funnel (top tier)',
+    pages: ['Sales Funnel'],
     category: 'Estimated constant',
     why: 'Not tracked in Notion at all — an editorial estimate of SDAHC\'s active relationship network, shown only so the funnel has the correct shape.',
   },
@@ -1670,6 +1702,7 @@ const ASSUMPTIONS = [
     id: 'qualified-definition',
     label: '"Qualified Opportunity" definition (reached stage A1 / B1)',
     usedIn: 'Overview → Deal Activity; Sales Funnel → funnel tiers, Prospect Sources',
+    pages: ['Overview', 'Sales Funnel'],
     category: 'Definitional',
     why: 'Notion has no "qualified" flag. A deal is treated as qualified once its current/frozen stage is A1, B1 or later — a threshold judgement call, not a stored field.',
   },
@@ -1677,20 +1710,31 @@ const ASSUMPTIONS = [
     id: 'funnel-tier-mapping',
     label: 'Sales Funnel tier → stage-index mapping',
     usedIn: 'Sales Funnel → Conversion Funnel, Stage Conversion table',
+    pages: ['Sales Funnel'],
     category: 'Definitional',
     why: 'The real 16-stage pipeline is collapsed into 9 simplified milestones for readability. A deal\'s furthest-reached global stage index stands in for a true per-deal milestone history, which Notion does not store.',
   },
   {
     id: 'revenue-scope',
-    label: 'Revenue Composition & Concentration scope (Won + Active + Paused, excludes Lost)',
+    label: 'Revenue Composition & Concentration scope (Won + In Progress, excludes Lost and Paused)',
     usedIn: 'Revenue → Revenue Composition, Revenue Concentration',
+    pages: ['Revenue'],
     category: 'Definitional',
-    why: 'A scoping choice for "what counts as revenue-generating" — Lost deals are excluded since they never produced revenue. Not a Notion-native filter.',
+    why: 'A scoping choice for "what counts as revenue-generating." Lost never produced revenue; Paused is explicitly zero monetary value and out of active pipeline (see \'paused-exclusion\') — both are excluded so these two charts only ever total real or realistically-open revenue. Not a Notion-native filter.',
+  },
+  {
+    id: 'paused-exclusion',
+    label: 'Paused deals excluded from all pipeline/revenue totals',
+    usedIn: 'Overview (KPI strip, hero, waterfall), Revenue (KPIs, composition, concentration), Pipeline (stage flow uses byStage(), unaffected — see note)',
+    pages: ['Overview', 'Revenue', 'Pipeline'],
+    category: 'Definitional',
+    why: 'A Paused deal (on hold, e.g. investor reviewing finance) carries zero monetary value in every pipeline/revenue aggregate — Active Deals, Expected Open Pipeline, Weighted Pipeline, Revenue Composition and Revenue Concentration all read through active() (outcome === \'In Progress\' only) or an explicit In-Progress/Won filter. Prospect and Contacted-stage deals remain fully included — this is specifically about the Paused outcome, not early pipeline stages. The one deliberate exception is the Pipeline page\'s stage-flow cards and Overview\'s "Pipeline by Stage" chart (byStage()) — those are a structural "what\'s sitting at each stage today" view that intentionally includes Won and Lost deals at their frozen stage too, so Paused is left in there for the same reason, not by oversight.',
   },
   {
     id: 'cohort-conversion',
     label: 'Cohort conversion by creation-quarter',
     usedIn: 'Sales Funnel → Cohort Conversion by Quarter',
+    pages: ['Sales Funnel'],
     category: 'Definitional',
     why: 'Win rate is grouped by the quarter a deal was created — not a stored "cohort" concept in Notion. Quarters with no decided deals yet show "Too early" rather than a fabricated rate.',
   },
@@ -1698,6 +1742,7 @@ const ASSUMPTIONS = [
     id: 'sda-report-inventory',
     label: 'SDA Report inventory (Printed, Allocated, Delivered, Damaged, Internal Use, Returned)',
     usedIn: 'SDA Report → Inventory panel; Settings → SDA Report',
+    pages: ['SDA Report', 'Settings'],
     category: 'Dashboard-owned',
     why: 'SDA Report print logistics are not tracked in Notion at all. The whole inventory block is dashboard-owned, seeded with plausible starting values, and editable via the five adjustment actions on that page.',
   },
@@ -1705,6 +1750,7 @@ const ASSUMPTIONS = [
     id: 'sda-report-funnel-upper',
     label: 'SDA Report funnel — Followed Up / Response / Meeting / Opportunity counts',
     usedIn: 'SDA Report → Commercial Funnel',
+    pages: ['SDA Report'],
     category: 'Estimated constant',
     why: 'Individual report recipients are not tracked as Notion records, so early-funnel campaign activity is simulated at plausible conversion rates from the real Reports Delivered count.',
   },
@@ -1712,6 +1758,7 @@ const ASSUMPTIONS = [
     id: 'sda-report-distribution',
     label: 'SDA Report distribution mix (by City, Channel, Priority, Relationship Type)',
     usedIn: 'SDA Report → Distribution charts',
+    pages: ['SDA Report'],
     category: 'Estimated constant',
     why: 'Individual report recipients are not tracked as Notion records, so the breakdown is simulated to sum to the 122 delivered reports.',
   },
@@ -1719,6 +1766,7 @@ const ASSUMPTIONS = [
     id: 'sda-report-deal-link',
     label: 'SDA Report → Deal / Pipeline Generated / Settled Revenue',
     usedIn: 'SDA Report → Commercial Funnel (final three stages)',
+    pages: ['SDA Report'],
     category: 'Real (cross-page check)',
     why: 'Unlike the rest of this page, these figures are NOT simulated — they read directly from the real deals in data.js tagged source = "SDA Report", the same 3 deals counted on Sales Funnel → Prospect Sources. Settled Revenue is currently $0 because none of the 3 have reached Settlement yet.',
   },
@@ -1726,6 +1774,7 @@ const ASSUMPTIONS = [
     id: 'market-pulse-gauges',
     label: 'Market Pulse gauges (Institutional Appetite, Completed Asset Demand, Regional Vacancy Risk, Capital/Yield Pressure, Provider Market Conditions)',
     usedIn: 'Market Intelligence → Market Pulse',
+    pages: ['Market Intelligence'],
     category: 'Estimated constant',
     why: 'No live market-data feed exists yet. Values are illustrative placeholders showing how a future data feed would be visualised.',
   },
@@ -1733,20 +1782,15 @@ const ASSUMPTIONS = [
     id: 'market-intel-deal-signals',
     label: 'Intelligence signals linked to SDA Abodes / Socia, LVP Logan and Coomera SDA Portfolio',
     usedIn: 'Market Intelligence → Intelligence Impacting Active Deals',
+    pages: ['Market Intelligence'],
     category: 'Estimated constant',
     why: 'Illustrative only — demonstrates how market intelligence would inform live deals, not a real signal-detection system. Deal names are real (from data.js); the signals themselves are not.',
-  },
-  {
-    id: 'stage-probability-preview',
-    label: 'Default Stage Probabilities — editable, preview-only',
-    usedIn: 'Settings → Pipeline',
-    category: 'Dashboard-owned',
-    why: 'Persisted to localStorage and shown as a live "what-if" recompute of Weighted Pipeline as you edit. Does not retroactively reweight the 25 seeded deals elsewhere in this prototype — each deal already carries its own probability, matching the stage default at seed time (with two deliberate per-deal overrides).',
   },
   {
     id: 'fiscal-year-scope',
     label: 'Financial Year start month — affects YTD window',
     usedIn: 'Settings → Business; Overview, Revenue (every "YTD" figure)',
+    pages: ['Settings', 'Overview', 'Revenue'],
     category: 'Dashboard-owned',
     why: 'Changes when "YTD" starts counting (defaults to January = calendar year, matching every figure verified in this prototype). Revenue Over Time\'s Jan–Dec chart is unaffected — it is always calendar-year for readability.',
   },
@@ -1754,6 +1798,7 @@ const ASSUMPTIONS = [
     id: 'playbook-source-condensation',
     label: 'SDAHC Playbook copy — distilled from the Operating Manual',
     usedIn: 'SDAHC Playbook (all sections)',
+    pages: ['Playbook'],
     category: 'Definitional',
     why: 'Distilled from the SDAHC Capability & Operating Manual and the Identity & Direction Briefing (internal source documents, not shipped with this app) — condensed to short reference sub-sections, not a reproduction. Verify against source before treating any sentence here as exact wording, a commitment, or a number to quote externally.',
   },
@@ -1761,6 +1806,7 @@ const ASSUMPTIONS = [
     id: 'delivery-milestone-model',
     label: 'Delivery deliverables, milestones, progress % and health (brokerage engagements)',
     usedIn: 'Delivery (all sections) — SDA Abodes / Socia, Evergreen Built, Northline Community Housing, Bellbird Park SDA',
+    pages: ['Delivery'],
     category: 'Modelled',
     why: 'Notion does not track deliverables, billing milestones, % complete or a health flag — Deals holds current stage and next action only. This models a plausible billing-milestone structure (commission on settlement, sometimes with an exchange-fee or conjunction-fee tranche first) for the 4 brokerage engagements on this page. Every milestone amount still sums exactly to that deal\'s sdahcRevenue() figure, so this can only re-slice real revenue, never add to it — but the split, due dates, deliverable statuses, progress % and health are dashboard-owned judgement calls, not Notion facts. Advisory engagements (Paramount Disability Homes, Horizon SDA Fund) no longer use this model — see \'delivery-tranche-fields\'. Production would need a new Notion structure (a Milestones or Deliverables database) or dashboard-owned modelling with finance sign-off.',
   },
@@ -1768,13 +1814,15 @@ const ASSUMPTIONS = [
     id: 'delivery-tranche-fields',
     label: 'Explicit advisory billing tranches (consultancyFeeTotal, tranche1/2 Amount/Status/Date)',
     usedIn: 'Delivery — Paramount Disability Homes, Horizon SDA Fund (Engagements grid + drawer, KPI strip, Milestone Timeline)',
+    pages: ['Delivery'],
     category: 'Modelled',
-    why: 'These are NEW fields — they do not exist in Notion today. Production would need them created there (per-deal, on the Deals database or a linked Advisory Billing table) and filled in manually by whoever negotiates the engagement, exactly as entered here: a total fee, and two tranche amounts/statuses/dates that are NOT derived from a fixed 50/50 rule or from stage (Paramount is billed 60/40, Horizon 70/30 — real engagements are rarely an even split). Field names are chosen to map 1:1 to that future Notion schema. Statuses (Locked/Unlocked/Invoiced/Paid) are also manually set per tranche — Locked vs Unlocked on this page reads directly from them, never inferred from the deal\'s stage. Because two manually-entered numbers (a total, and two tranches) can drift apart by data-entry error, each engagement carries a live Tranche Reconciliation check (mirrors the equivalent Notion formula) — shown as a subtle ✓/⚠ indicator on the card and in the drawer. All mock data reconciles cleanly today, but the check runs unconditionally, not just for show.',
+    why: 'These are NEW fields — they do not exist in Notion today. Production would need them created there (per-deal, on the Deals database or a linked Advisory Billing table) and filled in manually by whoever negotiates the engagement, exactly as entered here: a total fee, and two tranche amounts/statuses/dates that are NOT derived from a fixed 50/50 rule or from stage (Paramount is billed 60/40, Horizon 70/30 — real engagements are rarely an even split). Field names are chosen to map 1:1 to that future Notion schema. Statuses are exactly the four values the real Notion field uses — "Not started", "WIP", "Invoiced", "Paid" — manually set per tranche, never inferred from the deal\'s stage. They carry real financial meaning: Paid counts as Settled (cash), Invoiced counts as Contracted (committed, not yet cash), and WIP/Not started count as neither — Locked vs Unlocked on this page is derived from that mapping. Because two manually-entered numbers (a total, and two tranches) can drift apart by data-entry error, each engagement carries a live Tranche Reconciliation check (mirrors the equivalent Notion formula) — shown as a subtle ✓/⚠ indicator on the card and in the drawer. All mock data reconciles cleanly today, but the check runs unconditionally, not just for show.',
   },
   {
     id: 'delivery-stage-history',
     label: 'Deal stage-journey history (stageHistory[]) and stage-anomaly flags',
     usedIn: 'Pipeline → Deal Detail Drawer (stage-journey timeline, anomaly flag)',
+    pages: ['Pipeline'],
     category: 'Modelled',
     why: 'Notion\'s Stage field is a single select with no transition history — it only ever holds the deal\'s current stage. stageHistory[] here is simulated for this prototype: each deal\'s past stages and entry dates are backfilled/interpolated, not real recorded transitions. In production this would NOT be a manual data-entry burden and would NOT require any new Notion field: the Notion→Supabase sync already runs nightly, and diffing each night\'s Stage value against the previous snapshot is enough to build a real transition log automatically, entirely outside Notion. The skipped-stage and moved-backwards anomalies flagged here are deliberately seeded (2 of the 25 deals) to demonstrate the detector; the dashboard only flags an unusual journey for review — it does not block or enforce valid stage transitions.',
   },
@@ -1782,6 +1830,7 @@ const ASSUMPTIONS = [
     id: 'delivery-brokerage-gating',
     label: 'Brokerage-gating dependency (Horizon SDA Fund → potential brokerage mandate)',
     usedIn: 'Delivery → Engagement detail drawer, Simulated AI panel',
+    pages: ['Delivery'],
     category: 'Modelled',
     why: 'Illustrates a real commercial pattern — an advisory/DD engagement completing can open a downstream brokerage mandate on the same asset — using a real deal. But there is no second Deal record for that future mandate (the client hasn\'t confirmed it), so the $300k potential is an estimate: Horizon SDA Fund\'s existing transaction value × a typical commission rate seen elsewhere in this dataset. Not a forecast to commit to; would become a real Deal once Notion has one.',
   },
@@ -1789,7 +1838,16 @@ const ASSUMPTIONS = [
     id: 'delivery-ai-insights',
     label: 'Delivery "Simulated AI" insight cards',
     usedIn: 'Delivery → Simulated AI panel',
+    pages: ['Delivery'],
     category: 'Estimated constant',
     why: 'Not a real model call — no API is invoked. The insight selection and phrasing are hardcoded, but every figure inside each card is read live from the same milestone/deliverable data as the rest of the page, so an insight can never assert a number that contradicts the KPI strip or timeline.',
+  },
+  {
+    id: 'pipeline-score-mock',
+    label: 'Deal Score (fixed Pipeline table sort order)',
+    usedIn: 'Pipeline → Deals table (Score column, fixed descending sort)',
+    pages: ['Pipeline'],
+    category: 'Modelled',
+    why: 'In Notion, Score is a formula field computed from other deal properties — the details of that formula aren\'t reproduced here, and formula RESULTS (not formula definitions) are what the API exposes, so a real sync could read the computed value but not recompute it independently. This prototype assigns each deal a plausible mock score (probability, revenue scale and recency blended, then clamped 0-100) purely to demonstrate Score-driven ordering. In production the sync would capture whatever value Notion\'s formula actually computes, unmodified.',
   },
 ];

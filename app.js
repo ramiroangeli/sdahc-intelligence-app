@@ -52,6 +52,136 @@ function fmtMetric(metric, value) {
   return metric === 'count' ? String(value) : fmtCompact(value);
 }
 
+/* --------------------------- INFO ICON / POPOVER --------------------------- */
+/* A small "i" affordance next to every KPI card and major chart, across all
+   9 pages. Click shows a short plain-language explanation of how that
+   number is calculated; where the metric is a simulated/modelled figure,
+   the popover links straight to its Assumptions Register entry (item 2's
+   grouped-by-page modal, opened via openAssumptionsModal(id)). */
+
+const INFO_TEXT = {
+  // Overview
+  'ov-settled': { text: 'Sum of SDAHC Revenue (commission + advisory/tranche fees + conjunction + referral — never Transaction Value) for deals Won with a close date inside the current fiscal year.', assumptionId: 'fiscal-year-scope' },
+  'ov-open-pipeline': { text: 'Full-value SDAHC Revenue of every deal currently In Progress — not probability-adjusted. Paused deals are excluded; they carry zero value here.', assumptionId: 'paused-exclusion' },
+  'ov-weighted': { text: 'Σ (SDAHC Revenue × Probability) across every In Progress deal. Probability is each deal\'s own Notion value, never a stage default.' },
+  'ov-active': { text: 'Count of deals with outcome = In Progress. Paused deals are counted separately and excluded here.', assumptionId: 'paused-exclusion' },
+  'ov-new-prospects': { text: 'Deals with a createdDate inside the current calendar month, regardless of outcome or stage.' },
+  'ov-win-rate': { text: 'Won ÷ (Won + Lost), among deals that have actually been decided. Still-open deals aren\'t counted either way.' },
+  'ov-hero': { text: 'Settled (Won, cash) + Contracted (Contract Issued / Under Contract) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the year you are.' },
+  'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly.', assumptionId: 'value-added-rate' },
+  'ov-pipeline-chart': { text: 'Every deal grouped by its current stage, regardless of outcome — Won and Lost deals stay visible at the stage they froze at. Paused deals are intentionally included here for that structural picture (see the linked note).', assumptionId: 'paused-exclusion' },
+
+  // Pipeline
+  'pipeline-flow': { text: 'Same per-stage grouping as Overview\'s Pipeline by Stage — Won/Lost/Paused deals stay visible at their frozen stage. Toggle changes what each stage card reports.' },
+  'pipeline-score': { text: 'The table\'s order is fixed to Score, descending, and isn\'t user-sortable — Score is meant to mirror Notion\'s own Score-sorted view exactly.', assumptionId: 'pipeline-score-mock' },
+
+  // Revenue
+  'rev-settled': { text: 'Same figure as Overview\'s hero: Won deals with a close date in the current fiscal year, summed by SDAHC Revenue.', assumptionId: 'fiscal-year-scope' },
+  'rev-contracted': { text: 'SDAHC Revenue of In Progress deals already at Contract Issued (B7) or Under Contract (B8) — high-confidence, committed, but not yet cash.' },
+  'rev-weighted-forecast': { text: 'Σ (SDAHC Revenue × Probability) across every In Progress deal — identical definition and number as Overview\'s Weighted Pipeline.' },
+  'rev-open-pipeline': { text: 'Full, non-probability-adjusted SDAHC Revenue of every In Progress deal.' },
+  'rev-target': { text: 'The Annual Revenue Target set in Settings → Business, for the current fiscal year.' },
+  'rev-gap': { text: 'Target − (Settled + Contracted + Weighted Open). Shown as "on track" once Settled + Contracted + Weighted already covers the target.' },
+  'rev-time-chart': { text: 'Actual bars read real closeDate history. Forecast bars bucket each open deal into a month using an estimated close date derived from its probability — directional only, Notion doesn\'t track an expected close date.', assumptionId: 'estimated-close-date' },
+  'rev-source-chart': { text: 'SDAHC Revenue split by fee type (brokerage commission, advisory, conjunction, referral) across Won + In Progress deals. Lost and Paused are excluded — Paused carries zero value.', assumptionId: 'paused-exclusion' },
+  'rev-concentration': { text: 'Share of total Won + In Progress revenue sitting in the top 3 deals by SDAHC Revenue — a concentration-risk read, same scope as Revenue Composition.', assumptionId: 'revenue-scope' },
+  'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage, across every outcome — the same per-stage data as byStage(), filtered to stages with at least one deal.' },
+
+  // Delivery
+  'del-locked': { text: 'Sum of tranche/milestone amounts across all engagements whose status is "Not started" or "WIP" — not yet committed, still part of open pipeline only.', assumptionId: 'delivery-tranche-fields' },
+  'del-unlockable': { text: 'Of that Locked total, the portion whose due date falls within the current calendar quarter — i.e. what should convert to Invoiced/Paid soon if on schedule.' },
+  'del-at-risk': { text: 'Locked amounts specifically on engagements flagged health = "At risk" or "Slipped" — a subset of Locked Revenue, not an addition to it.' },
+  'del-active-engagements': { text: 'Count of deals carrying either billing milestones (brokerage) or explicit consultancy tranches (advisory) — the roster shown in the Engagements grid below.' },
+  'del-next-milestone': { text: 'The soonest tranche/milestone across all engagements that isn\'t yet Paid, by due date.' },
+  'del-timeline': { text: 'Every tranche/milestone from every engagement, plotted by due date and coloured by status. Dot size scales with the dollar amount.' },
+
+  // Sales Funnel
+  'funnel-chart': { text: 'Market/Relationships is an editorial estimate (not tracked in Notion); every tier below it is a real deal count at or past a stage-index threshold, collapsing the 16 real stages into 9 milestones.', assumptionId: 'funnel-tier-mapping' },
+  'funnel-table': { text: 'Conversion = this tier\'s count ÷ the previous tier\'s count. Dropped = 1 − conversion.' },
+  'prospects-chart': { text: 'New Prospects = deals created that month, by createdDate. Lost = deals whose closeDate (in that month) has outcome Lost. Trailing 14 months.' },
+  'source-groups': { text: 'Every prospect source rolled into two channels (Relationship-led vs Marketing-sourced, per PROSPECT_SOURCES). Qualified = reached stage A1/B1 or later.', assumptionId: 'qualified-definition' },
+  'source-detail': { text: 'Same "qualified" definition as the channel comparison, broken out per individual source.' },
+  'cohort-table': { text: 'Deals grouped by the quarter they were CREATED (not decided). Conversion = Won ÷ (Won + Lost) within that cohort; still-open cohorts show "Too early."', assumptionId: 'cohort-conversion' },
+
+  // SDA Report
+  'sda-inventory': { text: 'Printed/Allocated/Delivered are dashboard-owned counters (not in Notion). Pending and Available are always calculated from them live, never stored, so they can\'t drift.', assumptionId: 'sda-report-inventory' },
+  'sda-distribution': { text: 'A simulated breakdown of the 122 delivered reports by city/channel/priority/relationship type — individual recipients aren\'t tracked as Notion records.', assumptionId: 'sda-report-distribution' },
+  'sda-funnel': { text: 'Reports Delivered, Deal, Pipeline Generated and Settled Revenue are real (read from the 3 deals tagged source = "SDA Report"). Followed Up/Response/Meeting/Opportunity are simulated conversion-rate estimates.', assumptionId: 'sda-report-funnel-upper' },
+  'sda-roi': { text: 'Cost ratios divide the real Campaign Cost by a mix of real (Delivered, Deal, Settled Revenue) and simulated (Meeting, Opportunity) counts — Pipeline Generated and Settled Revenue are always shown separately, never combined.', assumptionId: 'sda-report-funnel-upper' },
+
+  // Market Intelligence
+  'mi-gauges': { text: 'Illustrative placeholders — no live market-data feed exists yet. Shown to demonstrate how one would be visualised once connected.', assumptionId: 'market-pulse-gauges' },
+  'mi-signals': { text: 'Deal names are real; the signal text and implications are illustrative, demonstrating how market intelligence would inform live deals — not a real signal-detection system.', assumptionId: 'market-intel-deal-signals' },
+};
+
+function infoIcon(key) {
+  return `<button class="info-icon" type="button" data-info-key="${key}" aria-label="How this is calculated">i</button>`;
+}
+
+let activeInfoIcon = null;
+
+function closeInfoPopover() {
+  document.getElementById('info-popover').classList.remove('open');
+  if (activeInfoIcon) activeInfoIcon.classList.remove('active');
+  activeInfoIcon = null;
+}
+
+function openInfoPopover(iconEl) {
+  const entry = INFO_TEXT[iconEl.dataset.infoKey];
+  if (!entry) return;
+  if (activeInfoIcon === iconEl) { closeInfoPopover(); return; }
+  closeInfoPopover();
+
+  const popover = document.getElementById('info-popover');
+  document.getElementById('info-popover-text').textContent = entry.text;
+  const link = document.getElementById('info-popover-link');
+  if (entry.assumptionId) {
+    link.hidden = false;
+    link.onclick = (e) => { e.preventDefault(); closeInfoPopover(); openAssumptionsModal(entry.assumptionId); };
+  } else {
+    link.hidden = true;
+    link.onclick = null;
+  }
+
+  popover.classList.add('open');
+  iconEl.classList.add('active');
+  activeInfoIcon = iconEl;
+
+  // Position after showing (so offsetWidth/Height are correct), clamped to viewport.
+  const r = iconEl.getBoundingClientRect();
+  const pw = popover.offsetWidth, ph = popover.offsetHeight;
+  let left = r.left + r.width / 2 - pw / 2;
+  left = Math.max(12, Math.min(left, window.innerWidth - pw - 12));
+  let top = r.bottom + 8;
+  if (top + ph > window.innerHeight - 12) top = r.top - ph - 8;
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+/* Shared renderer for every .kpi-row block across the app (Overview, Revenue,
+   Delivery, SDA Report) — one place to keep the card markup and its optional
+   info icon consistent. `cards`: [{label, value, foot, footClass, infoKey}]. */
+function renderKpiCards(containerId, cards) {
+  document.getElementById(containerId).innerHTML = cards.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-label">${c.label}${c.infoKey ? infoIcon(c.infoKey) : ''}</div>
+      <div class="kpi-value tabular">${c.value}</div>
+      <div class="kpi-foot ${c.footClass || ''}">${c.foot}</div>
+    </div>
+  `).join('');
+}
+
+function initInfoIcons() {
+  document.addEventListener('click', (e) => {
+    const icon = e.target.closest('.info-icon');
+    if (icon) { e.stopPropagation(); openInfoPopover(icon); return; }
+    if (!e.target.closest('#info-popover')) closeInfoPopover();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeInfoPopover(); });
+  window.addEventListener('scroll', closeInfoPopover, true);
+  window.addEventListener('resize', closeInfoPopover);
+}
+
 /* --------------------------------- NAV ------------------------------------ */
 
 const PAGE_META = {
@@ -134,7 +264,7 @@ function renderOverview() {
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Commercial Flow</h3>
+            <h3 class="panel-title">Commercial Flow${infoIcon('ov-waterfall')}</h3>
             <div class="panel-sub">Pipeline movement across the selected period · *Value Added is simulated</div>
           </div>
           <div class="seg-control" id="period-control">
@@ -150,7 +280,7 @@ function renderOverview() {
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Pipeline by Stage</h3>
+            <h3 class="panel-title">Pipeline by Stage${infoIcon('ov-pipeline-chart')}</h3>
             <div class="panel-sub">All active + closed deals</div>
           </div>
         </div>
@@ -203,7 +333,7 @@ function renderHero() {
   hero.innerHTML = `
     <div class="hero-top">
       <div>
-        <div class="hero-metric-label">Settled Revenue · YTD</div>
+        <div class="hero-metric-label">Settled Revenue · YTD${infoIcon('ov-hero').replace('info-icon', 'info-icon info-icon-on-dark')}</div>
         <div class="hero-figure tabular">${fmtFull(settled)}</div>
       </div>
       <div class="hero-target">
@@ -241,21 +371,15 @@ function renderKpiRow() {
   const winRate = Aggregates.winRate();
 
   const cards = [
-    { label: 'Settled Revenue YTD', value: fmtCompact(settled), foot: `of ${fmtCompact(settings.annualTarget)} target` },
-    { label: 'Expected Open Pipeline', value: fmtCompact(expectedOpen), foot: `${Aggregates.active().length} active deals, full value` },
-    { label: 'Weighted Pipeline', value: fmtCompact(weighted), foot: 'probability-adjusted' },
-    { label: 'Active Deals', value: String(active), foot: `${Aggregates.won().length} won · ${Aggregates.lost().length} lost` },
-    { label: 'New Prospects', value: String(newProspects), foot: 'this calendar month' },
-    { label: 'Win Rate', value: fmtPct(winRate, 0), foot: `${Aggregates.won().length} won of ${Aggregates.won().length + Aggregates.lost().length} decided` },
+    { label: 'Settled Revenue YTD', value: fmtCompact(settled), foot: `of ${fmtCompact(settings.annualTarget)} target`, infoKey: 'ov-settled' },
+    { label: 'Expected Open Pipeline', value: fmtCompact(expectedOpen), foot: `${Aggregates.active().length} active deals, full value`, infoKey: 'ov-open-pipeline' },
+    { label: 'Weighted Pipeline', value: fmtCompact(weighted), foot: 'probability-adjusted', infoKey: 'ov-weighted' },
+    { label: 'Active Deals', value: String(active), foot: `${Aggregates.won().length} won · ${Aggregates.lost().length} lost`, infoKey: 'ov-active' },
+    { label: 'New Prospects', value: String(newProspects), foot: 'this calendar month', infoKey: 'ov-new-prospects' },
+    { label: 'Win Rate', value: fmtPct(winRate, 0), foot: `${Aggregates.won().length} won of ${Aggregates.won().length + Aggregates.lost().length} decided`, infoKey: 'ov-win-rate' },
   ];
 
-  document.getElementById('kpi-row').innerHTML = cards.map(c => `
-    <div class="kpi-card">
-      <div class="kpi-label">${c.label}</div>
-      <div class="kpi-value tabular">${c.value}</div>
-      <div class="kpi-foot">${c.foot}</div>
-    </div>
-  `).join('');
+  renderKpiCards('kpi-row', cards);
 }
 
 function renderActivityRow() {
@@ -388,15 +512,13 @@ function renderPipelineChart() {
    ============================================================================ */
 
 let pipelineMetric = 'count';
-let tableSortKey = 'stage';
-let tableSortDir = 'asc';
 
 function renderPipelinePage() {
   const root = document.getElementById('view-pipeline');
   root.innerHTML = `
     <div class="pipeline-toolbar">
       <div>
-        <div class="panel-sub" style="font-size:13px;">Every stage of the Notion Deals database, coloured by phase. Metric toggle changes what each stage reports.</div>
+        <div class="panel-sub" style="font-size:13px;">Every stage of the Notion Deals database, coloured by phase. Metric toggle changes what each stage reports.${infoIcon('pipeline-flow')}</div>
       </div>
       <div class="seg-control" id="pipeline-metric-control">
         <button class="seg-btn" data-metric="count">Count</button>
@@ -416,22 +538,23 @@ function renderPipelinePage() {
       <div class="panel-head" style="padding-bottom:16px;">
         <div>
           <h3 class="panel-title">Deals</h3>
-          <div class="panel-sub">${DEALS.length} deals · click a row to open the deal detail</div>
+          <div class="panel-sub">${DEALS.length} deals · fixed order by Score, descending · click a row to open the deal detail${infoIcon('pipeline-score')}</div>
         </div>
       </div>
       <div class="table-wrap">
         <table class="deals-table" id="deals-table">
           <thead>
             <tr>
-              <th data-key="name">Deal</th>
-              <th data-key="stage">Stage</th>
-              <th data-key="owner">Owner</th>
+              <th>Deal</th>
+              <th class="num-head sorted">Score</th>
+              <th>Stage</th>
+              <th>Owner</th>
               <th>Deal Type</th>
-              <th class="num-head" data-key="transactionValue">Transaction Value</th>
-              <th class="num-head" data-key="revenue">Expected SDAHC Revenue</th>
-              <th class="num-head" data-key="probability">Probability</th>
-              <th class="num-head" data-key="weighted">Weighted Revenue</th>
-              <th data-key="outcome">Outcome</th>
+              <th class="num-head">Transaction Value</th>
+              <th class="num-head">Expected SDAHC Revenue</th>
+              <th class="num-head">Probability</th>
+              <th class="num-head">Weighted Revenue</th>
+              <th>Outcome</th>
             </tr>
           </thead>
           <tbody id="deals-tbody"></tbody>
@@ -442,7 +565,6 @@ function renderPipelinePage() {
 
   wirePipelineMetricControl();
   renderPipelineFlow();
-  wireTableSort();
   renderDealsTable();
 }
 
@@ -496,37 +618,13 @@ function renderPipelineFlow() {
   }).join('');
 }
 
-function wireTableSort() {
-  document.querySelectorAll('#deals-table thead th[data-key]').forEach(th => {
-    th.addEventListener('click', () => {
-      const key = th.dataset.key;
-      if (tableSortKey === key) tableSortDir = tableSortDir === 'asc' ? 'desc' : 'asc';
-      else { tableSortKey = key; tableSortDir = key === 'stage' ? 'asc' : 'desc'; }
-      renderDealsTable();
-    });
-  });
-}
-
+/* Fixed order: Score, descending — see ASSUMPTIONS 'pipeline-score-mock'.
+   Not user-sortable: Score represents a Notion formula result, so the
+   Pipeline table's row order is meant to always match Notion's own
+   Score-sorted view, the way a real synced dashboard would show it. Users
+   may still filter/search (if added later) without disturbing this order. */
 function sortedDeals() {
-  const list = [...DEALS];
-  const dir = tableSortDir === 'asc' ? 1 : -1;
-  list.sort((a, b) => {
-    let av, bv;
-    switch (tableSortKey) {
-      case 'stage': av = STAGE_INDEX[a.stage]; bv = STAGE_INDEX[b.stage]; break;
-      case 'name': av = a.name; bv = b.name; break;
-      case 'owner': av = a.owner; bv = b.owner; break;
-      case 'outcome': av = a.outcome; bv = b.outcome; break;
-      case 'transactionValue': av = a.transactionValue; bv = b.transactionValue; break;
-      case 'revenue': av = sdahcRevenue(a); bv = sdahcRevenue(b); break;
-      case 'probability': av = a.probability; bv = b.probability; break;
-      case 'weighted': av = weightedRevenue(a); bv = weightedRevenue(b); break;
-      default: av = 0; bv = 0;
-    }
-    if (typeof av === 'string') return av.localeCompare(bv) * dir;
-    return (av - bv) * dir;
-  });
-  return list;
+  return [...DEALS].sort((a, b) => b.score - a.score);
 }
 
 function outcomeClass(outcome) {
@@ -534,10 +632,6 @@ function outcomeClass(outcome) {
 }
 
 function renderDealsTable() {
-  document.querySelectorAll('#deals-table thead th[data-key]').forEach(th => {
-    th.classList.toggle('sorted', th.dataset.key === tableSortKey);
-  });
-
   const highValueThreshold = getSettings().highValueDealThreshold;
   const tbody = document.getElementById('deals-tbody');
   tbody.innerHTML = sortedDeals().map(d => {
@@ -549,6 +643,7 @@ function renderDealsTable() {
     return `
       <tr data-id="${d.id}">
         <td class="deal-name-cell">${d.name}${highValueTag}<span class="deal-entity">${d.entity}</span></td>
+        <td class="num-cell tabular score-cell">${d.score}</td>
         <td><span class="stage-chip" style="background:${hexToRgba(meta.color, 0.12)}; color:${meta.color}"><span class="dot" style="background:${meta.color}"></span>${stage.short}</span></td>
         <td>${d.owner}</td>
         <td><div class="type-tags">${d.dealType.map(t => `<span class="type-tag">${t}</span>`).join('')}</div></td>
@@ -582,7 +677,7 @@ function renderRevenuePage() {
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Revenue Over Time</h3>
+            <h3 class="panel-title">Revenue Over Time${infoIcon('rev-time-chart')}</h3>
             <div class="panel-sub">Actual settled vs. target vs. forecast · ${TODAY.getFullYear()} · *Forecast month is simulated</div>
           </div>
         </div>
@@ -592,7 +687,7 @@ function renderRevenuePage() {
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Revenue Composition</h3>
+            <h3 class="panel-title">Revenue Composition${infoIcon('rev-source-chart')}</h3>
             <div class="panel-sub">By fee source · Won + active pipeline</div>
           </div>
         </div>
@@ -607,7 +702,7 @@ function renderRevenuePage() {
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Revenue Concentration</h3>
+            <h3 class="panel-title">Revenue Concentration${infoIcon('rev-concentration')}</h3>
             <div class="panel-sub">Concentration risk across Won + active deals</div>
           </div>
         </div>
@@ -617,7 +712,7 @@ function renderRevenuePage() {
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Revenue by Stage</h3>
+            <h3 class="panel-title">Revenue by Stage${infoIcon('rev-by-stage')}</h3>
             <div class="panel-sub">Expected SDAHC revenue currently held at each stage</div>
           </div>
         </div>
@@ -637,20 +732,14 @@ function renderRevenueKpiRow() {
   const t = Aggregates.revenueTargetSummary();
   const openPipeline = Aggregates.expectedOpenPipelineRevenue();
   const cards = [
-    { label: 'Settled Revenue', value: fmtCompact(t.settled), foot: 'YTD, realised' },
-    { label: 'Contracted Revenue', value: fmtCompact(t.contracted), foot: 'Contract Issued + Under Contract' },
-    { label: 'Weighted Forecast', value: fmtCompact(t.weighted), foot: 'active pipeline, probability-adjusted' },
-    { label: 'Open Revenue Pipeline', value: fmtCompact(openPipeline), foot: 'active pipeline, full value' },
-    { label: 'Revenue Target', value: fmtCompact(t.target), foot: `FY${TODAY.getFullYear()}` },
-    { label: 'Gap to Target', value: fmtCompact(t.gap), foot: t.onTrack ? 'on track — potential covers target' : `${fmtPct(t.totalPotential / t.target)} of target covered`, footClass: t.onTrack ? 'pos' : 'neg' },
+    { label: 'Settled Revenue', value: fmtCompact(t.settled), foot: 'YTD, realised', infoKey: 'rev-settled' },
+    { label: 'Contracted Revenue', value: fmtCompact(t.contracted), foot: 'Contract Issued + Under Contract', infoKey: 'rev-contracted' },
+    { label: 'Weighted Forecast', value: fmtCompact(t.weighted), foot: 'active pipeline, probability-adjusted', infoKey: 'rev-weighted-forecast' },
+    { label: 'Open Revenue Pipeline', value: fmtCompact(openPipeline), foot: 'active pipeline, full value', infoKey: 'rev-open-pipeline' },
+    { label: 'Revenue Target', value: fmtCompact(t.target), foot: `FY${TODAY.getFullYear()}`, infoKey: 'rev-target' },
+    { label: 'Gap to Target', value: fmtCompact(t.gap), foot: t.onTrack ? 'on track — potential covers target' : `${fmtPct(t.totalPotential / t.target)} of target covered`, footClass: t.onTrack ? 'pos' : 'neg', infoKey: 'rev-gap' },
   ];
-  document.getElementById('revenue-kpi-row').innerHTML = cards.map(c => `
-    <div class="kpi-card">
-      <div class="kpi-label">${c.label}</div>
-      <div class="kpi-value tabular">${c.value}</div>
-      <div class="kpi-foot ${c.footClass || ''}">${c.foot}</div>
-    </div>
-  `).join('');
+  renderKpiCards('revenue-kpi-row', cards);
 }
 
 function renderRevenueTimeChart() {
@@ -775,7 +864,10 @@ function renderRevenueByStageList() {
 let deliveryTimelineChartInstance = null;
 
 const HEALTH_COLOR = { 'On track': 'var(--green)', 'At risk': 'var(--gold)', 'Slipped': 'var(--red)' };
-const MILESTONE_STATUS_COLOR = { Locked: '#D9534F', Unlocked: '#E0A82E', Invoiced: '#0476D9', Paid: '#2FB37A' };
+/* Colours mirror the same Settled=green / Contracted=blue language used on
+   the Overview hero bar — Paid IS settled cash, Invoiced IS the contracted,
+   not-yet-cash state. WIP/Not started are both still just pipeline. */
+const MILESTONE_STATUS_COLOR = { 'Not started': '#8592A6', WIP: '#E0A82E', Invoiced: '#0476D9', Paid: '#2FB37A' };
 
 function renderDeliveryPage() {
   const root = document.getElementById('view-delivery');
@@ -797,7 +889,7 @@ function renderDeliveryPage() {
     <div class="panel section-gap">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Milestone Timeline</h3>
+          <h3 class="panel-title">Milestone Timeline${infoIcon('del-timeline')}</h3>
           <div class="panel-sub">Every billing milestone across active engagements, by due date</div>
         </div>
       </div>
@@ -820,7 +912,7 @@ function renderDeliveryPage() {
     </div>
 
     <div class="revenue-recognition-note">
-      <strong>Unlocked ≠ paid.</strong> "Unlocked" means the gating deliverable is complete and the tranche is eligible to invoice — not that cash has been received. Whether revenue is recognised on a milestone basis or a % -of-completion basis is a finance decision, not asserted here — confirm treatment with finance before reporting externally. See the Assumptions Register.
+      <strong>Invoiced ≠ paid.</strong> A tranche marked "Invoiced" is committed, high-confidence revenue (the same status this page treats as Contracted) — it is not yet cash. Only "Paid" tranches are cash (Settled). Whether revenue is recognised on a milestone basis or a % -of-completion basis is a finance decision, not asserted here — confirm treatment with finance before reporting externally. See the Assumptions Register.
     </div>
   `;
 
@@ -835,19 +927,13 @@ function renderDeliveryKpis() {
   const { end: qEnd } = quarterBounds(TODAY);
   const nm = k.nextMilestone;
   const cards = [
-    { label: 'Locked Revenue', value: fmtCompact(k.lockedRevenue), foot: 'behind unfinished deliverables' },
-    { label: 'Unlockable This Quarter', value: fmtCompact(k.unlockableThisQuarter), foot: `due by ${fmtDateObj(qEnd)}` },
-    { label: 'Revenue At Risk', value: fmtCompact(k.revenueAtRisk), foot: 'locked milestones on at-risk engagements', footClass: k.revenueAtRisk > 0 ? 'neg' : 'pos' },
-    { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'advisory + brokerage in delivery' },
-    { label: 'Next Milestone', value: nm ? fmtCompact(nm.milestone.amount) : '—', foot: nm ? `${fmtDate(nm.milestone.dueDate)} · ${nm.deal.name}` : 'none scheduled' },
+    { label: 'Locked Revenue', value: fmtCompact(k.lockedRevenue), foot: 'Not started / WIP — not yet committed', infoKey: 'del-locked' },
+    { label: 'Unlockable This Quarter', value: fmtCompact(k.unlockableThisQuarter), foot: `due by ${fmtDateObj(qEnd)}`, infoKey: 'del-unlockable' },
+    { label: 'Revenue At Risk', value: fmtCompact(k.revenueAtRisk), foot: 'locked milestones on at-risk engagements', footClass: k.revenueAtRisk > 0 ? 'neg' : 'pos', infoKey: 'del-at-risk' },
+    { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'advisory + brokerage in delivery', infoKey: 'del-active-engagements' },
+    { label: 'Next Milestone', value: nm ? fmtCompact(nm.milestone.amount) : '—', foot: nm ? `${fmtDate(nm.milestone.dueDate)} · ${nm.deal.name}` : 'none scheduled', infoKey: 'del-next-milestone' },
   ];
-  document.getElementById('delivery-kpi-row').innerHTML = cards.map(c => `
-    <div class="kpi-card">
-      <div class="kpi-label">${c.label}</div>
-      <div class="kpi-value tabular">${c.value}</div>
-      <div class="kpi-foot ${c.footClass || ''}">${c.foot}</div>
-    </div>
-  `).join('');
+  renderKpiCards('delivery-kpi-row', cards);
 }
 
 function healthBadgeClass(health) {
@@ -992,10 +1078,10 @@ function openEngagementDrawer(id) {
     <div class="milestone-row">
       <div class="milestone-row-top">
         <div class="milestone-name">${m.name}</div>
-        <span class="milestone-status status-${m.status.toLowerCase()}">${m.status}</span>
+        <span class="milestone-status status-${m.status.toLowerCase().replace(/\s+/g, '-')}">${m.status}</span>
       </div>
       <div class="milestone-meta">${fmtDate(m.dueDate)} · <span class="tabular">${fmtFull(m.amount)}</span></div>
-      <div class="milestone-condition">Unlocks when: ${m.unlockCondition}</div>
+      <div class="milestone-condition">Billable when: ${m.unlockCondition}</div>
     </div>
   `).join('');
 
@@ -1113,7 +1199,7 @@ function renderFunnelPage() {
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Conversion Funnel</h3>
+            <h3 class="panel-title">Conversion Funnel${infoIcon('funnel-chart')}</h3>
             <div class="panel-sub">Market reach through to settlement · *Market/Relationships is estimated, not tracked in Notion</div>
           </div>
         </div>
@@ -1122,7 +1208,7 @@ function renderFunnelPage() {
 
       <div class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">Stage Conversion</h3><div class="panel-sub">Conversion and drop-off between each stage</div></div>
+          <div><h3 class="panel-title">Stage Conversion${infoIcon('funnel-table')}</h3><div class="panel-sub">Conversion and drop-off between each stage</div></div>
         </div>
         <div id="funnel-table-body" style="padding:8px 24px 20px;"></div>
       </div>
@@ -1130,7 +1216,7 @@ function renderFunnelPage() {
 
     <div class="panel section-gap">
       <div class="panel-head">
-        <div><h3 class="panel-title">New vs. Lost Prospects</h3><div class="panel-sub">Trailing 14 months · created vs. lost, by month</div></div>
+        <div><h3 class="panel-title">New vs. Lost Prospects${infoIcon('prospects-chart')}</h3><div class="panel-sub">Trailing 14 months · created vs. lost, by month</div></div>
       </div>
       <div class="chart-body"><div class="chart-canvas" id="prospects-chart"></div></div>
     </div>
@@ -1138,14 +1224,14 @@ function renderFunnelPage() {
     <div class="chart-grid section-gap">
       <div class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">Relationship-Led vs Marketing-Sourced</h3><div class="panel-sub">Volume and qualification rate by channel</div></div>
+          <div><h3 class="panel-title">Relationship-Led vs Marketing-Sourced${infoIcon('source-groups')}</h3><div class="panel-sub">Volume and qualification rate by channel</div></div>
         </div>
         <div id="source-group-body" style="padding:18px 24px 22px;"></div>
       </div>
 
       <div class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">Prospect Sources</h3><div class="panel-sub">Individual channel performance</div></div>
+          <div><h3 class="panel-title">Prospect Sources${infoIcon('source-detail')}</h3><div class="panel-sub">Individual channel performance</div></div>
         </div>
         <div id="source-detail-body" style="padding:6px 24px 18px;"></div>
       </div>
@@ -1153,7 +1239,7 @@ function renderFunnelPage() {
 
     <div class="panel section-gap">
       <div class="panel-head">
-        <div><h3 class="panel-title">Cohort Conversion by Quarter</h3><div class="panel-sub">Ultimate win rate of deals created each quarter · recent cohorts still undecided</div></div>
+        <div><h3 class="panel-title">Cohort Conversion by Quarter${infoIcon('cohort-table')}</h3><div class="panel-sub">Ultimate win rate of deals created each quarter · recent cohorts still undecided</div></div>
       </div>
       <div id="cohort-body" style="padding:6px 24px 18px;"></div>
     </div>
@@ -1450,22 +1536,49 @@ const ASSUMPTION_CATEGORY_CLASS = {
   'Real (cross-page check)': 'cat-real',
 };
 
+/* Matches the app's actual 9 nav pages, in nav order. Grouping the register
+   this way means a user on a given page can scan just its heading instead
+   of the full flat list — an entry that affects more than one page (e.g.
+   fiscal year) is listed, and shown, under every page it touches. */
+const ASSUMPTION_PAGE_ORDER = ['Overview', 'Pipeline', 'Revenue', 'Delivery', 'Sales Funnel', 'SDA Report', 'Market Intelligence', 'Playbook', 'Settings'];
+
 function renderAssumptionsList() {
-  document.getElementById('assumptions-body').innerHTML = ASSUMPTIONS.map(a => `
-    <div class="assumption-item">
-      <div class="assumption-top">
-        <div class="assumption-label">${a.label}</div>
-        <span class="assumption-category ${ASSUMPTION_CATEGORY_CLASS[a.category] || ''}">${a.category}</span>
+  document.getElementById('assumptions-body').innerHTML = ASSUMPTION_PAGE_ORDER.map(page => {
+    const entries = ASSUMPTIONS.filter(a => a.pages && a.pages.includes(page));
+    if (!entries.length) return '';
+    return `
+      <div class="assumption-page-group">
+        <div class="assumption-page-heading">${page}</div>
+        ${entries.map(a => `
+          <div class="assumption-item" data-assumption-id="${a.id}">
+            <div class="assumption-top">
+              <div class="assumption-label">${a.label}</div>
+              <span class="assumption-category ${ASSUMPTION_CATEGORY_CLASS[a.category] || ''}">${a.category}</span>
+            </div>
+            <div class="assumption-used-in">Used in: ${a.usedIn}</div>
+            <div class="assumption-why">${a.why}</div>
+          </div>
+        `).join('')}
       </div>
-      <div class="assumption-used-in">Used in: ${a.usedIn}</div>
-      <div class="assumption-why">${a.why}</div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
-function openAssumptionsModal() {
+/* Pass an ASSUMPTIONS id (e.g. from an info popover's "View in Assumptions
+   Register" link) to open the modal scrolled straight to that entry. An
+   entry listed under several pages renders once per page — this jumps to
+   whichever copy appears first in ASSUMPTION_PAGE_ORDER. */
+function openAssumptionsModal(targetId) {
   renderAssumptionsList();
   document.getElementById('assumptions-overlay').classList.add('open');
+  if (!targetId) return;
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`[data-assumption-id="${targetId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1600);
+  });
 }
 function closeAssumptionsModal() {
   document.getElementById('assumptions-overlay').classList.remove('open');
@@ -1503,7 +1616,7 @@ function renderSdaReportPage() {
     <div class="panel">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Print Inventory</h3>
+          <h3 class="panel-title">Print Inventory${infoIcon('sda-inventory')}</h3>
           <div class="panel-sub">SDA Report 2026 campaign — <span class="scope-tag dashboard">Dashboard-owned</span> · not tracked in Notion</div>
         </div>
       </div>
@@ -1526,7 +1639,7 @@ function renderSdaReportPage() {
     <div class="panel section-gap">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Distribution</h3>
+          <h3 class="panel-title">Distribution${infoIcon('sda-distribution')}</h3>
           <div class="panel-sub">Of the 122 delivered reports · *simulated breakdown, see Assumptions</div>
         </div>
       </div>
@@ -1543,7 +1656,7 @@ function renderSdaReportPage() {
     <div class="panel section-gap">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Commercial Funnel</h3>
+          <h3 class="panel-title">Commercial Funnel${infoIcon('sda-funnel')}</h3>
           <div class="panel-sub">Reports Delivered → Settled Revenue · each stage tagged Real or Simulated</div>
         </div>
       </div>
@@ -1553,7 +1666,7 @@ function renderSdaReportPage() {
     <div class="panel section-gap">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Campaign ROI</h3>
+          <h3 class="panel-title">Campaign ROI${infoIcon('sda-roi')}</h3>
           <div class="panel-sub">Pipeline Generated and Settled Revenue are shown separately — never combined</div>
         </div>
       </div>
@@ -1572,19 +1685,13 @@ function renderSdaReportPage() {
 function renderSdaInventorySummary() {
   const inv = Aggregates.sdaReportInventory();
   const cards = [
-    { label: 'Printed', value: inv.printed },
-    { label: 'Allocated', value: inv.allocated },
-    { label: 'Delivered', value: inv.delivered },
+    { label: 'Printed', value: inv.printed, foot: 'reports' },
+    { label: 'Allocated', value: inv.allocated, foot: 'reports' },
+    { label: 'Delivered', value: inv.delivered, foot: 'reports' },
     { label: 'Pending', value: inv.pending, foot: 'calculated' },
     { label: 'Available', value: inv.available, foot: 'calculated' },
   ];
-  document.getElementById('sda-inventory-row').innerHTML = cards.map(c => `
-    <div class="kpi-card">
-      <div class="kpi-label">${c.label}</div>
-      <div class="kpi-value tabular">${c.value}</div>
-      <div class="kpi-foot">${c.foot || 'reports'}</div>
-    </div>
-  `).join('');
+  renderKpiCards('sda-inventory-row', cards);
 }
 
 function renderSdaAdjustmentPanel() {
@@ -1695,13 +1802,7 @@ function renderSdaRoi() {
     { label: 'Settled Revenue', value: fmtCompact(roi.settledRevenue), foot: 'real, from 3 SDA Report deals' },
     { label: 'Return Multiple', value: roi.returnMultiple === null ? '—' : roi.returnMultiple.toFixed(2) + 'x', foot: 'Settled Revenue ÷ Cost' },
   ];
-  document.getElementById('sda-roi-row').innerHTML = cards.map(c => `
-    <div class="kpi-card">
-      <div class="kpi-label">${c.label}</div>
-      <div class="kpi-value tabular">${c.value}</div>
-      <div class="kpi-foot">${c.foot}</div>
-    </div>
-  `).join('');
+  renderKpiCards('sda-roi-row', cards);
 
   const targets = [
     { label: 'Meetings vs Target', value: roi.meeting, target: roi.targetMeetings },
@@ -1734,7 +1835,7 @@ function renderMarketIntelPage() {
     <div class="panel">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Market Pulse</h3>
+          <h3 class="panel-title">Market Pulse${infoIcon('mi-gauges')}</h3>
           <div class="panel-sub">Illustrative indicators · *no live market-data feed yet, see Assumptions</div>
         </div>
       </div>
@@ -1754,7 +1855,7 @@ function renderMarketIntelPage() {
     <div class="panel section-gap">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Intelligence Impacting Active Deals</h3>
+          <h3 class="panel-title">Intelligence Impacting Active Deals${infoIcon('mi-signals')}</h3>
           <div class="panel-sub">Illustrative only — shows how intelligence will feed commercial decisions</div>
         </div>
       </div>
@@ -1953,8 +2054,6 @@ function renderManualAccordion() {
    up the new values from a guaranteed-consistent fresh render.
    ============================================================================ */
 
-let probTableEdits = null;
-
 function renderSettingsPage() {
   const root = document.getElementById('view-settings');
   const s = getSettings();
@@ -1999,12 +2098,7 @@ function renderSettingsPage() {
           <div class="field-hint">Drives the Days Stale colour in the Deal Drawer — live, no reload needed.</div>
         </div>
       </div>
-      <div class="settings-section-head" style="padding-top:0;"><div class="settings-section-title" style="font-size:13.5px;">Default Stage Probabilities</div></div>
-      <div class="prob-table-wrap">
-        <div class="prob-table-head"><div>Stage</div><div style="text-align:right">Probability %</div><div style="text-align:right">Weighted Δ (this stage)</div></div>
-        <div id="prob-table-rows"></div>
-      </div>
-      <div class="settings-preview" id="prob-preview"></div>
+      <div class="field-hint" style="padding:0 24px 18px;">Probability is a per-deal Notion value Steve sets on each deal — there is no stage-based default to configure here.</div>
     </div>
 
     <div class="panel settings-section section-gap">
@@ -2029,7 +2123,6 @@ function renderSettingsPage() {
     <div class="settings-toast" id="settings-toast"></div>
   `;
 
-  renderProbTable();
   document.getElementById('settings-save').addEventListener('click', saveSettingsForm);
   document.getElementById('settings-reset').addEventListener('click', () => {
     resetSettings();
@@ -2039,66 +2132,6 @@ function renderSettingsPage() {
   document.getElementById('settings-view-assumptions').addEventListener('click', openAssumptionsModal);
 }
 
-function renderProbTable() {
-  const s = getSettings();
-  probTableEdits = { ...s.stageProbabilities };
-  const rows = document.getElementById('prob-table-rows');
-  rows.innerHTML = STAGES.map(stage => `
-    <div class="prob-table-row" data-stage="${stage.id}">
-      <div class="prob-table-stage">${stage.short}</div>
-      <input class="field-input prob-table-input" type="number" step="1" min="0" max="100" data-stage="${stage.id}" value="${Math.round(probTableEdits[stage.id] * 100)}">
-      <div class="prob-table-delta tabular" style="text-align:right; font-size:11.5px; color:var(--ink-faint);" data-delta="${stage.id}">—</div>
-    </div>
-  `).join('');
-
-  rows.querySelectorAll('input[data-stage]').forEach(input => {
-    input.addEventListener('input', () => {
-      const stageId = input.dataset.stage;
-      const val = Math.max(0, Math.min(100, parseFloat(input.value) || 0)) / 100;
-      probTableEdits[stageId] = val;
-      updateProbPreview();
-    });
-  });
-
-  updateProbPreview();
-}
-
-/* Two seeded deals (LVP Logan, Skychest) deliberately carry a probability
-   that differs from their stage's factory default (STAGES[i].defaultProbability
-   — not the editable settings copy). Editing a stage's default in Settings
-   should shift every OTHER deal at that stage, but must not silently override
-   those two explicit per-deal judgement calls. This keeps the preview's
-   baseline (no edits yet) exactly equal to the real weighted pipeline. */
-function previewProbabilityFor(deal) {
-  const stageDefault = getStage(deal.stage).defaultProbability;
-  const isAtFactoryDefault = Math.abs(deal.probability - stageDefault) < 1e-9;
-  return isAtFactoryDefault ? probTableEdits[deal.stage] : deal.probability;
-}
-
-function updateProbPreview() {
-  const currentWeighted = Aggregates.weightedPipelineRevenue();
-  const previewWeighted = Aggregates.active().reduce((sum, d) => sum + sdahcRevenue(d) * previewProbabilityFor(d), 0);
-  const delta = previewWeighted - currentWeighted;
-
-  document.getElementById('prob-preview').innerHTML = `
-    <div class="settings-preview-label">Weighted Pipeline — Live Preview</div>
-    <div class="settings-preview-value tabular">${fmtFull(previewWeighted)}</div>
-    <div class="settings-preview-delta ${delta >= 0 ? 'pos' : 'neg'} tabular">${delta >= 0 ? '+' : ''}${fmtCompact(delta)} vs current ${fmtCompact(currentWeighted)}</div>
-    <div class="settings-preview-hint">Preview only — saving persists these defaults for future reference but does not retroactively reweight the 25 seeded deals elsewhere in this prototype. See the Assumptions Register.</div>
-  `;
-
-  STAGES.forEach(stage => {
-    const el = document.querySelector(`[data-delta="${stage.id}"]`);
-    if (!el) return;
-    const stageDeals = DEALS.filter(d => d.stage === stage.id && d.outcome === 'In Progress');
-    const before = stageDeals.reduce((sum, d) => sum + sdahcRevenue(d) * d.probability, 0);
-    const after = stageDeals.reduce((sum, d) => sum + sdahcRevenue(d) * previewProbabilityFor(d), 0);
-    const rowDelta = after - before;
-    el.textContent = rowDelta === 0 ? '—' : (rowDelta > 0 ? '+' : '') + fmtCompact(rowDelta);
-    el.style.color = rowDelta > 0 ? 'var(--green)' : rowDelta < 0 ? 'var(--red)' : 'var(--ink-faint)';
-  });
-}
-
 function saveSettingsForm() {
   const patch = {
     annualTarget: parseFloat(document.getElementById('set-annualTarget').value) || 0,
@@ -2106,7 +2139,6 @@ function saveSettingsForm() {
     fyStartMonth: parseInt(document.getElementById('set-fyStartMonth').value, 10),
     highValueDealThreshold: parseFloat(document.getElementById('set-highValueDealThreshold').value) || 0,
     staleWarningDays: parseInt(document.getElementById('set-staleWarningDays').value, 10) || 1,
-    stageProbabilities: { ...probTableEdits },
     sdaReport: {
       initialPrintRun: parseInt(document.getElementById('set-initialPrintRun').value, 10) || 0,
       campaignCost: parseFloat(document.getElementById('set-campaignCost').value) || 0,
@@ -2137,6 +2169,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initDrawer();
   initEngagementDrawer();
   initAssumptionsModal();
+  initInfoIcons();
   renderOverview();
   renderPipelinePage();
 
