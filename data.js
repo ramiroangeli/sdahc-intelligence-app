@@ -287,10 +287,11 @@ const DEALS = [
     consultancyFeeTotal: 80000,
     tranche1Amount: 56000, tranche1Status: 'Invoiced', tranche1Date: '2026-01-25',
     tranche2Amount: 24000, tranche2Status: 'Not started', tranche2Date: '2026-09-10',
-    gatedBrokerage: {
-      potentialValue: 300000, commissionPctAssumed: 0.025,
-      condition: 'Client confirms go-ahead to list the 9-dwelling QLD portfolio for sale following DD sign-off',
-    },
+    /* Soft, unquantified note only — NOT a modelled dependency. Steve
+       confirmed brokerage is not formally gated on advisory completing; it's
+       only a tendency (a deal can be advisory-only, brokerage-only, or a
+       sequence). No estimated dollar figure, no "condition" to satisfy. */
+    advisoryToBrokerageNote: 'Advisory engagements like this one can sometimes lead to a later brokerage mandate on the same asset — that\'s a tendency, not a dependency; this deal may never become a brokerage listing.',
   },
   {
     id: 'D-09', name: 'Northline Community Housing', stage: 'B7', outcome: 'In Progress',
@@ -664,6 +665,31 @@ function inRange(dateStr, start, end) {
   return d >= start && d <= end;
 }
 
+/* Full fiscal year containing `date`, per Settings → Financial Year Start
+   (defaults to July — the Australian FY — see DEFAULT_SETTINGS.fyStartMonth).
+   start is inclusive, end is exclusive (the first day of the NEXT FY) so
+   `(date - start) / (end - start)` gives a clean 0-1 pace fraction. */
+function fiscalYearBounds(date) {
+  const fyStartMonth = getSettings().fyStartMonth ?? 6;
+  let y = date.getFullYear();
+  if (date.getMonth() < fyStartMonth) y -= 1;
+  const start = new Date(y, fyStartMonth, 1);
+  const end = new Date(y + 1, fyStartMonth, 1);
+  return { start, end };
+}
+
+/* Display label for the fiscal year containing `date` — just the year
+   portion, e.g. "2026" when FY = calendar year (fyStartMonth 0, start and
+   end fall in the same calendar year), or "2026–27" when it spans two
+   calendar years (e.g. the Jul-Jun Australian FY). Callers prefix "FY"
+   themselves so both read naturally: "FY2026", "FY2026–27". */
+function fiscalYearLabel(date) {
+  const { start, end } = fiscalYearBounds(date);
+  const startY = start.getFullYear();
+  const endY = new Date(end.getTime() - 86400000).getFullYear();
+  return startY === endY ? `${startY}` : `${startY}–${String(endY).slice(2)}`;
+}
+
 function periodRange(periodKey) {
   const end = TODAY;
   let start;
@@ -671,12 +697,8 @@ function periodRange(periodKey) {
   else if (periodKey === '30d') { start = new Date(end); start.setDate(start.getDate() - 29); }
   else if (periodKey === 'quarter') { const q = Math.floor(end.getMonth() / 3); start = new Date(end.getFullYear(), q * 3, 1); }
   else {
-    // ytd -> fiscal-year-to-date. fyStartMonth defaults to 0 (January), which
-    // reproduces plain calendar-YTD exactly. Settings can move this.
-    const fyStartMonth = getSettings().fyStartMonth ?? 0;
-    let y = end.getFullYear();
-    if (end.getMonth() < fyStartMonth) y -= 1;
-    start = new Date(y, fyStartMonth, 1);
+    // ytd -> fiscal-year-to-date, using the same FY window as fiscalYearBounds().
+    start = fiscalYearBounds(end).start;
   }
   return { start, end };
 }
@@ -733,11 +755,51 @@ const Aggregates = {
       .reduce((sum, d) => sum + sdahcRevenue(d), 0);
   },
 
-  contractedRevenue: () => {
-    // High-confidence: active deals already at Contract Issued / Under Contract
-    return DEALS.filter(d => d.outcome === 'In Progress' && (d.stage === 'B7' || d.stage === 'B8'))
-      .reduce((sum, d) => sum + sdahcRevenue(d), 0);
+  /* Committed-but-not-cash revenue, split into two confidence tiers so the
+     hero bar and Revenue KPIs never conflate "as good as done" with
+     "committed but still has a condition attached":
+
+       UNCONDITIONAL — deals at Under Contract (B8) only. Nothing left to
+       negotiate; ~99% certain. Counted at FULL sdahcRevenue(deal).
+
+       CONDITIONAL — everything else that's committed but not unconditional:
+         (a) deals at Contract Issued (B7) — signed, but conditions
+             (finance, due diligence, etc.) can still be live — at FULL
+             sdahcRevenue(deal), same treatment B7/B8 always had.
+         (b) Delivery engagements' own WIP/Invoiced tranches (see
+             isTrancheContracted — a WIP tranche means the engagement is
+             under a signed contract with work underway, so that money is
+             committed even though it isn't invoiced yet) — but ONLY for
+             engagements not already counted whole via (a) or unconditional,
+             so a deal at B7/B8 that also carries engagement tranches (e.g.
+             SDA Abodes / Socia, Northline Community Housing) isn't counted
+             twice — its tranches are a breakdown of revenue already
+             included whole.
+
+     unconditional + conditional together equal exactly what the single
+     "Contracted" figure was before this tier split — see
+     contractedRevenue() below, kept as a thin total for callers (like
+     revenueTargetSummary) that just need the combined committed figure. */
+  contractedTierBreakdown: () => {
+    const unconditionalDeals = DEALS.filter(d => d.outcome === 'In Progress' && d.stage === 'B8');
+    const unconditional = unconditionalDeals.reduce((sum, d) => sum + sdahcRevenue(d), 0);
+    const unconditionalIds = new Set(unconditionalDeals.map(d => d.id));
+
+    const conditionalStageDeals = DEALS.filter(d => d.outcome === 'In Progress' && d.stage === 'B7' && !unconditionalIds.has(d.id));
+    const conditionalStageTotal = conditionalStageDeals.reduce((sum, d) => sum + sdahcRevenue(d), 0);
+
+    const countedIds = new Set([...unconditionalIds, ...conditionalStageDeals.map(d => d.id)]);
+    const conditionalTrancheTotal = Aggregates.engagements()
+      .filter(d => !countedIds.has(d.id))
+      .reduce((sum, d) => sum + engagementTranches(d)
+        .filter(m => isTrancheContracted(m.status))
+        .reduce((s, m) => s + m.amount, 0), 0);
+
+    const conditional = conditionalStageTotal + conditionalTrancheTotal;
+    return { unconditional, conditional, total: unconditional + conditional };
   },
+
+  contractedRevenue: () => Aggregates.contractedTierBreakdown().total,
 
   expectedOpenPipelineRevenue: () => Aggregates.active().reduce((s, d) => s + sdahcRevenue(d), 0),
 
@@ -836,12 +898,16 @@ const Aggregates = {
   revenueTargetSummary: () => {
     const target = getSettings().annualTarget;
     const settled = Aggregates.settledRevenueYTD();
-    const contracted = Aggregates.contractedRevenue();
+    const tiers = Aggregates.contractedTierBreakdown();
+    const contracted = tiers.total;
     const weighted = Aggregates.weightedPipelineRevenue();
     const totalPotential = settled + contracted + weighted;
     const gap = Math.max(0, target - totalPotential);
     const onTrack = totalPotential >= target;
-    return { target, settled, contracted, weighted, totalPotential, gap, onTrack };
+    return {
+      target, settled, contracted, weighted, totalPotential, gap, onTrack,
+      unconditional: tiers.unconditional, conditional: tiers.conditional,
+    };
   },
 
   /* Revenue composition by fee source. Scoped to Won + In Progress only —
@@ -874,19 +940,41 @@ const Aggregates = {
     return { top, topTotal, total, pct: total === 0 ? 0 : topTotal / total, n };
   },
 
-  /* Monthly Actual vs Forecast vs Target for the current calendar year.
-     Actual (past + current month) is real, read from closeDate. Forecast
-     (current + future months) buckets active deals by estimatedCloseDate() —
-     the simulated projection defined above — so treat it as directional,
-     not a Notion-sourced figure. Target is annualTarget / 12, an even
-     mock distribution (no seasonality modelled). */
+  /* Average size of a paid advisory engagement — mean advisory/consultancy
+     fee (advisoryRevenue(), tranche-aware) across every deal that carries
+     one, regardless of outcome or stage. Not scoped to In Progress only:
+     this is a "how big is a typical engagement" size metric, not a revenue
+     forecast, so Won and Lost deals' historical fee sizes count too. */
+  avgConsultancyValue: () => {
+    const deals = DEALS.filter(d => advisoryRevenue(d) > 0);
+    const total = deals.reduce((s, d) => s + advisoryRevenue(d), 0);
+    return { count: deals.length, avg: deals.length === 0 ? 0 : total / deals.length, deals };
+  },
+
+  /* Average size of a brokerage/divestment listing — mean transactionValue
+     (the underlying asset price, NOT SDAHC revenue) across every deal
+     tagged 'Brokerage / Divestment', regardless of outcome or stage. */
+  avgListingValue: () => {
+    const deals = DEALS.filter(d => d.dealType.includes('Brokerage / Divestment'));
+    const total = deals.reduce((s, d) => s + d.transactionValue, 0);
+    return { count: deals.length, avg: deals.length === 0 ? 0 : total / deals.length, deals };
+  },
+
+  /* Monthly Actual vs Forecast vs Target for the current fiscal year, running
+     in FY order (Jul→Jun by default; whatever Settings → Financial Year
+     Start is set to) rather than always Jan→Dec, so the axis matches every
+     other "YTD" figure on this page. Actual (past + current month) is real,
+     read from closeDate. Forecast (current + future months) buckets active
+     deals by estimatedCloseDate() — the simulated projection defined above —
+     so treat it as directional, not a Notion-sourced figure. Target is
+     annualTarget / 12, an even mock distribution (no seasonality modelled). */
   monthlyRevenueSeries: () => {
     const monthlyTarget = getSettings().annualTarget / 12;
-    const year = TODAY.getFullYear();
+    const { start: fyStart } = fiscalYearBounds(TODAY);
     const months = [];
-    for (let m = 0; m < 12; m++) {
-      const monthStart = new Date(year, m, 1);
-      const monthEnd = new Date(year, m + 1, 0);
+    for (let i = 0; i < 12; i++) {
+      const monthStart = new Date(fyStart.getFullYear(), fyStart.getMonth() + i, 1);
+      const monthEnd = new Date(fyStart.getFullYear(), fyStart.getMonth() + i + 1, 0);
       const isFuture = monthStart > TODAY;
       const isPast = monthEnd < TODAY;
       const isCurrent = !isFuture && !isPast;
@@ -906,11 +994,57 @@ const Aggregates = {
       }
 
       months.push({
-        month: m, label: monthStart.toLocaleDateString('en-AU', { month: 'short' }),
+        month: monthStart.getMonth(), year: monthStart.getFullYear(), label: monthStart.toLocaleDateString('en-AU', { month: 'short' }),
         actual, forecast, target: monthlyTarget, isCurrent, isFuture, isPast,
       });
     }
     return months;
+  },
+
+  /* "Forecast vs Actual (cumulative)" — a business-plan-style plan-vs-actual
+     read, not the same thing as the Revenue Over Time chart above. That chart
+     shows PER-MONTH actual/forecast/target bars; this accumulates target and
+     actual month over month across the FY so far, the way a startup tracks
+     cumulative plan vs cumulative actual for investors. Reuses
+     monthlyRevenueSeries() (single source of truth for per-month actual/
+     target) rather than re-deriving them.
+
+     cumActual only accumulates through the CURRENT month (null for future
+     months — there is nothing to plot yet) and, at that last defined point,
+     is exactly Aggregates.settledRevenueYTD(): both sum the SDAHC Revenue of
+     Won deals with closeDate inside [FY start, today]. cumTarget accumulates
+     the full 12 months regardless, since the plan line runs the whole year.
+
+     "Forecast" here means the flat annual-target/12 plan line, not the
+     weighted-pipeline forecast bars used elsewhere — see ASSUMPTIONS
+     'cumulative-target-split' for why an even monthly split is a modelling
+     simplification, not a real phased plan. */
+  cumulativeForecastVsActual: () => {
+    const months = Aggregates.monthlyRevenueSeries();
+    let cumTarget = 0, cumActual = 0;
+    let latestActualRow = null;
+
+    const rows = months.map(m => {
+      cumTarget += m.target;
+      if (m.isPast || m.isCurrent) {
+        cumActual += m.actual || 0;
+      }
+      const row = {
+        label: m.label, year: m.year,
+        cumTarget,
+        cumActual: (m.isPast || m.isCurrent) ? cumActual : null,
+        isCurrent: m.isCurrent, isPast: m.isPast, isFuture: m.isFuture,
+      };
+      if (row.cumActual !== null) latestActualRow = row;
+      return row;
+    });
+
+    const targetToDate = latestActualRow ? latestActualRow.cumTarget : 0;
+    const actualToDate = latestActualRow ? latestActualRow.cumActual : 0;
+    const variance = actualToDate - targetToDate;
+    const variancePct = targetToDate === 0 ? 0 : variance / targetToDate;
+
+    return { rows, targetToDate, actualToDate, variance, variancePct, aheadOfPlan: variance >= 0 };
   },
 
   /* Sales Funnel — see FUNNEL_TIERS comment above for methodology. */
@@ -1062,6 +1196,56 @@ const Aggregates = {
       meeting: f.meeting, opportunity: f.opportunity,
     };
   },
+
+  /* Marketing Spend (annual) — entirely dashboard-owned/mock (see ASSUMPTIONS
+     'marketing-spend'). "Report Print/Production" is NOT a second stored
+     number — it reads sdaReportInventory()'s campaignCost live, so the two
+     pages can never disagree about what the print campaign cost. */
+  marketingSpendBreakdown: () => {
+    const m = getSettings().marketing.spend;
+    const reportPrintProduction = getSettings().sdaReport.campaignCost;
+    const rows = [
+      { label: 'Travel', value: m.travel },
+      { label: 'Events', value: m.events },
+      { label: 'Report Print/Production', value: reportPrintProduction },
+      { label: 'Digital', value: m.digital },
+      { label: 'Other', value: m.other },
+    ].sort((a, b) => b.value - a.value);
+    const total = rows.reduce((s, r) => s + r.value, 0);
+    const largest = rows[0];
+    return { rows, total, largest, largestPct: total === 0 ? 0 : largest.value / total };
+  },
+
+  /* Electronic distribution "funnel" — Sent and Website Downloads are the
+     two dashboard-owned inputs; Opened and Engaged are simulated conversion
+     rates applied to them (see ASSUMPTIONS 'marketing-electronic-distribution').
+     Distinct from, and NOT a duplicate of, SDA Report's PRINTED inventory —
+     the printed side is summarised, not recomputed, via sdaReportInventory(). */
+  marketingElectronicFunnel: () => {
+    const e = getSettings().marketing.electronic;
+    const opened = Math.round(e.sent * MARKETING_ELECTRONIC_FUNNEL_RATES.openedRate);
+    const openedOrDownloaded = opened + e.websiteDownloads;
+    const engaged = Math.round(openedOrDownloaded * MARKETING_ELECTRONIC_FUNNEL_RATES.engagedRate);
+    return {
+      sent: e.sent, opened, websiteDownloads: e.websiteDownloads, openedOrDownloaded, engaged,
+      sentByAudience: e.sentByAudience,
+    };
+  },
+
+  /* Simple cost view for the electronic channel — divides the Digital spend
+     category (not the whole Marketing Spend total) by electronic reach, on
+     the same logic as SDA Report's cost-per-delivered/meeting figures. */
+  marketingElectronicCost: () => {
+    const digital = Aggregates.marketingSpendBreakdown().rows.find(r => r.label === 'Digital').value;
+    const funnel = Aggregates.marketingElectronicFunnel();
+    const reach = funnel.sent + funnel.websiteDownloads;
+    return {
+      digitalSpend: digital,
+      costPerReach: reach === 0 ? 0 : digital / reach,
+      costPerEngaged: funnel.engaged === 0 ? 0 : digital / funnel.engaged,
+      engaged: funnel.engaged,
+    };
+  },
 };
 
 /* -------------------------------- DELIVERY -------------------------------- */
@@ -1090,26 +1274,33 @@ const Aggregates = {
    engagementTranches(deal), which normalises either shape into the same
    {name, dueDate, amount, status, unlockCondition} list.
 
-   TRANCHE STATES (this turn's rework): every tranche/milestone status is now
-   one of exactly four values, mirroring the real Notion field — "Not
-   started", "WIP", "Invoiced", "Paid". Each carries real financial meaning,
-   applied via isTrancheLocked() below: Paid is cash (Settled), Invoiced is
-   committed but not yet cash (Contracted), and WIP / Not started are neither
-   — they stay part of the deal's open/weighted pipeline only. Locked vs
-   Unlocked on this page is derived from that mapping, never from stage. */
+   TRANCHE STATES: every tranche/milestone status is one of exactly four
+   values, mirroring the real Notion field — "Not started", "WIP",
+   "Invoiced", "Paid". Each carries real financial meaning:
+     Paid        → Settled (cash)
+     Invoiced    → Contracted (committed, not yet cash)
+     WIP         → Contracted (committed — the engagement is under a signed
+                   contract and work is underway, so that money is
+                   committed even though it hasn't been invoiced yet)
+     Not started → neither (not committed — still open/weighted pipeline only)
+   isTrancheLocked() / isTrancheContracted() / isTrancheSettled() below apply
+   this mapping everywhere: Delivery's Locked/Unlocked split, and the real
+   Contracted Revenue aggregate (contractedRevenue(), compute helpers above —
+   see its comment for how tranche-committed amounts are merged with the
+   stage-based B7/B8 rule without double-counting). Never derived from stage. */
 
 const DELIVERABLE_STATUSES = ['Not started', 'In progress', 'Delivered', 'Accepted'];
 const MILESTONE_STATUSES = ['Not started', 'WIP', 'Invoiced', 'Paid'];
 const ENGAGEMENT_HEALTH = ['On track', 'At risk', 'Slipped'];
 
-/* A tranche/milestone is "Locked" (still just pipeline, not committed
-   revenue) while it's Not started or WIP. Invoiced and Paid are both
-   "Unlocked" for this page's Locked/Unlocked split — the further financial
-   distinction between them (committed-but-uncollected vs. cash) is what
-   "Invoiced → Contracted" / "Paid → Settled" describes, surfaced via each
-   tranche's own status badge rather than a third bucket here. */
 function isTrancheLocked(status) {
-  return status === 'Not started' || status === 'WIP';
+  return status === 'Not started';
+}
+function isTrancheContracted(status) {
+  return status === 'WIP' || status === 'Invoiced';
+}
+function isTrancheSettled(status) {
+  return status === 'Paid';
 }
 
 /* Full calendar-quarter window containing `date` (not quarter-to-date — this
@@ -1235,13 +1426,22 @@ Object.assign(Aggregates, {
       }
     }
 
-    const gatedDeal = engagements.find(d => d.gatedBrokerage);
-    if (gatedDeal) {
-      const remaining = engagementTranches(gatedDeal).filter(m => m.status !== 'Paid').reduce((s, m) => s + m.amount, 0);
-      insights.push({
-        key: 'gating',
-        text: `Completing ${gatedDeal.name} unlocks ${fmtFullDelivery(remaining)} of remaining consultancy revenue and opens ~${fmtFullDelivery(gatedDeal.gatedBrokerage.potentialValue)} of potential downstream brokerage mandate*.`,
-      });
+    /* No brokerage-gating estimate here (removed — Steve confirmed brokerage
+       is not formally gated on advisory completing, only a tendency; see
+       advisoryToBrokerageNote on the deal instead of a modelled figure).
+       Still a useful, fully real insight without it: which near-complete
+       advisory engagement still has consultancy revenue to collect. */
+    const advisoryNearComplete = engagements
+      .filter(d => d.consultancyFeeTotal != null && d.progressPct >= 90)
+      .sort((a, b) => b.progressPct - a.progressPct)[0];
+    if (advisoryNearComplete) {
+      const remaining = engagementTranches(advisoryNearComplete).filter(m => m.status !== 'Paid').reduce((s, m) => s + m.amount, 0);
+      if (remaining > 0) {
+        insights.push({
+          key: 'advisory-completion',
+          text: `${advisoryNearComplete.name} is ${advisoryNearComplete.progressPct}% complete — ${fmtFullDelivery(remaining)} of consultancy revenue is still to be collected.`,
+        });
+      }
     }
 
     const onTrackCount = engagements.filter(d => d.health === 'On track').length;
@@ -1327,6 +1527,41 @@ Object.assign(Aggregates, {
       return { ...h, stageMeta: getStage(h.stage), isCurrent: i === history.length - 1, daysInStage, transitionFlag };
     });
   },
+
+  /* Advisory→Brokerage conversion — see ASSUMPTIONS 'advisory-brokerage-conversion'
+     for why this reads stageHistory rather than a dealType multi-select (no
+     deal is ever re-tagged when it converts). A deal "converts" the moment
+     it's manually moved into a brokerage/negotiation/settlement stage AFTER
+     having been in an advisory stage — the brokerage mandate does not need
+     to close, or even still be open, for this to count. Denominator is every
+     deal tagged 'Paid advisory / DD' (ever); numerator is scoped to
+     conversions whose date falls in the CURRENT fiscal year, matching how
+     every other "this year" figure on Overview is windowed. */
+  advisoryToBrokerageConversion: () => {
+    const advisoryDeals = DEALS.filter(d => d.dealType.includes('Paid advisory / DD'));
+    const { start: fyStart, end: fyEnd } = fiscalYearBounds(TODAY);
+
+    const conversionDateFor = (deal) => {
+      let sawAdvisory = false;
+      for (const h of (deal.stageHistory || [])) {
+        const group = getStage(h.stage).group;
+        if (group === 'advisory') sawAdvisory = true;
+        else if (sawAdvisory && (group === 'brokerage' || group === 'negotiation' || group === 'settlement')) return h.enteredDate;
+      }
+      return null;
+    };
+
+    const withDates = advisoryDeals.map(d => ({ deal: d, conversionDate: conversionDateFor(d) }));
+    const convertedThisFY = withDates.filter(x => x.conversionDate && parseDate(x.conversionDate) >= fyStart && parseDate(x.conversionDate) < fyEnd);
+    const convertedEver = withDates.filter(x => x.conversionDate);
+
+    return {
+      denominator: advisoryDeals.length,
+      convertedThisFY,
+      convertedEverCount: convertedEver.length,
+      rate: advisoryDeals.length === 0 ? 0 : convertedThisFY.length / advisoryDeals.length,
+    };
+  },
 });
 
 /* ------------------------------ SETTINGS --------------------------------- */
@@ -1339,7 +1574,7 @@ const DEFAULT_SETTINGS = {
   // Business
   annualTarget: 1600000,
   monthlyTarget: Math.round(1600000 / 12),
-  fyStartMonth: 0, // 0 = January (calendar year). 3=Apr, 6=Jul, 9=Oct.
+  fyStartMonth: 6, // Australian Financial Year (1 Jul - 30 Jun) by default. 0=Jan, 3=Apr, 9=Oct.
 
   // Pipeline
   highValueDealThreshold: 4000000,
@@ -1362,6 +1597,24 @@ const DEFAULT_SETTINGS = {
     adjustmentLog: [],
   },
 
+  /* Marketing — dashboard-owned, mock (see ASSUMPTIONS). Deliberately does
+     NOT duplicate sdaReport's print inventory or campaignCost above; the
+     Marketing page's spend breakdown reads campaignCost live as its "Report
+     Print/Production" category rather than storing a second number. */
+  marketing: {
+    spend: { travel: 42000, events: 18500, digital: 6200, other: 4000 },
+    electronic: {
+      sent: 340,
+      sentByAudience: [
+        { label: 'Investors', value: 140 },
+        { label: 'Referral Partners / Advisers', value: 95 },
+        { label: 'Existing Clients', value: 70 },
+        { label: 'Prospects (LinkedIn / Web enquiry)', value: 35 },
+      ],
+      websiteDownloads: 85,
+    },
+  },
+
   syncStatus: { connected: true, lastSyncMinutesAgo: 2 },
 };
 
@@ -1378,6 +1631,7 @@ function initSettings() {
     return {
       ...DEFAULT_SETTINGS, ...saved,
       sdaReport: { ...DEFAULT_SETTINGS.sdaReport, ...(saved.sdaReport || {}) },
+      marketing: { ...DEFAULT_SETTINGS.marketing, ...(saved.marketing || {}) },
       syncStatus: { ...DEFAULT_SETTINGS.syncStatus, ...(saved.syncStatus || {}) },
     };
   } catch (e) {
@@ -1396,6 +1650,7 @@ function updateSettings(patch) {
   const current = getSettings();
   const next = { ...current, ...patch };
   if (patch.sdaReport) next.sdaReport = { ...current.sdaReport, ...patch.sdaReport };
+  if (patch.marketing) next.marketing = { ...current.marketing, ...patch.marketing };
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
   return next;
 }
@@ -1430,6 +1685,13 @@ const SDA_REPORT_DISTRIBUTION = {
     { label: 'Cold / New Contact', value: 23 }, { label: 'Other', value: 10 },
   ],
 };
+
+/* ------------------------------- MARKETING -------------------------------- */
+/* Early scaffold (see ASSUMPTIONS 'marketing-spend', 'marketing-electronic-
+   distribution') — structure and mock data only, to be built out once
+   Marketing is a real second origination channel worth integrating. */
+
+const MARKETING_ELECTRONIC_FUNNEL_RATES = { openedRate: 0.58, engagedRate: 0.15 };
 
 /* ------------------------------- MARKET INTEL ----------------------------- */
 
@@ -1685,10 +1947,10 @@ const ASSUMPTIONS = [
   {
     id: 'monthly-target-split',
     label: 'Monthly Revenue Target (defaults to annual target ÷ 12, editable)',
-    usedIn: 'Revenue → Revenue Over Time (Target line); Settings → Business',
+    usedIn: 'Revenue → Revenue Over Time (Target line), Forecast vs Actual (Cumulative) (Target line + Variance); Settings → Business',
     pages: ['Revenue', 'Settings'],
     category: 'Dashboard-owned',
-    why: 'No seasonality is modelled for the target — it assumes even monthly pacing unless overridden in Settings.',
+    why: 'No seasonality is modelled for the target — it assumes even monthly pacing (annual target ÷ 12) unless overridden in Settings. The cumulative Forecast vs Actual chart accumulates this same flat monthly figure month over month to build its Target line and the Variance readout, so a real phased plan (e.g. seasonally weighted, or built up deal-by-deal) would change both charts identically, not just one.',
   },
   {
     id: 'market-relationships-estimate',
@@ -1789,10 +2051,10 @@ const ASSUMPTIONS = [
   {
     id: 'fiscal-year-scope',
     label: 'Financial Year start month — affects YTD window',
-    usedIn: 'Settings → Business; Overview, Revenue (every "YTD" figure)',
+    usedIn: 'Settings → Business; Overview (Settled Revenue YTD, hero pace marker), Revenue (Settled Revenue, Revenue Over Time axis)',
     pages: ['Settings', 'Overview', 'Revenue'],
     category: 'Dashboard-owned',
-    why: 'Changes when "YTD" starts counting (defaults to January = calendar year, matching every figure verified in this prototype). Revenue Over Time\'s Jan–Dec chart is unaffected — it is always calendar-year for readability.',
+    why: 'Changes when "YTD"/pace starts counting. Defaults to July — the Australian Financial Year (1 Jul-30 Jun) — not calendar year, so the app runs on FY out of the box; editable in Settings to any quarter start. Every "YTD" figure (Overview\'s hero + KPI, Revenue\'s Settled Revenue), the hero\'s pace marker (% of FY elapsed), and Revenue Over Time\'s 12-month axis all read the same fiscalYearBounds() window, so a change here re-windows everything together — the chart runs Jul→Jun (or whatever start month is set) rather than always Jan→Dec, and correctly labels months that fall in the following calendar year.',
   },
   {
     id: 'playbook-source-condensation',
@@ -1813,10 +2075,10 @@ const ASSUMPTIONS = [
   {
     id: 'delivery-tranche-fields',
     label: 'Explicit advisory billing tranches (consultancyFeeTotal, tranche1/2 Amount/Status/Date)',
-    usedIn: 'Delivery — Paramount Disability Homes, Horizon SDA Fund (Engagements grid + drawer, KPI strip, Milestone Timeline)',
-    pages: ['Delivery'],
+    usedIn: 'Delivery — Paramount Disability Homes, Horizon SDA Fund (Engagements grid + drawer, KPI strip, Milestone Timeline); Overview + Revenue (Contracted Revenue, for engagements not already at Contract Issued/Under Contract)',
+    pages: ['Delivery', 'Overview', 'Revenue'],
     category: 'Modelled',
-    why: 'These are NEW fields — they do not exist in Notion today. Production would need them created there (per-deal, on the Deals database or a linked Advisory Billing table) and filled in manually by whoever negotiates the engagement, exactly as entered here: a total fee, and two tranche amounts/statuses/dates that are NOT derived from a fixed 50/50 rule or from stage (Paramount is billed 60/40, Horizon 70/30 — real engagements are rarely an even split). Field names are chosen to map 1:1 to that future Notion schema. Statuses are exactly the four values the real Notion field uses — "Not started", "WIP", "Invoiced", "Paid" — manually set per tranche, never inferred from the deal\'s stage. They carry real financial meaning: Paid counts as Settled (cash), Invoiced counts as Contracted (committed, not yet cash), and WIP/Not started count as neither — Locked vs Unlocked on this page is derived from that mapping. Because two manually-entered numbers (a total, and two tranches) can drift apart by data-entry error, each engagement carries a live Tranche Reconciliation check (mirrors the equivalent Notion formula) — shown as a subtle ✓/⚠ indicator on the card and in the drawer. All mock data reconciles cleanly today, but the check runs unconditionally, not just for show.',
+    why: 'These are NEW fields — they do not exist in Notion today. Production would need them created there (per-deal, on the Deals database or a linked Advisory Billing table) and filled in manually by whoever negotiates the engagement, exactly as entered here: a total fee, and two tranche amounts/statuses/dates that are NOT derived from a fixed 50/50 rule or from stage (Paramount is billed 60/40, Horizon 70/30 — real engagements are rarely an even split). Field names are chosen to map 1:1 to that future Notion schema. Statuses are exactly the four values the real Notion field uses — "Not started", "WIP", "Invoiced", "Paid" — manually set per tranche, never inferred from the deal\'s stage. They carry real financial meaning: Paid counts as Settled (cash); Invoiced AND WIP both count as Contracted (committed, not yet cash) — a WIP tranche means the engagement is under a signed contract with work underway, so that money is committed even though it hasn\'t been invoiced yet; Not started counts as neither. Locked vs Unlocked on this page is derived from that mapping, and the same mapping feeds the real Contracted Revenue figure on Overview/Revenue: engagements not already counted via the Contract Issued/Under Contract stage rule contribute their WIP + Invoiced tranche amounts there too, so Contracted Revenue reflects commitment signalled at the tranche level, not stage alone. Because two manually-entered numbers (a total, and two tranches) can drift apart by data-entry error, each engagement carries a live Tranche Reconciliation check (mirrors the equivalent Notion formula) — shown as a subtle ✓/⚠ indicator on the card and in the drawer. All mock data reconciles cleanly today, but the check runs unconditionally, not just for show.',
   },
   {
     id: 'delivery-stage-history',
@@ -1825,14 +2087,6 @@ const ASSUMPTIONS = [
     pages: ['Pipeline'],
     category: 'Modelled',
     why: 'Notion\'s Stage field is a single select with no transition history — it only ever holds the deal\'s current stage. stageHistory[] here is simulated for this prototype: each deal\'s past stages and entry dates are backfilled/interpolated, not real recorded transitions. In production this would NOT be a manual data-entry burden and would NOT require any new Notion field: the Notion→Supabase sync already runs nightly, and diffing each night\'s Stage value against the previous snapshot is enough to build a real transition log automatically, entirely outside Notion. The skipped-stage and moved-backwards anomalies flagged here are deliberately seeded (2 of the 25 deals) to demonstrate the detector; the dashboard only flags an unusual journey for review — it does not block or enforce valid stage transitions.',
-  },
-  {
-    id: 'delivery-brokerage-gating',
-    label: 'Brokerage-gating dependency (Horizon SDA Fund → potential brokerage mandate)',
-    usedIn: 'Delivery → Engagement detail drawer, Simulated AI panel',
-    pages: ['Delivery'],
-    category: 'Modelled',
-    why: 'Illustrates a real commercial pattern — an advisory/DD engagement completing can open a downstream brokerage mandate on the same asset — using a real deal. But there is no second Deal record for that future mandate (the client hasn\'t confirmed it), so the $300k potential is an estimate: Horizon SDA Fund\'s existing transaction value × a typical commission rate seen elsewhere in this dataset. Not a forecast to commit to; would become a real Deal once Notion has one.',
   },
   {
     id: 'delivery-ai-insights',
@@ -1849,5 +2103,37 @@ const ASSUMPTIONS = [
     pages: ['Pipeline'],
     category: 'Modelled',
     why: 'In Notion, Score is a formula field computed from other deal properties — the details of that formula aren\'t reproduced here, and formula RESULTS (not formula definitions) are what the API exposes, so a real sync could read the computed value but not recompute it independently. This prototype assigns each deal a plausible mock score (probability, revenue scale and recency blended, then clamped 0-100) purely to demonstrate Score-driven ordering. In production the sync would capture whatever value Notion\'s formula actually computes, unmodified.',
+  },
+  {
+    id: 'advisory-brokerage-conversion',
+    label: 'Advisory→Brokerage Conversion Rate — detected from stage history, not dealType',
+    usedIn: 'Overview → KPI strip (Advisory→Brokerage Conversion Rate)',
+    pages: ['Overview'],
+    category: 'Modelled',
+    why: 'Confirmed with Steve: no deal is ever re-tagged with a second dealType when an advisory engagement is manually moved into a brokerage/listing mandate — dealType stays whatever it was created with. A literal dealType multi-select overlap (\'Paid advisory / DD\' AND \'Brokerage / Divestment\' together) is therefore always 0, not a real signal. Instead this reads each advisory-tagged deal\'s stageHistory[] (itself simulated — see \'delivery-stage-history\') for the first entry that moves into a brokerage/negotiation/settlement-group stage after having been in an advisory-group stage; the brokerage mandate does not need to still be open or ever close for that to count as a conversion, per Steve\'s framing — only that we manually advanced it. The denominator is every deal ever tagged \'Paid advisory / DD\' (8 currently); the numerator is scoped to conversions dated inside the CURRENT fiscal year, matching every other "this year" figure on Overview — so the 2 deals that did convert (Toowoomba Disability Housing Trust, Kallangur Supported Homes) don\'t count toward this FY\'s rate, because both conversions happened in a prior FY. Confirmed with Steve this reads 0% for the current FY, which the KPI\'s footnote states explicitly rather than leaving as an unexplained zero.',
+  },
+  {
+    id: 'avg-consultancy-listing-value',
+    label: 'Average Consultancy Value / Average Listing Value — historical scope, not "active only"',
+    usedIn: 'Overview → KPI strip (Average Consultancy Value, Average Listing Value)',
+    pages: ['Overview'],
+    category: 'Definitional',
+    why: 'Both are mean deal-size metrics ("how big is a typical engagement/listing"), not revenue forecasts — so unlike most other KPIs on this page they deliberately include every deal regardless of outcome (Won, Lost, In Progress), not just In Progress. Average Consultancy Value averages advisoryRevenue() (tranche-aware) across every deal with a nonzero advisory fee; Average Listing Value averages transactionValue (the underlying asset price, never SDAHC revenue) across every deal tagged \'Brokerage / Divestment\'. A scoping choice, not a Notion-native filter.',
+  },
+  {
+    id: 'marketing-spend',
+    label: 'Marketing Spend by category (Travel, Events, Digital, Other)',
+    usedIn: 'Marketing → Marketing Spend (Annual)',
+    pages: ['Marketing'],
+    category: 'Dashboard-owned',
+    why: 'Marketing/origination spend is not tracked in Notion at all — this is an early scaffold for a future second origination channel, seeded with plausible annual figures (dominated by travel and event costs, per how the business actually spends on relationship-building) so the page has the right shape before real numbers exist. "Report Print/Production" is the one category NOT duplicated here — it reads SDA Report\'s campaignCost live rather than storing a second figure. No Settings edit form exists for these yet (unlike SDA Report\'s five adjustment actions); editing would be a natural next step once this becomes a real workstream.',
+  },
+  {
+    id: 'marketing-electronic-distribution',
+    label: 'Electronic report distribution, website downloads, and the Opened/Engaged funnel',
+    usedIn: 'Marketing → SDA Report (Electronic Distribution & ROI)',
+    pages: ['Marketing'],
+    category: 'Estimated constant',
+    why: 'Electronic distribution and website downloads are not tracked in Notion today — there is no record of how many electronic copies were sent, to whom, or how many were downloaded from the website. Sent (340) and Website Downloads (85) are dashboard-owned mock inputs; the audience breakdown ("to whom") is a simulated split, not real recipient records; Opened and Engaged are simulated conversion rates applied to Sent/Downloads, the same style of estimate as SDA Report\'s own Followed Up/Response/Meeting/Opportunity figures (see \'sda-report-funnel-upper\'). This is deliberately separate from, and does not recompute, SDA Report\'s PRINTED inventory (sdaReportInventory()) — that figure is only summarised/linked here.',
   },
 ];

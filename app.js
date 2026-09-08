@@ -67,7 +67,10 @@ const INFO_TEXT = {
   'ov-active': { text: 'Count of deals with outcome = In Progress. Paused deals are counted separately and excluded here.', assumptionId: 'paused-exclusion' },
   'ov-new-prospects': { text: 'Deals with a createdDate inside the current calendar month, regardless of outcome or stage.' },
   'ov-win-rate': { text: 'Won ÷ (Won + Lost), among deals that have actually been decided. Still-open deals aren\'t counted either way.' },
-  'ov-hero': { text: 'Settled (Won, cash) + Contracted (Contract Issued / Under Contract) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the year you are.' },
+  'ov-avg-consultancy': { text: 'Mean advisory/consultancy fee across every deal with one, any outcome (Won, Lost or In Progress) — a typical engagement size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
+  'ov-avg-listing': { text: 'Mean Transaction Value (the underlying asset price, never SDAHC revenue) across every deal tagged Brokerage / Divestment, any outcome — a typical listing size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
+  'ov-conversion': { text: 'Of every deal ever tagged Paid advisory / DD, the % that was manually moved into a brokerage/negotiation/settlement stage AFTER being in an advisory stage, WITHIN the current FY — the mandate doesn\'t need to still be open or ever close to count. dealType is never re-tagged on conversion, so this reads stage history instead of a multi-select.', assumptionId: 'advisory-brokerage-conversion' },
+  'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
   'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly.', assumptionId: 'value-added-rate' },
   'ov-pipeline-chart': { text: 'Every deal grouped by its current stage, regardless of outcome — Won and Lost deals stay visible at the stage they froze at. Paused deals are intentionally included here for that structural picture (see the linked note).', assumptionId: 'paused-exclusion' },
 
@@ -77,7 +80,8 @@ const INFO_TEXT = {
 
   // Revenue
   'rev-settled': { text: 'Same figure as Overview\'s hero: Won deals with a close date in the current fiscal year, summed by SDAHC Revenue.', assumptionId: 'fiscal-year-scope' },
-  'rev-contracted': { text: 'SDAHC Revenue of In Progress deals already at Contract Issued (B7) or Under Contract (B8) — high-confidence, committed, but not yet cash.' },
+  'rev-contracted-unconditional': { text: 'SDAHC Revenue of In Progress deals at Under Contract (B8) only — nothing left to negotiate, ~99% certain. The most confident non-cash tier.' },
+  'rev-contracted-conditional': { text: 'SDAHC Revenue of In Progress deals at Contract Issued (B7) — signed, but a condition (finance, DD, etc.) can still be live — PLUS the WIP + Invoiced tranche amounts of any other Delivery engagement not already counted as Unconditional or via B7. Committed, but less certain than Unconditional.', assumptionId: 'delivery-tranche-fields' },
   'rev-weighted-forecast': { text: 'Σ (SDAHC Revenue × Probability) across every In Progress deal — identical definition and number as Overview\'s Weighted Pipeline.' },
   'rev-open-pipeline': { text: 'Full, non-probability-adjusted SDAHC Revenue of every In Progress deal.' },
   'rev-target': { text: 'The Annual Revenue Target set in Settings → Business, for the current fiscal year.' },
@@ -86,9 +90,13 @@ const INFO_TEXT = {
   'rev-source-chart': { text: 'SDAHC Revenue split by fee type (brokerage commission, advisory, conjunction, referral) across Won + In Progress deals. Lost and Paused are excluded — Paused carries zero value.', assumptionId: 'paused-exclusion' },
   'rev-concentration': { text: 'Share of total Won + In Progress revenue sitting in the top 3 deals by SDAHC Revenue — a concentration-risk read, same scope as Revenue Composition.', assumptionId: 'revenue-scope' },
   'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage, across every outcome — the same per-stage data as byStage(), filtered to stages with at least one deal.' },
+  'rev-cumulative': { text: 'A business-plan-style pace chart: cumulative Target (annual target ÷ 12, accumulated month by month across the FY) vs. cumulative Actual (settled revenue, accumulated through the current month — the line simply stops at today, since future actuals don\'t exist yet).', assumptionId: 'monthly-target-split' },
+  'rev-cumulative-actual': { text: 'Cumulative settled SDAHC Revenue from the start of the FY through today — identical figure to Settled Revenue elsewhere on this page.' },
+  'rev-cumulative-target': { text: 'Cumulative plan value through the current month only (not the full annual target) — monthly target × months elapsed so far this FY — so it\'s a fair like-for-like comparison against Cumulative Actual.', assumptionId: 'monthly-target-split' },
+  'rev-cumulative-variance': { text: 'Cumulative Actual − Cumulative Target (both through the current month). Positive = ahead of plan, negative = behind. % is variance ÷ Cumulative Target.' },
 
   // Delivery
-  'del-locked': { text: 'Sum of tranche/milestone amounts across all engagements whose status is "Not started" or "WIP" — not yet committed, still part of open pipeline only.', assumptionId: 'delivery-tranche-fields' },
+  'del-locked': { text: 'Sum of tranche/milestone amounts across all engagements whose status is "Not started" — not yet committed, still part of open pipeline only. WIP counts as committed (Contracted) here, same as Invoiced.', assumptionId: 'delivery-tranche-fields' },
   'del-unlockable': { text: 'Of that Locked total, the portion whose due date falls within the current calendar quarter — i.e. what should convert to Invoiced/Paid soon if on schedule.' },
   'del-at-risk': { text: 'Locked amounts specifically on engagements flagged health = "At risk" or "Slipped" — a subset of Locked Revenue, not an addition to it.' },
   'del-active-engagements': { text: 'Count of deals carrying either billing milestones (brokerage) or explicit consultancy tranches (advisory) — the roster shown in the Engagements grid below.' },
@@ -108,6 +116,16 @@ const INFO_TEXT = {
   'sda-distribution': { text: 'A simulated breakdown of the 122 delivered reports by city/channel/priority/relationship type — individual recipients aren\'t tracked as Notion records.', assumptionId: 'sda-report-distribution' },
   'sda-funnel': { text: 'Reports Delivered, Deal, Pipeline Generated and Settled Revenue are real (read from the 3 deals tagged source = "SDA Report"). Followed Up/Response/Meeting/Opportunity are simulated conversion-rate estimates.', assumptionId: 'sda-report-funnel-upper' },
   'sda-roi': { text: 'Cost ratios divide the real Campaign Cost by a mix of real (Delivered, Deal, Settled Revenue) and simulated (Meeting, Opportunity) counts — Pipeline Generated and Settled Revenue are always shown separately, never combined.', assumptionId: 'sda-report-funnel-upper' },
+
+  // Marketing
+  'mkt-spend': { text: 'Annual marketing/origination spend by category — entirely dashboard-owned, seeded with plausible figures. Not tracked in Notion; no Settings edit form exists yet.', assumptionId: 'marketing-spend' },
+  'mkt-spend-total': { text: 'Sum of Travel, Events, Report Print/Production (reads SDA Report\'s Campaign Cost live), Digital and Other.', assumptionId: 'marketing-spend' },
+  'mkt-spend-largest': { text: 'Whichever category has the highest annual spend — expected to be Travel, reflecting relationship-building trips as the dominant cost.', assumptionId: 'marketing-spend' },
+  'mkt-spend-travel': { text: 'Travel + Events as a share of total annual marketing spend — the two large-scale, relationship-building categories.', assumptionId: 'marketing-spend' },
+  'mkt-electronic': { text: 'The printed summary strip reads SDA Report\'s real inventory figures live (see SDA Report page for the full breakdown and adjustment history) — nothing here recomputes or duplicates that. Only the electronic figures below it (Sent, Website Downloads, the funnel) are new.', assumptionId: 'marketing-electronic-distribution' },
+  'mkt-electronic-sent': { text: 'Electronic copies emailed out — a dashboard-owned mock input, not a Notion or email-platform record.', assumptionId: 'marketing-electronic-distribution' },
+  'mkt-electronic-downloads': { text: 'Copies downloaded directly from the SDAHC website — independent of the Sent count (a download can come from someone never emailed a copy). Dashboard-owned mock input.', assumptionId: 'marketing-electronic-distribution' },
+  'mkt-electronic-cost': { text: 'Digital spend category ÷ Engaged count — the simplest cost-per-outcome view for the electronic channel specifically (not the whole Marketing Spend total).', assumptionId: 'marketing-electronic-distribution' },
 
   // Market Intelligence
   'mi-gauges': { text: 'Illustrative placeholders — no live market-data feed exists yet. Shown to demonstrate how one would be visualised once connected.', assumptionId: 'market-pulse-gauges' },
@@ -191,6 +209,7 @@ const PAGE_META = {
   delivery:      { eyebrow: 'Commercial Intelligence', title: 'Delivery' },
   funnel:        { eyebrow: 'Commercial Intelligence', title: 'Sales Funnel' },
   'sda-report':  { eyebrow: 'Growth',                   title: 'SDA Report' },
+  marketing:     { eyebrow: 'Growth',                   title: 'Marketing' },
   'market-intel':{ eyebrow: 'Growth',                   title: 'Market Intelligence' },
   playbook:      { eyebrow: 'Reference',                title: 'SDAHC Playbook' },
   settings:      { eyebrow: 'System',                   title: 'Settings' },
@@ -202,7 +221,7 @@ const PAGE_META = {
    by then the view already has .active applied and a real size. */
 const LAZY_PAGE_RENDERERS = {
   revenue: renderRevenuePage, delivery: renderDeliveryPage, funnel: renderFunnelPage,
-  'sda-report': renderSdaReportPage, 'market-intel': renderMarketIntelPage,
+  'sda-report': renderSdaReportPage, marketing: renderMarketingPage, 'market-intel': renderMarketIntelPage,
   playbook: renderPlaybookPage, settings: renderSettingsPage,
 };
 const renderedViews = new Set();
@@ -317,16 +336,16 @@ function renderOverview() {
 }
 
 function renderHero() {
-  const { target, settled, contracted, weighted, gap, onTrack } = Aggregates.revenueTargetSummary();
+  const { target, settled, unconditional, conditional, weighted, gap, onTrack } = Aggregates.revenueTargetSummary();
 
   const settledPct = Math.min(100, (settled / target) * 100);
-  const contractedPct = Math.min(100 - settledPct, (contracted / target) * 100);
-  const weightedPct = Math.min(100 - settledPct - contractedPct, (weighted / target) * 100);
+  const unconditionalPct = Math.min(100 - settledPct, (unconditional / target) * 100);
+  const conditionalPct = Math.min(100 - settledPct - unconditionalPct, (conditional / target) * 100);
+  const weightedPct = Math.min(100 - settledPct - unconditionalPct - conditionalPct, (weighted / target) * 100);
 
-  // Pace marker: how far through the calendar year we are, as a % of target.
-  const yearStart = new Date(TODAY.getFullYear(), 0, 1);
-  const yearEnd = new Date(TODAY.getFullYear() + 1, 0, 1);
-  const paceFraction = (TODAY - yearStart) / (yearEnd - yearStart);
+  // Pace marker: how far through the current FY we are, as a % of target.
+  const { start: fyStart, end: fyEnd } = fiscalYearBounds(TODAY);
+  const paceFraction = (TODAY - fyStart) / (fyEnd - fyStart);
   const pacePct = paceFraction * 100;
 
   const hero = document.getElementById('hero-panel');
@@ -346,15 +365,17 @@ function renderHero() {
     <div class="hero-progress">
       <div class="hero-progress-track">
         <div class="hero-progress-seg seg-settled" style="width:${settledPct}%"></div>
-        <div class="hero-progress-seg seg-contracted" style="width:${contractedPct}%"></div>
+        <div class="hero-progress-seg seg-unconditional" style="width:${unconditionalPct}%"></div>
+        <div class="hero-progress-seg seg-conditional" style="width:${conditionalPct}%"></div>
         <div class="hero-progress-seg seg-weighted" style="width:${weightedPct}%"></div>
       </div>
-      <div class="hero-progress-marker" style="left:${pacePct}%" data-label="Pace · ${pacePct.toFixed(0)}% of year"></div>
+      <div class="hero-progress-marker" style="left:${pacePct}%" data-label="Pace · ${pacePct.toFixed(0)}% of FY"></div>
     </div>
 
     <div class="hero-legend">
       <div class="hero-legend-item"><span class="hero-legend-swatch" style="background:#2FB37A"></span>Settled <strong>${fmtCompact(settled)}</strong></div>
-      <div class="hero-legend-item"><span class="hero-legend-swatch" style="background:#0476D9"></span>Contracted <strong>${fmtCompact(contracted)}</strong></div>
+      <div class="hero-legend-item"><span class="hero-legend-swatch" style="background:#14A8A0"></span>Unconditional Contracted <strong>${fmtCompact(unconditional)}</strong></div>
+      <div class="hero-legend-item"><span class="hero-legend-swatch" style="background:#0476D9"></span>Contracted (conditional) <strong>${fmtCompact(conditional)}</strong></div>
       <div class="hero-legend-item"><span class="hero-legend-swatch" style="background:#E0A82E"></span>Weighted Pipeline <strong>${fmtCompact(weighted)}</strong></div>
       <div class="hero-gap ${onTrack ? 'on-track' : ''}">${onTrack ? 'Potential clears target by' : 'Gap to target'} <strong>${fmtCompact(gap)}</strong></div>
     </div>
@@ -369,6 +390,9 @@ function renderKpiRow() {
   const active = Aggregates.active().length;
   const newProspects = Aggregates.newProspectsThisMonth();
   const winRate = Aggregates.winRate();
+  const avgConsultancy = Aggregates.avgConsultancyValue();
+  const avgListing = Aggregates.avgListingValue();
+  const conversion = Aggregates.advisoryToBrokerageConversion();
 
   const cards = [
     { label: 'Settled Revenue YTD', value: fmtCompact(settled), foot: `of ${fmtCompact(settings.annualTarget)} target`, infoKey: 'ov-settled' },
@@ -377,6 +401,9 @@ function renderKpiRow() {
     { label: 'Active Deals', value: String(active), foot: `${Aggregates.won().length} won · ${Aggregates.lost().length} lost`, infoKey: 'ov-active' },
     { label: 'New Prospects', value: String(newProspects), foot: 'this calendar month', infoKey: 'ov-new-prospects' },
     { label: 'Win Rate', value: fmtPct(winRate, 0), foot: `${Aggregates.won().length} won of ${Aggregates.won().length + Aggregates.lost().length} decided`, infoKey: 'ov-win-rate' },
+    { label: 'Avg. Consultancy Value', value: fmtCompact(avgConsultancy.avg), foot: `across ${avgConsultancy.count} advisory deals`, infoKey: 'ov-avg-consultancy' },
+    { label: 'Avg. Listing Value', value: fmtCompact(avgListing.avg), foot: `across ${avgListing.count} brokerage deals`, infoKey: 'ov-avg-listing' },
+    { label: 'Advisory→Brokerage Conversion', value: fmtPct(conversion.rate, 0), foot: `${conversion.convertedThisFY.length} of ${conversion.denominator} advisory deals, this FY`, infoKey: 'ov-conversion' },
   ];
 
   renderKpiCards('kpi-row', cards);
@@ -667,18 +694,19 @@ function renderDealsTable() {
 
 let revenueTimeChartInstance = null;
 let revenueSourceChartInstance = null;
+let cumulativeChartInstance = null;
 
 function renderRevenuePage() {
   const root = document.getElementById('view-revenue');
   root.innerHTML = `
-    <div class="kpi-row kpi-row-6" id="revenue-kpi-row"></div>
+    <div class="kpi-row kpi-row-7" id="revenue-kpi-row"></div>
 
     <div class="chart-grid section-gap">
       <div class="panel">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Revenue Over Time${infoIcon('rev-time-chart')}</h3>
-            <div class="panel-sub">Actual settled vs. target vs. forecast · ${TODAY.getFullYear()} · *Forecast month is simulated</div>
+            <div class="panel-sub">Actual settled vs. target vs. forecast · FY${fiscalYearLabel(TODAY)} · *Forecast month is simulated</div>
           </div>
         </div>
         <div class="chart-body"><div class="chart-canvas tall" id="revenue-time-chart"></div></div>
@@ -719,6 +747,17 @@ function renderRevenuePage() {
         <div id="revenue-stage-body" style="padding:14px 24px 20px;"></div>
       </div>
     </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Forecast vs Actual (Cumulative)${infoIcon('rev-cumulative')}</h3>
+          <div class="panel-sub">Business-plan pace · FY${fiscalYearLabel(TODAY)} · target split evenly across 12 months*</div>
+        </div>
+      </div>
+      <div class="kpi-row kpi-row-3" id="cumulative-kpi-row" style="padding:0 24px 6px; margin-top:14px;"></div>
+      <div class="chart-body"><div class="chart-canvas tall" id="cumulative-chart"></div></div>
+    </div>
   `;
 
   renderRevenueKpiRow();
@@ -726,6 +765,7 @@ function renderRevenuePage() {
   renderRevenueSourceChart();
   renderConcentration();
   renderRevenueByStageList();
+  renderCumulativeSection();
 }
 
 function renderRevenueKpiRow() {
@@ -733,13 +773,83 @@ function renderRevenueKpiRow() {
   const openPipeline = Aggregates.expectedOpenPipelineRevenue();
   const cards = [
     { label: 'Settled Revenue', value: fmtCompact(t.settled), foot: 'YTD, realised', infoKey: 'rev-settled' },
-    { label: 'Contracted Revenue', value: fmtCompact(t.contracted), foot: 'Contract Issued + Under Contract', infoKey: 'rev-contracted' },
+    { label: 'Unconditional Contracted', value: fmtCompact(t.unconditional), foot: 'Under Contract — ~99% certain', infoKey: 'rev-contracted-unconditional' },
+    { label: 'Contracted (Conditional)', value: fmtCompact(t.conditional), foot: 'Contract Issued + committed tranches', infoKey: 'rev-contracted-conditional' },
     { label: 'Weighted Forecast', value: fmtCompact(t.weighted), foot: 'active pipeline, probability-adjusted', infoKey: 'rev-weighted-forecast' },
     { label: 'Open Revenue Pipeline', value: fmtCompact(openPipeline), foot: 'active pipeline, full value', infoKey: 'rev-open-pipeline' },
-    { label: 'Revenue Target', value: fmtCompact(t.target), foot: `FY${TODAY.getFullYear()}`, infoKey: 'rev-target' },
+    { label: 'Revenue Target', value: fmtCompact(t.target), foot: `FY${fiscalYearLabel(TODAY)}`, infoKey: 'rev-target' },
     { label: 'Gap to Target', value: fmtCompact(t.gap), foot: t.onTrack ? 'on track — potential covers target' : `${fmtPct(t.totalPotential / t.target)} of target covered`, footClass: t.onTrack ? 'pos' : 'neg', infoKey: 'rev-gap' },
   ];
   renderKpiCards('revenue-kpi-row', cards);
+}
+
+function renderCumulativeSection() {
+  renderCumulativeKpis();
+  renderCumulativeChart();
+}
+
+function renderCumulativeKpis() {
+  const c = Aggregates.cumulativeForecastVsActual();
+  const cards = [
+    { label: 'Cumulative Actual', value: fmtCompact(c.actualToDate), foot: 'settled, FY to date', infoKey: 'rev-cumulative-actual' },
+    { label: 'Cumulative Target', value: fmtCompact(c.targetToDate), foot: 'plan, FY to date', infoKey: 'rev-cumulative-target' },
+    {
+      label: 'Variance',
+      value: `${c.variance >= 0 ? '+' : ''}${fmtCompact(c.variance)}`,
+      foot: `${c.aheadOfPlan ? 'Ahead of plan' : 'Behind plan'} · ${c.variance >= 0 ? '+' : ''}${fmtPct(c.variancePct, 1)}`,
+      footClass: c.aheadOfPlan ? 'pos' : 'neg',
+      infoKey: 'rev-cumulative-variance',
+    },
+  ];
+  renderKpiCards('cumulative-kpi-row', cards);
+}
+
+function renderCumulativeChart() {
+  const el = document.getElementById('cumulative-chart');
+  if (!cumulativeChartInstance) cumulativeChartInstance = echarts.init(el);
+  const { rows } = Aggregates.cumulativeForecastVsActual();
+
+  cumulativeChartInstance.setOption({
+    grid: { left: 8, right: 16, top: 38, bottom: 28, containLabel: true },
+    legend: { top: 0, right: 0, textStyle: { fontSize: 11, color: '#6B7688', fontFamily: 'IBM Plex Sans' }, itemWidth: 14, itemHeight: 3 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const idx = params[0].dataIndex;
+        const r = rows[idx];
+        let lines = `<strong>${r.label} ${r.year}</strong><br/>Cumulative Target: ${fmtFull(r.cumTarget)}`;
+        if (r.cumActual !== null) {
+          const v = r.cumActual - r.cumTarget;
+          lines += `<br/>Cumulative Actual: ${fmtFull(r.cumActual)}`;
+          lines += `<br/>Variance: ${v >= 0 ? '+' : ''}${fmtFull(v)}`;
+        }
+        return lines;
+      },
+      backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 },
+    },
+    xAxis: {
+      type: 'category', data: rows.map(r => r.label),
+      axisLine: { lineStyle: { color: '#E3E8F0' } }, axisTick: { show: false },
+      axisLabel: { color: '#6B7688', fontSize: 11, fontFamily: 'IBM Plex Sans' },
+    },
+    yAxis: {
+      type: 'value', axisLabel: { formatter: (v) => fmtCompact(v), color: '#97A1B0', fontSize: 10.5 },
+      splitLine: { lineStyle: { color: '#EDF0F6' } },
+    },
+    series: [
+      {
+        name: 'Cumulative Target*', type: 'line', data: rows.map(r => r.cumTarget),
+        symbol: 'circle', symbolSize: 6, lineStyle: { color: '#E0A82E', width: 2.5, type: 'dashed' },
+        itemStyle: { color: '#E0A82E' }, connectNulls: true,
+      },
+      {
+        name: 'Cumulative Actual', type: 'line', data: rows.map(r => r.cumActual),
+        symbol: 'circle', symbolSize: 6, lineStyle: { color: '#2FB37A', width: 3 },
+        itemStyle: { color: '#2FB37A' },
+        areaStyle: { color: 'rgba(47,179,122,0.10)' },
+      },
+    ],
+  });
 }
 
 function renderRevenueTimeChart() {
@@ -755,7 +865,7 @@ function renderRevenueTimeChart() {
       formatter: (params) => {
         const idx = params[0].dataIndex;
         const m = months[idx];
-        let lines = `<strong>${m.label} ${TODAY.getFullYear()}</strong>`;
+        let lines = `<strong>${m.label} ${m.year}</strong>`;
         if (m.actual !== null) lines += `<br/>Actual: ${fmtFull(m.actual)}`;
         if (m.forecast !== null) lines += `<br/>Forecast*: ${fmtFull(m.forecast)}`;
         lines += `<br/>Target: ${fmtFull(m.target)}`;
@@ -865,9 +975,12 @@ let deliveryTimelineChartInstance = null;
 
 const HEALTH_COLOR = { 'On track': 'var(--green)', 'At risk': 'var(--gold)', 'Slipped': 'var(--red)' };
 /* Colours mirror the same Settled=green / Contracted=blue language used on
-   the Overview hero bar — Paid IS settled cash, Invoiced IS the contracted,
-   not-yet-cash state. WIP/Not started are both still just pipeline. */
-const MILESTONE_STATUS_COLOR = { 'Not started': '#8592A6', WIP: '#E0A82E', Invoiced: '#0476D9', Paid: '#2FB37A' };
+   the Overview hero bar — Paid IS settled cash (green). WIP and Invoiced are
+   BOTH the contracted, not-yet-cash state (blue) — a WIP tranche means the
+   engagement is under a signed contract with work underway, so it's
+   committed even though it isn't invoiced yet. Only "Not started" is still
+   just pipeline (gray). */
+const MILESTONE_STATUS_COLOR = { 'Not started': '#8592A6', WIP: '#0476D9', Invoiced: '#0476D9', Paid: '#2FB37A' };
 
 function renderDeliveryPage() {
   const root = document.getElementById('view-delivery');
@@ -927,7 +1040,7 @@ function renderDeliveryKpis() {
   const { end: qEnd } = quarterBounds(TODAY);
   const nm = k.nextMilestone;
   const cards = [
-    { label: 'Locked Revenue', value: fmtCompact(k.lockedRevenue), foot: 'Not started / WIP — not yet committed', infoKey: 'del-locked' },
+    { label: 'Locked Revenue', value: fmtCompact(k.lockedRevenue), foot: 'Not started — not yet committed', infoKey: 'del-locked' },
     { label: 'Unlockable This Quarter', value: fmtCompact(k.unlockableThisQuarter), foot: `due by ${fmtDateObj(qEnd)}`, infoKey: 'del-unlockable' },
     { label: 'Revenue At Risk', value: fmtCompact(k.revenueAtRisk), foot: 'locked milestones on at-risk engagements', footClass: k.revenueAtRisk > 0 ? 'neg' : 'pos', infoKey: 'del-at-risk' },
     { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'advisory + brokerage in delivery', infoKey: 'del-active-engagements' },
@@ -1047,7 +1160,7 @@ function renderDeliveryAi() {
 /* ---------------------------- ENGAGEMENT DRAWER ---------------------------- */
 /* A second, dedicated drawer (separate DOM elements, same shared CSS classes
    as the Pipeline deal drawer) so Delivery's commercial detail — deliverables,
-   payment schedule, brokerage-gating — never has to branch inside the
+   payment schedule, tranche reconciliation — never has to branch inside the
    existing openDrawer() used by the other 8 pages. */
 
 function openEngagementDrawer(id) {
@@ -1085,16 +1198,10 @@ function openEngagementDrawer(id) {
     </div>
   `).join('');
 
-  const gatingHtml = deal.gatedBrokerage ? `
-    <div class="drawer-section">
-      <div class="drawer-section-label">Downstream Dependency</div>
-      <div class="gating-card">
-        <div class="gating-card-text">Completing this engagement is expected to open a downstream brokerage mandate on the same asset.</div>
-        <div class="gating-card-value tabular">~${fmtFull(deal.gatedBrokerage.potentialValue)}<span class="gating-card-unit">potential brokerage revenue*</span></div>
-        <div class="gating-card-condition">${deal.gatedBrokerage.condition}</div>
-        <div class="gating-card-flag">*Estimated — no Deal record exists for this yet. See Assumptions Register.</div>
-      </div>
-    </div>
+  /* Soft note only — NOT a modelled dependency or estimate. Steve confirmed
+     brokerage is not formally gated on advisory completing. */
+  const gatingHtml = deal.advisoryToBrokerageNote ? `
+    <div class="drawer-note">${deal.advisoryToBrokerageNote}</div>
   ` : '';
 
   document.getElementById('engagement-drawer-body').innerHTML = `
@@ -1540,7 +1647,7 @@ const ASSUMPTION_CATEGORY_CLASS = {
    this way means a user on a given page can scan just its heading instead
    of the full flat list — an entry that affects more than one page (e.g.
    fiscal year) is listed, and shown, under every page it touches. */
-const ASSUMPTION_PAGE_ORDER = ['Overview', 'Pipeline', 'Revenue', 'Delivery', 'Sales Funnel', 'SDA Report', 'Market Intelligence', 'Playbook', 'Settings'];
+const ASSUMPTION_PAGE_ORDER = ['Overview', 'Pipeline', 'Revenue', 'Delivery', 'Sales Funnel', 'SDA Report', 'Marketing', 'Market Intelligence', 'Playbook', 'Settings'];
 
 function renderAssumptionsList() {
   document.getElementById('assumptions-body').innerHTML = ASSUMPTION_PAGE_ORDER.map(page => {
@@ -1819,6 +1926,172 @@ function renderSdaRoi() {
       </div>
     `;
   }).join('');
+}
+
+/* ============================================================================
+   MARKETING PAGE
+   Early scaffold for a future second origination channel — mostly structure
+   with mock data, clearly flagged (see ASSUMPTIONS 'marketing-spend',
+   'marketing-electronic-distribution'). Section 2 deliberately summarises
+   and links to SDA Report's PRINTED inventory rather than recomputing it —
+   only the electronic side (sent, website downloads, the Opened/Engaged
+   funnel) is new here.
+   ============================================================================ */
+
+let marketingSpendChartInstance = null;
+
+const MARKETING_SPEND_COLORS = {
+  'Travel': '#E0A82E', 'Events': '#7A5CC7', 'Report Print/Production': '#14A8A0',
+  'Digital': '#0476D9', 'Other': '#8592A6',
+};
+
+function renderMarketingPage() {
+  const root = document.getElementById('view-marketing');
+  root.innerHTML = `
+    <div class="revenue-recognition-note" style="margin-top:0; margin-bottom:22px;">
+      <strong>Marketing is an emerging area.</strong> This page is an early scaffold for a future second origination channel (alongside Steve's relationship network) — structure and mock data only, to be built out post-integration once real spend and distribution data exists. Every figure below is dashboard-owned or simulated; none of it is sourced from Notion. See the Assumptions Register for exactly which.
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Marketing Spend (Annual)${infoIcon('mkt-spend')}</h3>
+          <div class="panel-sub">Dominated by relationship-building travel and events · <span class="scope-tag dashboard">Dashboard-owned</span> · not tracked in Notion</div>
+        </div>
+      </div>
+      <div class="kpi-row kpi-row-3" id="marketing-spend-kpi-row" style="padding:0 24px 6px; margin-top:14px;"></div>
+      <div class="chart-body" style="padding-bottom:20px;">
+        <div class="chart-canvas" id="marketing-spend-chart" style="height:230px;"></div>
+        <div class="legend-list" id="marketing-spend-legend"></div>
+      </div>
+    </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">SDA Report — Electronic Distribution &amp; ROI${infoIcon('mkt-electronic')}</h3>
+          <div class="panel-sub">Complements the SDA Report page's printed inventory · electronic side only, simulated</div>
+        </div>
+      </div>
+      <div id="marketing-printed-summary" style="padding:16px 24px 4px;"></div>
+      <div class="kpi-row kpi-row-3" id="marketing-electronic-kpi-row" style="padding:0 24px 6px; margin-top:14px;"></div>
+      <div class="chart-grid" style="grid-template-columns: 1.2fr 1fr; padding:20px 24px 24px;">
+        <div>
+          <div class="panel-sub" style="font-weight:600; color:var(--ink-soft); margin-bottom:8px;">Electronic Funnel</div>
+          <div id="marketing-electronic-funnel"></div>
+        </div>
+        <div>
+          <div class="panel-sub" style="font-weight:600; color:var(--ink-soft); margin-bottom:8px;">Sent By Audience *</div>
+          <div class="legend-list" id="marketing-audience-legend"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  renderMarketingSpend();
+  renderMarketingElectronic();
+}
+
+function renderMarketingSpend() {
+  const spend = Aggregates.marketingSpendBreakdown();
+  const travelEvents = spend.rows.filter(r => r.label === 'Travel' || r.label === 'Events').reduce((s, r) => s + r.value, 0);
+
+  const cards = [
+    { label: 'Total Annual Spend', value: fmtCompact(spend.total), foot: 'across 5 categories', infoKey: 'mkt-spend-total' },
+    { label: 'Largest Category', value: spend.largest.label, foot: `${fmtCompact(spend.largest.value)} · ${fmtPct(spend.largestPct)} of total`, infoKey: 'mkt-spend-largest' },
+    { label: 'Travel + Events Share', value: fmtPct(spend.total ? travelEvents / spend.total : 0), foot: `${fmtCompact(travelEvents)} of ${fmtCompact(spend.total)}`, infoKey: 'mkt-spend-travel' },
+  ];
+  renderKpiCards('marketing-spend-kpi-row', cards);
+
+  const el = document.getElementById('marketing-spend-chart');
+  if (!marketingSpendChartInstance) marketingSpendChartInstance = echarts.init(el);
+  marketingSpendChartInstance.setOption({
+    tooltip: {
+      trigger: 'item',
+      formatter: (p) => `<strong>${p.name}</strong><br/>${fmtFull(p.value)} (${p.percent}%)`,
+      backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 },
+    },
+    series: [{
+      type: 'pie', radius: ['54%', '80%'], center: ['50%', '50%'],
+      avoidLabelOverlap: true,
+      label: { formatter: '{d}%', fontSize: 11, fontWeight: 600, color: '#3B4657', fontFamily: 'IBM Plex Mono' },
+      labelLine: { length: 8, length2: 6 },
+      data: spend.rows.map(r => ({ name: r.label, value: r.value, itemStyle: { color: MARKETING_SPEND_COLORS[r.label] } })),
+    }],
+  });
+
+  document.getElementById('marketing-spend-legend').innerHTML = spend.rows.map(r => `
+    <div class="legend-row">
+      <div class="legend-left"><span class="legend-dot" style="background:${MARKETING_SPEND_COLORS[r.label]}"></span>${r.label}${r.label === 'Report Print/Production' ? ' <span class="scope-tag real" style="margin-left:4px;">from SDA Report</span>' : ''}</div>
+      <div><span class="legend-amount tabular">${fmtCompact(r.value)}</span><span class="legend-pct tabular">${fmtPct(spend.total ? r.value / spend.total : 0)}</span></div>
+    </div>
+  `).join('');
+}
+
+function renderMarketingElectronic() {
+  const inv = Aggregates.sdaReportInventory();
+  document.getElementById('marketing-printed-summary').innerHTML = `
+    <div class="channel-compare" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="channel-card">
+        <div class="channel-card-label" style="color:var(--ink-mute);">Printed</div>
+        <div class="channel-card-value tabular">${inv.printed}</div>
+        <div class="channel-card-sub">reports · <span class="scope-tag real">Real, from SDA Report</span></div>
+      </div>
+      <div class="channel-card">
+        <div class="channel-card-label" style="color:var(--ink-mute);">Delivered</div>
+        <div class="channel-card-value tabular">${inv.delivered}</div>
+        <div class="channel-card-sub">of ${inv.printed} printed</div>
+      </div>
+      <div class="channel-card">
+        <div class="channel-card-label" style="color:var(--ink-mute);">Available</div>
+        <div class="channel-card-value tabular">${inv.available}</div>
+        <div class="channel-card-sub">still to distribute</div>
+      </div>
+    </div>
+    <a href="#" class="notion-link" id="marketing-open-sda-report" style="background:var(--bg-inset); color:var(--ink-soft); margin-top:14px;">
+      Full printed inventory on SDA Report →
+    </a>
+  `;
+  document.getElementById('marketing-open-sda-report').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelector('.nav-item[data-view="sda-report"]').click();
+  });
+
+  const funnel = Aggregates.marketingElectronicFunnel();
+  const cost = Aggregates.marketingElectronicCost();
+  const cards = [
+    { label: 'Electronic Sent', value: String(funnel.sent), foot: 'emailed copies *', infoKey: 'mkt-electronic-sent' },
+    { label: 'Website Downloads', value: String(funnel.websiteDownloads), foot: 'from sdahc.com.au *', infoKey: 'mkt-electronic-downloads' },
+    { label: 'Cost per Engaged Contact', value: cost.engaged ? '$' + cost.costPerEngaged.toFixed(2) : '—', foot: `Digital spend ÷ ${cost.engaged} engaged`, infoKey: 'mkt-electronic-cost' },
+  ];
+  renderKpiCards('marketing-electronic-kpi-row', cards);
+
+  const funnelHead = `<div class="funnel-table-head"><div>Stage</div><div style="text-align:right">Count</div><div style="text-align:right">Converted</div><div style="text-align:right">Source</div></div>`;
+  const funnelStages = [
+    { label: 'Electronic Sent', count: funnel.sent, isReal: true },
+    { label: 'Opened / Downloaded', count: funnel.openedOrDownloaded, isReal: false },
+    { label: 'Engaged', count: funnel.engaged, isReal: false },
+  ];
+  const funnelRows = funnelStages.map((s, i) => {
+    const conv = i === 0 ? null : (funnelStages[i - 1].count === 0 ? 0 : s.count / funnelStages[i - 1].count);
+    return `
+      <div class="funnel-row">
+        <div class="funnel-row-label">${s.label}</div>
+        <div class="funnel-row-count tabular">${s.count}</div>
+        <div class="funnel-row-conv tabular">${conv === null ? '—' : fmtPct(conv)}</div>
+        <div style="text-align:right;"><span class="scope-tag ${s.isReal ? 'real' : 'dashboard'}">${s.isReal ? 'Dashboard input' : 'Simulated'}</span></div>
+      </div>
+    `;
+  }).join('');
+  document.getElementById('marketing-electronic-funnel').innerHTML = funnelHead + funnelRows;
+
+  const audienceTotal = funnel.sentByAudience.reduce((s, a) => s + a.value, 0);
+  document.getElementById('marketing-audience-legend').innerHTML = funnel.sentByAudience.map((a, i) => `
+    <div class="legend-row">
+      <div class="legend-left"><span class="legend-dot" style="background:${['#0476D9', '#14A8A0', '#7A5CC7', '#8592A6'][i % 4]}"></span>${a.label}</div>
+      <div><span class="legend-amount tabular">${a.value}</span><span class="legend-pct tabular">${fmtPct(audienceTotal ? a.value / audienceTotal : 0)}</span></div>
+    </div>
+  `).join('');
 }
 
 /* ============================================================================
@@ -2174,7 +2447,7 @@ window.addEventListener('DOMContentLoaded', () => {
   renderPipelinePage();
 
   window.addEventListener('resize', () => {
-    [pipelineChartInstance, waterfallChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
+    [pipelineChartInstance, waterfallChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, cumulativeChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, marketingSpendChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
       .forEach(c => c && c.resize());
   });
 });

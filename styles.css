@@ -421,7 +421,8 @@ a { color: inherit; }
 }
 .hero-progress-seg { height: 100%; transition: width 0.6s cubic-bezier(.4,0,.2,1); }
 .seg-settled { background: linear-gradient(90deg, #2FB37A, #38C98C); }
-.seg-contracted { background: linear-gradient(90deg, #0476D9, #2E93EA); }
+.seg-unconditional { background: linear-gradient(90deg, #0C8C82, #14A8A0); }
+.seg-conditional { background: linear-gradient(90deg, #0476D9, #2E93EA); }
 .seg-weighted { background: repeating-linear-gradient(135deg, rgba(224,168,46,0.85), rgba(224,168,46,0.85) 5px, rgba(224,168,46,0.55) 5px, rgba(224,168,46,0.55) 10px); }
 
 .hero-progress-marker {
@@ -907,6 +908,8 @@ thead th.num-head { text-align: right; }
 /* ------------------------------ REVENUE PAGE ------------------------------ */
 
 .kpi-row-6 { grid-template-columns: repeat(6, 1fr); }
+.kpi-row-7 { grid-template-columns: repeat(4, 1fr); }
+.kpi-row-3 { grid-template-columns: repeat(3, 1fr); }
 
 .legend-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
 .legend-row { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; }
@@ -1021,12 +1024,9 @@ thead th.num-head { text-align: right; }
 .milestone-meta { font-size: 12px; color: var(--ink-soft); margin-top: 5px; font-weight: 500; }
 .milestone-condition { font-size: 11px; color: var(--ink-faint); margin-top: 4px; line-height: 1.4; }
 
-.gating-card { background: linear-gradient(135deg, #F1ECFB, #EAF3FD); border-radius: 12px; padding: 14px 16px; }
-.gating-card-text { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
-.gating-card-value { font-family: var(--font-mono); font-size: 19px; font-weight: 600; color: var(--purple); margin-top: 8px; }
-.gating-card-unit { display: block; font-family: var(--font-body); font-size: 10.5px; font-weight: 500; color: var(--ink-faint); margin-top: 2px; }
-.gating-card-condition { font-size: 11px; color: var(--ink-mute); margin-top: 8px; line-height: 1.45; }
-.gating-card-flag { font-size: 10px; color: var(--ink-faint); margin-top: 8px; font-style: italic; }
+/* Subtle, unquantified note (e.g. advisory-may-lead-to-brokerage) — no card,
+   no number, deliberately lighter-weight than a modelled dependency block. */
+.drawer-note { font-size: 11.5px; color: var(--ink-faint); font-style: italic; line-height: 1.5; margin-bottom: 20px; padding: 10px 12px; background: var(--bg-inset); border-radius: 8px; }
 
 /* ------------------------------ SALES FUNNEL ------------------------------ */
 
@@ -1337,6 +1337,8 @@ thead th.num-head { text-align: right; }
   .team-grid { grid-template-columns: repeat(2, 1fr); }
   .settings-field-grid { grid-template-columns: 1fr; }
   .kpi-row-6 { grid-template-columns: repeat(2, 1fr); }
+  .kpi-row-7 { grid-template-columns: repeat(2, 1fr); }
+  .kpi-row-3 { grid-template-columns: repeat(1, 1fr); }
   .cohort-head, .cohort-row { grid-template-columns: 88px 60px 50px 50px 74px; gap: 6px; font-size: 11.5px; }
   .engagement-grid { grid-template-columns: 1fr; }
 }
