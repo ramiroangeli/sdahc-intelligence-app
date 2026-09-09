@@ -41,3 +41,14 @@ create index idx_deals_last_edited on raw.deals (last_edited_time);
 -- La tabla queda cerrada a las claves anon/authenticated.
 -- Solo el backend (service_role, que ignora RLS) puede leer/escribir.
 alter table raw.deals enable row level security;
+
+alter table raw.deals add column if not exists next_action_date date;
+alter table raw.deals add column if not exists pipeline_status text;
+alter table raw.deals add column if not exists deal_value_calculated numeric;
+
+-- Dar permiso al rol de servicio (el que usa el sync) sobre el esquema raw
+grant usage on schema raw to service_role;
+grant all privileges on all tables in schema raw to service_role;
+
+-- Y que los permisos se apliquen también a tablas futuras de raw
+alter default privileges in schema raw grant all on tables to service_role;
