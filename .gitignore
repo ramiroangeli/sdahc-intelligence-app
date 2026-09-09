@@ -1,3 +1,6 @@
 node_modules/
 .DS_Store
 00_context/
+.env
+sync/node_modules
+sync/.env
