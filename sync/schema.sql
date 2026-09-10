@@ -52,3 +52,49 @@ grant all privileges on all tables in schema raw to service_role;
 
 -- Y que los permisos se apliquen también a tablas futuras de raw
 alter default privileges in schema raw grant all on tables to service_role;
+
+
+-- ============================================================
+-- Esquema "history" — el historial que Notion no guarda
+-- ============================================================
+create schema if not exists history;
+
+-- Foto diaria de cada deal (se acumula, nunca se actualiza)
+create table history.deal_snapshots (
+  id               bigint generated always as identity primary key,
+  notion_page_id   text not null,              -- qué deal
+  snapshot_date    date not null,              -- de qué día es la foto
+  stage            text,
+  outcome          text,
+  transaction_value numeric,
+  advisory_fee     numeric,
+  probability      numeric,
+  sdahc_revenue    numeric,                    -- lo calcularemos al tomar la foto
+  captured_at      timestamptz default now(),
+  -- una sola foto por deal por día (evita duplicados si el sync corre 2 veces)
+  unique (notion_page_id, snapshot_date)
+);
+
+-- Log de cambios de stage (se detectan comparando fotos)
+create table history.deal_stage_events (
+  id               bigint generated always as identity primary key,
+  notion_page_id   text not null,              -- qué deal
+  from_stage       text,                       -- de dónde venía (null si es el primero)
+  to_stage         text,                       -- a dónde pasó
+  changed_at       date not null,              -- cuándo lo detectamos
+  detected_at      timestamptz default now()
+);
+
+-- Índices para consultar rápido por deal
+create index idx_snapshots_deal on history.deal_snapshots (notion_page_id);
+create index idx_stage_events_deal on history.deal_stage_events (notion_page_id);
+
+-- Seguridad: RLS activado, sin políticas públicas
+alter table history.deal_snapshots enable row level security;
+alter table history.deal_stage_events enable row level security;
+
+-- Permisos para el sync (solo service_role), incl. tablas futuras del esquema
+grant usage on schema history to service_role;
+grant all privileges on all tables in schema history to service_role;
+alter default privileges in schema history grant all on tables to service_role;
+
