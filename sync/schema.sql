@@ -209,3 +209,67 @@ alter table raw.groups enable row level security;
 grant usage on schema raw to service_role;
 grant all privileges on all tables in schema raw to service_role;
 
+-- ============================================================
+-- Esquema "analytics" — dato transformado listo para la app
+-- ============================================================
+create schema if not exists analytics;
+
+create or replace view analytics.deals as
+select
+  d.notion_page_id,
+  d.name,
+  d.stage,
+  d.outcome,
+  d.deal_type,
+  d.entity,
+  d.owner,
+  d.probability,
+  d.score,
+  d.close_date,
+  d.next_action,
+  d.next_action_date,
+  d.days_stale,
+  d.pipeline_status,
+
+  -- Valores base
+  coalesce(d.transaction_value, 0)                              as transaction_value,
+  coalesce(d.commission_pct, 0)                                 as commission_pct,
+  coalesce(d.advisory_fee, 0)                                   as advisory_fee,
+
+  -- SDAHC revenue = comisión de brokerage + fee de advisory
+  (coalesce(d.transaction_value,0) * coalesce(d.commission_pct,0))
+    + coalesce(d.advisory_fee,0)                                as sdahc_revenue,
+
+  -- Weighted = sdahc_revenue × probabilidad
+  ((coalesce(d.transaction_value,0) * coalesce(d.commission_pct,0))
+    + coalesce(d.advisory_fee,0)) * coalesce(d.probability,0)   as weighted_revenue,
+
+  -- Tramos de advisory
+  coalesce(d.tranche1_amount, 0)                                as tranche1_amount,
+  d.tranche1_status,
+  coalesce(d.tranche2_amount, 0)                                as tranche2_amount,
+  d.tranche2_status,
+
+  -- Advisory SETTLED = tramos en estado "Paid" (dinero en la cuenta)
+  (case when d.tranche1_status = 'Paid' then coalesce(d.tranche1_amount,0) else 0 end)
+  + (case when d.tranche2_status = 'Paid' then coalesce(d.tranche2_amount,0) else 0 end)
+                                                               as advisory_settled,
+
+  -- Advisory CONTRACTED = tramos en "WIP" o "Invoiced" (comprometido, no cobrado)
+  (case when d.tranche1_status in ('WIP','Invoiced') then coalesce(d.tranche1_amount,0) else 0 end)
+  + (case when d.tranche2_status in ('WIP','Invoiced') then coalesce(d.tranche2_amount,0) else 0 end)
+                                                               as advisory_contracted,
+
+  -- Banderas útiles para filtrar en la app
+  (d.outcome = 'Paused')                                        as is_paused,
+  (d.outcome = 'Won')                                           as is_won,
+  (d.outcome = 'Lost')                                          as is_lost,
+  (d.outcome not in ('Paused','Lost') or d.outcome is null)     as is_active
+
+from raw.deals d
+where d.is_archived = false;
+
+-- Permisos: por ahora solo el service_role (la app la añadimos en el paso 2)
+grant usage on schema analytics to service_role;
+grant select on all tables in schema analytics to service_role;
+alter default privileges in schema analytics grant select on tables to service_role;
