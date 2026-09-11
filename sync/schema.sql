@@ -98,3 +98,114 @@ grant usage on schema history to service_role;
 grant all privileges on all tables in schema history to service_role;
 alter default privileges in schema history grant all on tables to service_role;
 
+
+-- ============================================================
+-- Tabla espejo de la base Contacts de Notion
+-- ============================================================
+create table raw.contacts (
+  -- Claves del sync
+  notion_page_id       text primary key,
+  last_edited_time     timestamptz,
+  synced_at            timestamptz default now(),
+  is_archived          boolean default false,
+
+  -- Campos mapeados de Notion
+  name                 text,                       -- title "Name"
+  email                text,                       -- "Email" (type email)
+  phone                text,                       -- "Phone Number" (type phone_number)
+  relationship_status  text,                       -- "Relationship Status" (select)
+  contact_type         text[],                     -- "Contact Type" (multi-select)
+  source               text[],                     -- "Source" (multi-select)
+  state                text,                       -- "State" (select)
+  business_origin      text,                       -- "Business Origin" (select)
+  non_active           boolean,                    -- "Non-active" (checkbox)
+  rel_deals            text[],                     -- ids de la relation "Deals"
+  rel_group            text[],                     -- ids de la relation "Group"
+  rel_tasks            text[],                     -- ids de la relation "Tasks"
+  -- NOTA: "Last Touchpointa" es un last_edited_time de Notion, no una fecha real
+  -- de último contacto — a propósito no se mapea a ninguna columna.
+  -- NOTA: las relaciones "| ABS" (otro negocio) tampoco se mapean — quedan en raw_data.
+
+  -- Red de seguridad: el JSON completo de Notion, tal cual
+  raw_data             jsonb
+);
+
+create index idx_contacts_last_edited on raw.contacts (last_edited_time);
+
+alter table raw.contacts enable row level security;
+
+grant usage on schema raw to service_role;
+grant all privileges on all tables in schema raw to service_role;
+
+
+-- ============================================================
+-- Tabla espejo de la base Tasks de Notion
+-- ============================================================
+create table raw.tasks (
+  -- Claves del sync
+  notion_page_id     text primary key,
+  last_edited_time   timestamptz,
+  synced_at          timestamptz default now(),
+  is_archived        boolean default false,
+
+  -- Campos mapeados de Notion
+  name               text,                         -- title "Task Name " (OJO: espacio al final en Notion)
+  status             text,                         -- "Status" (type status → .status.name, NO .select)
+  priority           text,                         -- "Priority" (select)
+  task_type          text,                         -- "Task Type" (select)
+  due_date           date,                         -- "Due Date"
+  completed_date     date,                         -- "Completed Date"
+  assigned_to        text,                         -- "Assigned To" (people, nombres unidos por coma)
+  auto_generated     boolean,                      -- "Auto-Generated" (checkbox)
+  rel_deals          text[],                       -- ids de la relation "Deals"
+  rel_contacts       text[],                       -- ids de la relation "Contacts"
+  rel_groups         text[],                       -- ids de la relation "Groups"
+  -- NOTA: la relation "Deals | ABS" (otro negocio) no se mapea — queda en raw_data.
+
+  -- Red de seguridad: el JSON completo de Notion, tal cual
+  raw_data           jsonb
+);
+
+create index idx_tasks_last_edited on raw.tasks (last_edited_time);
+
+alter table raw.tasks enable row level security;
+
+grant usage on schema raw to service_role;
+grant all privileges on all tables in schema raw to service_role;
+
+
+-- ============================================================
+-- Tabla espejo de la base Groups de Notion
+-- OJO: Groups se sincroniza desde el endpoint /v1/data_sources/{id}/query
+-- (Notion-Version 2025-09-03), no /v1/databases/{id}/query como las otras tres.
+-- ============================================================
+create table raw.groups (
+  -- Claves del sync
+  notion_page_id     text primary key,
+  last_edited_time   timestamptz,
+  synced_at          timestamptz default now(),
+  is_archived        boolean default false,
+
+  -- Campos mapeados de Notion
+  name               text,                         -- title "Name"
+  status             text,                         -- "Status" (select)
+  source             text,                         -- "Source" (select)
+  classification     text[],                       -- "Classification" (multi-select)
+  business_origin    text,                         -- "Business Origin" (select)
+  rel_contacts       text[],                       -- ids de la relation "Contacts"
+  rel_deals          text[],                       -- ids de la relation "Deals"
+  rel_tasks          text[],                       -- ids de la relation "Tasks"
+  rel_states         text[],                       -- ids de la relation "States/Territories"
+  -- NOTA: la relation "Deals | ABS" (otro negocio) no se mapea — queda en raw_data.
+
+  -- Red de seguridad: el JSON completo de Notion, tal cual
+  raw_data           jsonb
+);
+
+create index idx_groups_last_edited on raw.groups (last_edited_time);
+
+alter table raw.groups enable row level security;
+
+grant usage on schema raw to service_role;
+grant all privileges on all tables in schema raw to service_role;
+
