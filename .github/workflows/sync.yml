@@ -1,0 +1,41 @@
+name: Nightly Notion Sync
+
+# Cuándo corre:
+on:
+  schedule:
+    # Cron en UTC. 18:00 UTC = 4:00 AM en Brisbane (AEST, UTC+10).
+    # Corre "de madrugada" hora Australia, cuando nadie edita Notion.
+    - cron: '0 18 * * *'
+  workflow_dispatch:   # permite lanzarlo a mano desde la web de GitHub
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest   # una máquina Linux limpia que GitHub provee
+    steps:
+      # 1. Trae tu código del repo
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Instala Node
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 3. Instala las librerías del sync
+      - name: Install dependencies
+        working-directory: ./sync
+        run: npm install
+
+      # 4. Corre el sync completo, pasándole los secretos como variables de entorno
+      - name: Run sync
+        working-directory: ./sync
+        env:
+          NOTION_TOKEN:          ${{ secrets.NOTION_TOKEN }}
+          NOTION_DEALS_DB_ID:    ${{ secrets.NOTION_DEALS_DB_ID }}
+          NOTION_CONTACTS_DB_ID: ${{ secrets.NOTION_CONTACTS_DB_ID }}
+          NOTION_TASKS_DB_ID:    ${{ secrets.NOTION_TASKS_DB_ID }}
+          NOTION_GROUPS_DB_ID:   ${{ secrets.NOTION_GROUPS_DB_ID }}
+          SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node sync-all.js
