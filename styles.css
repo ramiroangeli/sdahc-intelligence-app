@@ -272,6 +272,15 @@ a { color: inherit; }
 }
 .prototype-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: #C6960F; }
 
+/* Shown on Overview / Pipeline / Revenue while they read analytics.deals live
+   from Supabase, in place of the mock-data badge above. */
+.prototype-badge.live-badge {
+  color: #146C43;
+  background: linear-gradient(135deg, #DEF5E6, #C9EDD6);
+  border: 1px solid #A7DFBB;
+}
+.prototype-badge.live-badge .dot { background: #2FB37A; }
+
 .content {
   flex: 1;
   padding: 28px 32px 64px;

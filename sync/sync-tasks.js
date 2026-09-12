@@ -52,6 +52,7 @@ function toRow(page) {
   return {
     notion_page_id:   page.id,
     last_edited_time: page.last_edited_time,
+    created_time:     page.created_time,
     synced_at:        new Date().toISOString(),
     is_archived:      false,
     name:             getTitle(p['Task Name ']),

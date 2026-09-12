@@ -72,7 +72,7 @@ const INFO_TEXT = {
   'ov-conversion': { text: 'Of every deal ever tagged Paid advisory / DD, the % that was manually moved into a brokerage/negotiation/settlement stage AFTER being in an advisory stage, WITHIN the current FY — the mandate doesn\'t need to still be open or ever close to count. dealType is never re-tagged on conversion, so this reads stage history instead of a multi-select.', assumptionId: 'advisory-brokerage-conversion' },
   'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
   'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly.', assumptionId: 'value-added-rate' },
-  'ov-pipeline-chart': { text: 'Every deal grouped by its current stage, regardless of outcome — Won and Lost deals stay visible at the stage they froze at. Paused deals are intentionally included here for that structural picture (see the linked note).', assumptionId: 'paused-exclusion' },
+  'ov-pipeline-chart': { text: 'Every non-Paused deal grouped by its current stage, regardless of outcome — Won and Lost deals stay visible at the stage they froze at. Paused deals are excluded entirely (zero count, zero value) per the non-negotiable rule that they never contribute to any pipeline total.', assumptionId: 'paused-exclusion' },
 
   // Pipeline
   'pipeline-flow': { text: 'Same per-stage grouping as Overview\'s Pipeline by Stage — Won/Lost/Paused deals stay visible at their frozen stage. Toggle changes what each stage card reports.' },
@@ -87,7 +87,7 @@ const INFO_TEXT = {
   'rev-target': { text: 'The Annual Revenue Target set in Settings → Business, for the current fiscal year.' },
   'rev-gap': { text: 'Target − (Settled + Contracted + Weighted Open). Shown as "on track" once Settled + Contracted + Weighted already covers the target.' },
   'rev-time-chart': { text: 'Actual bars read real closeDate history. Forecast bars bucket each open deal into a month using an estimated close date derived from its probability — directional only, Notion doesn\'t track an expected close date.', assumptionId: 'estimated-close-date' },
-  'rev-source-chart': { text: 'SDAHC Revenue split by fee type (brokerage commission, advisory, conjunction, referral) across Won + In Progress deals. Lost and Paused are excluded — Paused carries zero value.', assumptionId: 'paused-exclusion' },
+  'rev-source-chart': { text: 'SDAHC Revenue split by fee type across Won + In Progress deals. Lost and Paused are excluded — Paused carries zero value. Only Brokerage and Advisory are shown — Conjunction and Referral fees aren\'t columns in the current Notion sync, so they can\'t be split out from real data yet.', assumptionId: 'paused-exclusion' },
   'rev-concentration': { text: 'Share of total Won + In Progress revenue sitting in the top 3 deals by SDAHC Revenue — a concentration-risk read, same scope as Revenue Composition.', assumptionId: 'revenue-scope' },
   'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage, across every outcome — the same per-stage data as byStage(), filtered to stages with at least one deal.' },
   'rev-cumulative': { text: 'A business-plan-style pace chart: cumulative Target (annual target ÷ 12, accumulated month by month across the FY) vs. cumulative Actual (settled revenue, accumulated through the current month — the line simply stops at today, since future actuals don\'t exist yet).', assumptionId: 'monthly-target-split' },
@@ -226,6 +226,19 @@ const LAZY_PAGE_RENDERERS = {
 };
 const renderedViews = new Set();
 
+/* Overview, Pipeline and Revenue read live analytics.deals via Supabase —
+   every other page still reads data.js's mock DEALS. The topbar badge
+   switches label/colour so it's never ambiguous which kind of data is on
+   screen (see supabase-data.js). */
+const REAL_DATA_PAGES = new Set(['overview', 'pipeline', 'revenue']);
+
+function updateDataSourceBadge(view) {
+  const badge = document.getElementById('assumptions-badge');
+  const isLive = REAL_DATA_PAGES.has(view);
+  badge.classList.toggle('live-badge', isLive);
+  badge.innerHTML = isLive ? '<span class="dot"></span>Live Data — Supabase' : '<span class="dot"></span>Prototype — Mock Data';
+}
+
 function initNav() {
   const items = document.querySelectorAll('.nav-item');
   items.forEach(btn => {
@@ -237,6 +250,7 @@ function initNav() {
       const meta = PAGE_META[view];
       document.getElementById('page-eyebrow').textContent = meta.eyebrow;
       document.getElementById('page-title').textContent = meta.title;
+      updateDataSourceBadge(view);
       if (LAZY_PAGE_RENDERERS[view] && !renderedViews.has(view)) {
         LAZY_PAGE_RENDERERS[view]();
         renderedViews.add(view);
@@ -244,6 +258,7 @@ function initNav() {
       window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     });
   });
+  updateDataSourceBadge(document.querySelector('.nav-item.active')?.dataset.view || 'overview');
 }
 
 function initSyncStatus() {
@@ -264,79 +279,61 @@ function initSyncStatus() {
 }
 
 /* ============================================================================
-   OVERVIEW PAGE
+   OVERVIEW PAGE — REAL DATA (Supabase)
+   Reads REAL_DEALS / RealAggregates from supabase-data.js, not data.js's
+   mock DEALS / Aggregates. Commercial Flow and Deal Activity are omitted —
+   both need a deal creation date, which analytics.deals doesn't expose (see
+   supabase-data.js header comment). They still appear on the mock pages.
    ============================================================================ */
 
-let overviewPeriod = 'ytd';
 let overviewMetric = 'revenue';
 let pipelineChartInstance = null;
-let waterfallChartInstance = null;
 
 function renderOverview() {
+  if (RealData.status === 'loading') {
+    renderRealDataStatusPanel('view-overview');
+    initRealData().then(() => { if (document.getElementById('view-overview').classList.contains('active')) renderOverview(); });
+    return;
+  }
+  if (renderRealDataStatusPanel('view-overview')) return;
+
   const root = document.getElementById('view-overview');
   root.innerHTML = `
     <div class="hero-panel" id="hero-panel"></div>
 
     <div class="kpi-row" id="kpi-row"></div>
 
-    <div class="chart-grid section-gap">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h3 class="panel-title">Commercial Flow${infoIcon('ov-waterfall')}</h3>
-            <div class="panel-sub">Pipeline movement across the selected period · *Value Added is simulated</div>
-          </div>
-          <div class="seg-control" id="period-control">
-            <button class="seg-btn" data-period="7d">7D</button>
-            <button class="seg-btn" data-period="30d">30D</button>
-            <button class="seg-btn" data-period="quarter">Quarter</button>
-            <button class="seg-btn" data-period="ytd">YTD</button>
-          </div>
-        </div>
-        <div class="chart-body"><div class="chart-canvas" id="waterfall-chart"></div></div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h3 class="panel-title">Pipeline by Stage${infoIcon('ov-pipeline-chart')}</h3>
-            <div class="panel-sub">All active + closed deals</div>
-          </div>
-        </div>
-        <div class="chart-body" style="padding-top:16px;">
-          <div class="seg-control" id="metric-control" style="margin-bottom:14px;">
-            <button class="seg-btn" data-metric="count">Count</button>
-            <button class="seg-btn" data-metric="transactionValue">Transaction Value</button>
-            <button class="seg-btn" data-metric="revenue">SDAHC Revenue</button>
-            <button class="seg-btn" data-metric="weighted">Weighted Revenue</button>
-          </div>
-          <div class="chart-canvas tall" id="pipeline-chart"></div>
-        </div>
-      </div>
-    </div>
-
     <div class="panel section-gap">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Deal Activity</h3>
-          <div class="panel-sub">New opportunity entering the funnel vs. deals leaving it, for the selected period</div>
+          <h3 class="panel-title">Pipeline by Stage${infoIcon('ov-pipeline-chart')}</h3>
+          <div class="panel-sub">All active + closed deals, excluding Paused</div>
         </div>
       </div>
-      <div class="activity-row" id="activity-row"></div>
+      <div class="chart-body" style="padding-top:16px;">
+        <div class="seg-control" id="metric-control" style="margin-bottom:14px;">
+          <button class="seg-btn" data-metric="count">Count</button>
+          <button class="seg-btn" data-metric="transactionValue">Transaction Value</button>
+          <button class="seg-btn" data-metric="revenue">SDAHC Revenue</button>
+          <button class="seg-btn" data-metric="weighted">Weighted Revenue</button>
+        </div>
+        <div class="chart-canvas tall" id="pipeline-chart"></div>
+      </div>
+    </div>
+
+    <div class="panel section-gap" style="padding:16px 24px;">
+      <div class="panel-sub" style="font-size:13px;">Commercial Flow and Deal Activity aren't shown on this live page — both need a deal <em>creation date</em>, which isn't currently synced from Notion into Supabase. They still appear on the mock-data pages.</div>
     </div>
   `;
 
   renderHero();
   renderKpiRow();
-  renderActivityRow();
-  wirePeriodControl();
   wireMetricControl();
-  renderWaterfallChart();
   renderPipelineChart();
 }
 
 function renderHero() {
-  const { target, settled, unconditional, conditional, weighted, gap, onTrack } = Aggregates.revenueTargetSummary();
+  const { target, settled, unconditional, conditional, weighted, gap, onTrack } = RealAggregates.revenueTargetSummary();
 
   const settledPct = Math.min(100, (settled / target) * 100);
   const unconditionalPct = Math.min(100 - settledPct, (unconditional / target) * 100);
@@ -383,62 +380,22 @@ function renderHero() {
 }
 
 function renderKpiRow() {
-  const settled = Aggregates.settledRevenueYTD();
+  const settled = RealAggregates.settledRevenueYTD();
   const settings = getSettings();
-  const expectedOpen = Aggregates.expectedOpenPipelineRevenue();
-  const weighted = Aggregates.weightedPipelineRevenue();
-  const active = Aggregates.active().length;
-  const newProspects = Aggregates.newProspectsThisMonth();
-  const winRate = Aggregates.winRate();
-  const avgConsultancy = Aggregates.avgConsultancyValue();
-  const avgListing = Aggregates.avgListingValue();
-  const conversion = Aggregates.advisoryToBrokerageConversion();
+  const expectedOpen = RealAggregates.expectedOpenPipelineRevenue();
+  const weighted = RealAggregates.weightedPipelineRevenue();
+  const active = RealAggregates.active().length;
+  const winRate = RealAggregates.winRate();
 
   const cards = [
     { label: 'Settled Revenue YTD', value: fmtCompact(settled), foot: `of ${fmtCompact(settings.annualTarget)} target`, infoKey: 'ov-settled' },
-    { label: 'Expected Open Pipeline', value: fmtCompact(expectedOpen), foot: `${Aggregates.active().length} active deals, full value`, infoKey: 'ov-open-pipeline' },
+    { label: 'Expected Open Pipeline', value: fmtCompact(expectedOpen), foot: `${active} active deals, full value`, infoKey: 'ov-open-pipeline' },
     { label: 'Weighted Pipeline', value: fmtCompact(weighted), foot: 'probability-adjusted', infoKey: 'ov-weighted' },
-    { label: 'Active Deals', value: String(active), foot: `${Aggregates.won().length} won · ${Aggregates.lost().length} lost`, infoKey: 'ov-active' },
-    { label: 'New Prospects', value: String(newProspects), foot: 'this calendar month', infoKey: 'ov-new-prospects' },
-    { label: 'Win Rate', value: fmtPct(winRate, 0), foot: `${Aggregates.won().length} won of ${Aggregates.won().length + Aggregates.lost().length} decided`, infoKey: 'ov-win-rate' },
-    { label: 'Avg. Consultancy Value', value: fmtCompact(avgConsultancy.avg), foot: `across ${avgConsultancy.count} advisory deals`, infoKey: 'ov-avg-consultancy' },
-    { label: 'Avg. Listing Value', value: fmtCompact(avgListing.avg), foot: `across ${avgListing.count} brokerage deals`, infoKey: 'ov-avg-listing' },
-    { label: 'Advisory→Brokerage Conversion', value: fmtPct(conversion.rate, 0), foot: `${conversion.convertedThisFY.length} of ${conversion.denominator} advisory deals, this FY`, infoKey: 'ov-conversion' },
+    { label: 'Active Deals', value: String(active), foot: `${RealAggregates.won().length} won · ${RealAggregates.lost().length} lost · ${RealAggregates.paused().length} paused`, infoKey: 'ov-active' },
+    { label: 'Win Rate', value: fmtPct(winRate, 0), foot: `${RealAggregates.won().length} won of ${RealAggregates.won().length + RealAggregates.lost().length} decided`, infoKey: 'ov-win-rate' },
   ];
 
   renderKpiCards('kpi-row', cards);
-}
-
-function renderActivityRow() {
-  const a = Aggregates.activitySummary(overviewPeriod);
-  const items = [
-    { label: 'New Prospects', value: a.newProspects, color: 'var(--stage-prospecting)' },
-    { label: 'Qualified Opportunities', value: a.qualifiedOpportunities, color: 'var(--stage-advisory)' },
-    { label: 'Proposals Sent', value: a.proposalsSent, color: 'var(--blue)' },
-    { label: 'Engagements Won', value: a.engagementsWon, color: 'var(--stage-negotiation)' },
-    { label: 'Deals Lost', value: a.dealsLost, color: 'var(--red)' },
-    { label: 'Deals Settled', value: a.dealsSettled, color: 'var(--green)' },
-  ];
-  document.getElementById('activity-row').innerHTML = items.map(i => `
-    <div class="activity-item">
-      <div class="activity-bar" style="background:${i.color}"></div>
-      <div class="activity-figure tabular">${i.value}</div>
-      <div class="activity-caption">${i.label}</div>
-    </div>
-  `).join('');
-}
-
-function wirePeriodControl() {
-  const control = document.getElementById('period-control');
-  control.querySelectorAll('.seg-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.period === overviewPeriod);
-    btn.addEventListener('click', () => {
-      overviewPeriod = btn.dataset.period;
-      control.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
-      renderWaterfallChart();
-      renderActivityRow();
-    });
-  });
 }
 
 function wireMetricControl() {
@@ -453,58 +410,10 @@ function wireMetricControl() {
   });
 }
 
-function renderWaterfallChart() {
-  const el = document.getElementById('waterfall-chart');
-  if (!waterfallChartInstance) waterfallChartInstance = echarts.init(el);
-  const flow = Aggregates.commercialFlow(overviewPeriod);
-
-  const cum0 = flow.opening;
-  const cum1 = cum0 + flow.newOpportunities;
-  const cum2 = cum1 + flow.valueAdded;
-  const cum3 = cum2 - flow.lost;
-  const cum4 = cum3 - flow.settled;
-
-  const categories = ['Opening', 'New Opps', 'Value Added*', 'Lost', 'Settled', 'Closing'];
-  const placeholder = [0, cum0, cum1, cum3, cum4, 0];
-  const values = [flow.opening, flow.newOpportunities, flow.valueAdded, flow.lost, flow.settled, flow.closing];
-  const colors = ['#8592A6', '#0476D9', '#14A8A0', '#D9534F', '#2FB37A', '#0A1E36'];
-
-  waterfallChartInstance.setOption({
-    grid: { left: 8, right: 16, top: 20, bottom: 28, containLabel: true },
-    tooltip: {
-      trigger: 'axis', axisPointer: { type: 'shadow' },
-      formatter: (params) => {
-        const idx = params[0].dataIndex;
-        const note = idx === 2 ? '<br/><span style="color:#94A3B8">Simulated — no stage-history to derive this from</span>' : '';
-        return `<strong>${categories[idx]}</strong><br/>${fmtFull(values[idx])}${note}`;
-      },
-      backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 },
-    },
-    xAxis: {
-      type: 'category', data: categories,
-      axisLine: { lineStyle: { color: '#E3E8F0' } },
-      axisTick: { show: false },
-      axisLabel: { color: '#6B7688', fontSize: 11, fontFamily: 'IBM Plex Sans' },
-    },
-    yAxis: {
-      type: 'value', axisLabel: { formatter: (v) => fmtCompact(v), color: '#97A1B0', fontSize: 10.5 },
-      splitLine: { lineStyle: { color: '#EDF0F6' } },
-    },
-    series: [
-      { type: 'bar', stack: 'wf', silent: true, itemStyle: { color: 'transparent' }, data: placeholder, barWidth: '56%' },
-      {
-        type: 'bar', stack: 'wf', data: values.map((v, i) => ({ value: v, itemStyle: { color: colors[i], borderRadius: i === 0 || i === 5 ? [4,4,4,4] : [3,3,3,3] } })),
-        barWidth: '56%',
-        label: { show: true, position: 'top', formatter: (p) => fmtCompact(p.data.value), color: '#3B4657', fontSize: 10.5, fontFamily: 'IBM Plex Mono' },
-      },
-    ],
-  });
-}
-
 function renderPipelineChart() {
   const el = document.getElementById('pipeline-chart');
   if (!pipelineChartInstance) pipelineChartInstance = echarts.init(el);
-  const rows = Aggregates.byStage(overviewMetric);
+  const rows = RealAggregates.byStage(overviewMetric);
 
   pipelineChartInstance.setOption({
     grid: { left: 8, right: 16, top: 10, bottom: 56, containLabel: true },
@@ -535,17 +444,28 @@ function renderPipelineChart() {
 }
 
 /* ============================================================================
-   PIPELINE PAGE
+   PIPELINE PAGE — REAL DATA (Supabase)
+   Reads REAL_DEALS / RealAggregates. Paused deals still appear in the deals
+   table (clearly flagged via the existing "Paused" outcome chip) but are
+   excluded from the stage-flow totals above and from every other aggregate,
+   per the non-negotiable Paused-exclusion rule.
    ============================================================================ */
 
 let pipelineMetric = 'count';
 
 function renderPipelinePage() {
+  if (RealData.status === 'loading') {
+    renderRealDataStatusPanel('view-pipeline');
+    initRealData().then(() => { if (document.getElementById('view-pipeline').classList.contains('active')) renderPipelinePage(); });
+    return;
+  }
+  if (renderRealDataStatusPanel('view-pipeline')) return;
+
   const root = document.getElementById('view-pipeline');
   root.innerHTML = `
     <div class="pipeline-toolbar">
       <div>
-        <div class="panel-sub" style="font-size:13px;">Every stage of the Notion Deals database, coloured by phase. Metric toggle changes what each stage reports.${infoIcon('pipeline-flow')}</div>
+        <div class="panel-sub" style="font-size:13px;">Every stage of the Notion Deals database, coloured by phase (Paused excluded). Metric toggle changes what each stage reports.${infoIcon('pipeline-flow')}</div>
       </div>
       <div class="seg-control" id="pipeline-metric-control">
         <button class="seg-btn" data-metric="count">Count</button>
@@ -565,7 +485,7 @@ function renderPipelinePage() {
       <div class="panel-head" style="padding-bottom:16px;">
         <div>
           <h3 class="panel-title">Deals</h3>
-          <div class="panel-sub">${DEALS.length} deals · fixed order by Score, descending · click a row to open the deal detail${infoIcon('pipeline-score')}</div>
+          <div class="panel-sub">${REAL_DEALS.length} deals · fixed order by Score, descending · click a row to open the deal detail${infoIcon('pipeline-score')}</div>
         </div>
       </div>
       <div class="table-wrap">
@@ -608,7 +528,7 @@ function wirePipelineMetricControl() {
 }
 
 function renderPipelineFlow() {
-  const rows = Aggregates.byStage(pipelineMetric);
+  const rows = RealAggregates.byStage(pipelineMetric);
   const maxVal = Math.max(1, ...rows.map(r => r.value));
 
   // group consecutive stages by their stage.group
@@ -651,7 +571,7 @@ function renderPipelineFlow() {
    Score-sorted view, the way a real synced dashboard would show it. Users
    may still filter/search (if added later) without disturbing this order. */
 function sortedDeals() {
-  return [...DEALS].sort((a, b) => b.score - a.score);
+  return [...REAL_DEALS].sort((a, b) => b.score - a.score);
 }
 
 function outcomeClass(outcome) {
@@ -662,21 +582,23 @@ function renderDealsTable() {
   const highValueThreshold = getSettings().highValueDealThreshold;
   const tbody = document.getElementById('deals-tbody');
   tbody.innerHTML = sortedDeals().map(d => {
-    const stage = getStage(d.stage);
+    const stage = getStage(d.stage) || { short: d.stageLabel, group: 'prospecting' };
     const meta = STAGE_GROUPS[stage.group];
-    const rev = sdahcRevenue(d);
-    const wtd = weightedRevenue(d);
+    const rev = d.sdahcRevenue;
+    const wtd = d.weightedRevenue;
     const highValueTag = d.transactionValue >= highValueThreshold ? '<span class="high-value-badge">High Value</span>' : '';
+    const probText = d.probability == null ? '—' : fmtPct(d.probability);
+    const probWidth = d.probability == null ? 0 : d.probability * 100;
     return `
       <tr data-id="${d.id}">
-        <td class="deal-name-cell">${d.name}${highValueTag}<span class="deal-entity">${d.entity}</span></td>
+        <td class="deal-name-cell">${d.name}${highValueTag}<span class="deal-entity">${d.entity || '—'}</span></td>
         <td class="num-cell tabular score-cell">${d.score}</td>
         <td><span class="stage-chip" style="background:${hexToRgba(meta.color, 0.12)}; color:${meta.color}"><span class="dot" style="background:${meta.color}"></span>${stage.short}</span></td>
-        <td>${d.owner}</td>
-        <td><div class="type-tags">${d.dealType.map(t => `<span class="type-tag">${t}</span>`).join('')}</div></td>
+        <td>${d.owner || '—'}</td>
+        <td><div class="type-tags">${d.dealType.map(t => `<span class="type-tag">${t}</span>`).join('') || '—'}</div></td>
         <td class="num-cell tabular">${fmtFull(d.transactionValue)}</td>
         <td class="num-cell tabular">${fmtFull(rev)}</td>
-        <td class="num-cell"><div class="prob-cell" style="justify-content:flex-end;"><div class="prob-track"><div class="prob-fill" style="width:${d.probability * 100}%"></div></div><span class="prob-num tabular">${fmtPct(d.probability)}</span></div></td>
+        <td class="num-cell"><div class="prob-cell" style="justify-content:flex-end;"><div class="prob-track"><div class="prob-fill" style="width:${probWidth}%"></div></div><span class="prob-num tabular">${probText}</span></div></td>
         <td class="num-cell tabular">${fmtFull(wtd)}</td>
         <td><span class="outcome-chip ${outcomeClass(d.outcome)}">${d.outcome}</span></td>
       </tr>
@@ -684,12 +606,83 @@ function renderDealsTable() {
   }).join('');
 
   tbody.querySelectorAll('tr').forEach(tr => {
-    tr.addEventListener('click', () => openDrawer(tr.dataset.id));
+    tr.addEventListener('click', () => openRealDealDrawer(tr.dataset.id));
   });
 }
 
+/* Lightweight drawer for real deals — reuses the same #drawer DOM/close
+   wiring as the mock openDrawer() (see initDrawer()), but only shows fields
+   analytics.deals actually has. Stage history, organisations, properties,
+   source and lost-reason aren't part of the current Notion sync, so unlike
+   the mock drawer this doesn't attempt them. */
+function openRealDealDrawer(id) {
+  const deal = REAL_DEALS.find(d => d.id === id);
+  if (!deal) return;
+  const stage = getStage(deal.stage);
+  const meta = STAGE_GROUPS[(stage && stage.group) || 'prospecting'];
+
+  document.getElementById('drawer-stage-chip').innerHTML =
+    `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${deal.stageLabel || (stage && stage.label) || '—'}</span>`;
+  document.getElementById('drawer-name').textContent = deal.name;
+  document.getElementById('drawer-entity').textContent = `${deal.entity || '—'} · ${deal.owner || '—'}`;
+
+  let statusBlock = '';
+  if (deal.isLost) {
+    statusBlock = `<div class="drawer-section"><div class="drawer-section-label">Outcome</div><div class="drawer-section-text">Lost — reason isn't part of the current Notion sync.</div></div>`;
+  } else if (deal.isWon) {
+    statusBlock = `<div class="drawer-section"><div class="drawer-section-label">Settled</div><div class="drawer-section-text">${fmtDate(deal.closeDate)}</div></div>`;
+  } else {
+    statusBlock = `
+      <div class="drawer-section">
+        <div class="drawer-section-label">Next Action</div>
+        <div class="drawer-section-text">${deal.nextAction || '—'}${deal.nextActionDate ? ' · ' + fmtDate(deal.nextActionDate) : ''}</div>
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-label">Days Stale</div>
+        <div class="drawer-section-text">${deal.daysStale} day${deal.daysStale === 1 ? '' : 's'} since last activity</div>
+      </div>
+    `;
+  }
+
+  const trancheLines = [];
+  if (deal.tranche1Status) trancheLines.push(`Tranche 1: ${fmtFull(deal.tranche1Amount)} · ${deal.tranche1Status}`);
+  if (deal.tranche2Status) trancheLines.push(`Tranche 2: ${fmtFull(deal.tranche2Amount)} · ${deal.tranche2Status}`);
+
+  document.getElementById('drawer-body').innerHTML = `
+    <div class="drawer-metric-row">
+      <div class="drawer-metric"><div class="drawer-metric-label">Transaction Value</div><div class="drawer-metric-value tabular">${fmtFull(deal.transactionValue)}</div></div>
+      <div class="drawer-metric"><div class="drawer-metric-label">Expected SDAHC Revenue</div><div class="drawer-metric-value tabular">${fmtFull(deal.sdahcRevenue)}</div></div>
+      <div class="drawer-metric"><div class="drawer-metric-label">Probability</div><div class="drawer-metric-value tabular">${deal.probability == null ? '—' : fmtPct(deal.probability)}</div></div>
+      <div class="drawer-metric"><div class="drawer-metric-label">Weighted Revenue</div><div class="drawer-metric-value tabular">${fmtFull(deal.weightedRevenue)}</div></div>
+    </div>
+
+    ${deal.isPaused ? `<div class="drawer-section"><div class="drawer-section-label">Paused</div><div class="drawer-section-text">This deal is Paused and carries zero value in every pipeline/revenue total on this page.</div></div>` : ''}
+
+    <div class="drawer-section">
+      <div class="drawer-section-label">Deal Type</div>
+      <div class="drawer-chip-list">${deal.dealType.length ? deal.dealType.map(t => `<span class="drawer-chip">${t}</span>`).join('') : '<span class="drawer-section-text">—</span>'}</div>
+    </div>
+
+    ${trancheLines.length ? `<div class="drawer-section"><div class="drawer-section-label">Advisory Tranches</div><div class="drawer-section-text">${trancheLines.join('<br/>')}</div></div>` : ''}
+
+    ${statusBlock}
+
+    <div class="drawer-section">
+      <div class="drawer-section-label" style="opacity:.65">Live data note</div>
+      <div class="drawer-section-text" style="opacity:.65">Stage history, organisations and properties aren't part of the current Notion sync, so they aren't shown here.</div>
+    </div>
+  `;
+
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+}
+
 /* ============================================================================
-   REVENUE PAGE
+   REVENUE PAGE — REAL DATA (Supabase)
+   Reads REAL_DEALS / RealAggregates. Every KPI/chart here is fully supported
+   by analytics.deals except Revenue Composition, which shows only Brokerage
+   + Advisory (Conjunction/Referral aren't tracked in the real schema — see
+   supabase-data.js).
    ============================================================================ */
 
 let revenueTimeChartInstance = null;
@@ -697,6 +690,16 @@ let revenueSourceChartInstance = null;
 let cumulativeChartInstance = null;
 
 function renderRevenuePage() {
+  if (RealData.status === 'loading') {
+    renderRealDataStatusPanel('view-revenue');
+    initRealData().then(() => {
+      renderedViews.delete('revenue');
+      if (document.getElementById('view-revenue').classList.contains('active')) renderRevenuePage();
+    });
+    return;
+  }
+  if (renderRealDataStatusPanel('view-revenue')) return;
+
   const root = document.getElementById('view-revenue');
   root.innerHTML = `
     <div class="kpi-row kpi-row-7" id="revenue-kpi-row"></div>
@@ -716,7 +719,7 @@ function renderRevenuePage() {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Revenue Composition${infoIcon('rev-source-chart')}</h3>
-            <div class="panel-sub">By fee source · Won + active pipeline</div>
+            <div class="panel-sub">By fee source · Won + active pipeline · Brokerage + Advisory only</div>
           </div>
         </div>
         <div class="chart-body" style="padding-bottom:20px;">
@@ -769,8 +772,8 @@ function renderRevenuePage() {
 }
 
 function renderRevenueKpiRow() {
-  const t = Aggregates.revenueTargetSummary();
-  const openPipeline = Aggregates.expectedOpenPipelineRevenue();
+  const t = RealAggregates.revenueTargetSummary();
+  const openPipeline = RealAggregates.expectedOpenPipelineRevenue();
   const cards = [
     { label: 'Settled Revenue', value: fmtCompact(t.settled), foot: 'YTD, realised', infoKey: 'rev-settled' },
     { label: 'Unconditional Contracted', value: fmtCompact(t.unconditional), foot: 'Under Contract — ~99% certain', infoKey: 'rev-contracted-unconditional' },
@@ -789,7 +792,7 @@ function renderCumulativeSection() {
 }
 
 function renderCumulativeKpis() {
-  const c = Aggregates.cumulativeForecastVsActual();
+  const c = RealAggregates.cumulativeForecastVsActual();
   const cards = [
     { label: 'Cumulative Actual', value: fmtCompact(c.actualToDate), foot: 'settled, FY to date', infoKey: 'rev-cumulative-actual' },
     { label: 'Cumulative Target', value: fmtCompact(c.targetToDate), foot: 'plan, FY to date', infoKey: 'rev-cumulative-target' },
@@ -807,7 +810,7 @@ function renderCumulativeKpis() {
 function renderCumulativeChart() {
   const el = document.getElementById('cumulative-chart');
   if (!cumulativeChartInstance) cumulativeChartInstance = echarts.init(el);
-  const { rows } = Aggregates.cumulativeForecastVsActual();
+  const { rows } = RealAggregates.cumulativeForecastVsActual();
 
   cumulativeChartInstance.setOption({
     grid: { left: 8, right: 16, top: 38, bottom: 28, containLabel: true },
@@ -855,7 +858,7 @@ function renderCumulativeChart() {
 function renderRevenueTimeChart() {
   const el = document.getElementById('revenue-time-chart');
   if (!revenueTimeChartInstance) revenueTimeChartInstance = echarts.init(el);
-  const months = Aggregates.monthlyRevenueSeries();
+  const months = RealAggregates.monthlyRevenueSeries();
 
   revenueTimeChartInstance.setOption({
     grid: { left: 8, right: 16, top: 38, bottom: 28, containLabel: true },
@@ -893,12 +896,10 @@ function renderRevenueTimeChart() {
 function renderRevenueSourceChart() {
   const el = document.getElementById('revenue-source-chart');
   if (!revenueSourceChartInstance) revenueSourceChartInstance = echarts.init(el);
-  const { totals, total } = Aggregates.revenueBySource();
+  const { totals, total } = RealAggregates.revenueBySource();
   const rows = [
     { name: 'Brokerage / Sale', value: totals.brokerage, color: '#0476D9' },
     { name: 'Paid Advisory', value: totals.advisory, color: '#7A5CC7' },
-    { name: 'Conjunction', value: totals.conjunction, color: '#14A8A0' },
-    { name: 'Referral', value: totals.referral, color: '#E0A82E' },
   ];
 
   revenueSourceChartInstance.setOption({
@@ -925,17 +926,18 @@ function renderRevenueSourceChart() {
 }
 
 function renderConcentration() {
-  const c = Aggregates.revenueConcentration(3);
-  const maxVal = c.top.length ? sdahcRevenue(c.top[0]) : 1;
+  const c = RealAggregates.revenueConcentration(3);
+  const maxVal = c.top.length ? c.top[0].sdahcRevenue : 1;
   const rows = c.top.map((d, i) => {
-    const rev = sdahcRevenue(d);
+    const rev = d.sdahcRevenue;
     const pct = c.total ? rev / c.total : 0;
+    const stage = getStage(d.stage);
     return `
       <div class="concentration-row">
         <div class="concentration-rank">#${i + 1}</div>
         <div class="concentration-info">
           <div class="concentration-name">${d.name}</div>
-          <div class="concentration-sub">${d.owner} · ${getStage(d.stage).short}</div>
+          <div class="concentration-sub">${d.owner || '—'} · ${(stage && stage.short) || d.stageLabel}</div>
         </div>
         <div class="concentration-bar-track"><div class="concentration-bar-fill" style="width:${(rev / maxVal) * 100}%"></div></div>
         <div class="concentration-value tabular">${fmtCompact(rev)}<span class="concentration-pct">${fmtPct(pct)}</span></div>
@@ -951,7 +953,7 @@ function renderConcentration() {
 }
 
 function renderRevenueByStageList() {
-  const rows = Aggregates.byStage('revenue').filter(r => r.count > 0);
+  const rows = RealAggregates.byStage('revenue').filter(r => r.count > 0);
   const maxVal = Math.max(1, ...rows.map(r => r.revenue));
   document.getElementById('revenue-stage-body').innerHTML = rows.map(r => `
     <div class="stage-list-row">
@@ -1489,134 +1491,12 @@ function renderCohortTable() {
 
 /* ============================================================================
    DEAL DETAIL DRAWER
+   The mock version of this drawer (DEALS-based, with stage journey/
+   organisations/properties/source/lost-reason) is gone — its only caller was
+   the Pipeline table, which is real-data-only now. See openRealDealDrawer()
+   in the PIPELINE PAGE section above. This just wires open/close for the
+   shared #drawer DOM, whichever render function fills its body.
    ============================================================================ */
-
-function openDrawer(id) {
-  const deal = DEALS.find(d => d.id === id);
-  if (!deal) return;
-  const stage = getStage(deal.stage);
-  const meta = STAGE_GROUPS[stage.group];
-  const rev = sdahcRevenue(deal);
-  const wtd = weightedRevenue(deal);
-  const anomaly = Aggregates.stageAnomaly(deal);
-  const anomalyBadge = (anomaly.skipped || anomaly.backward)
-    ? `<span class="stage-anomaly-badge" title="Display-only — the dashboard flags this, it does not enforce valid transitions">⚠ ${[anomaly.skipped && 'Skipped a stage', anomaly.backward && 'Moved backward'].filter(Boolean).join(' · ')}</span>`
-    : '';
-
-  document.getElementById('drawer-stage-chip').innerHTML =
-    `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${stage.label}</span>${anomalyBadge}`;
-  document.getElementById('drawer-name').textContent = deal.name;
-  document.getElementById('drawer-entity').textContent = `${deal.entity} · ${deal.owner}`;
-
-  let statusBlock = '';
-  if (deal.outcome === 'Lost') {
-    statusBlock = `<div class="drawer-section"><div class="drawer-section-label">Lost Reason</div><div class="drawer-section-text">${deal.lostReason}</div></div>`;
-  } else if (deal.outcome === 'Won') {
-    statusBlock = `<div class="drawer-section"><div class="drawer-section-label">Settled</div><div class="drawer-section-text">${fmtDate(deal.closeDate)}</div></div>`;
-  } else {
-    const staleThreshold = getSettings().staleWarningDays;
-    const staleColor = deal.daysStale > staleThreshold ? 'var(--red)' : deal.daysStale > staleThreshold / 2 ? 'var(--gold)' : 'var(--green)';
-    statusBlock = `
-      <div class="drawer-section">
-        <div class="drawer-section-label">Next Action</div>
-        <div class="drawer-section-text">${deal.nextAction}</div>
-      </div>
-      <div class="drawer-section">
-        <div class="drawer-section-label">Days Stale</div>
-        <span class="drawer-stale" style="background:${hexToRgba(staleColor.startsWith('var') ? getComputedColor(staleColor) : staleColor, 0.12)}; color:${staleColor.startsWith('var') ? getComputedColor(staleColor) : staleColor}">${deal.daysStale} day${deal.daysStale === 1 ? '' : 's'} since last activity</span>
-      </div>
-    `;
-  }
-
-  const journey = Aggregates.stageJourney(deal);
-  const journeyHtml = journey.map(j => {
-    const transitionNote = j.transitionFlag === 'backward'
-      ? '<div class="journey-anomaly-note">⚠ Moved backward from the previous stage</div>'
-      : j.transitionFlag === 'skip'
-        ? '<div class="journey-anomaly-note">⚠ Skipped a stage on the way here</div>'
-        : '';
-    return `
-      <div class="journey-item ${j.isCurrent ? 'current' : ''} ${j.transitionFlag ? 'anomaly' : ''}">
-        <div class="journey-rail"><div class="journey-dot" style="background:${STAGE_GROUPS[j.stageMeta.group].color}"></div></div>
-        <div class="journey-content">
-          <div class="journey-top">
-            <span class="journey-stage-name">${j.stageMeta.short}</span>
-            <span class="journey-days">${j.isCurrent ? `${j.daysInStage} day${j.daysInStage === 1 ? '' : 's'} so far` : `${j.daysInStage} day${j.daysInStage === 1 ? '' : 's'} in stage`}</span>
-          </div>
-          <div class="journey-date">Entered ${fmtDate(j.enteredDate)}</div>
-          ${transitionNote}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  document.getElementById('drawer-body').innerHTML = `
-    <div class="drawer-metric-row">
-      <div class="drawer-metric"><div class="drawer-metric-label">Transaction Value</div><div class="drawer-metric-value tabular">${fmtFull(deal.transactionValue)}</div></div>
-      <div class="drawer-metric"><div class="drawer-metric-label">Expected SDAHC Revenue</div><div class="drawer-metric-value tabular">${fmtFull(rev)}</div></div>
-      <div class="drawer-metric"><div class="drawer-metric-label">Probability</div><div class="drawer-metric-value tabular">${fmtPct(deal.probability)}</div></div>
-      <div class="drawer-metric"><div class="drawer-metric-label">Weighted Revenue</div><div class="drawer-metric-value tabular">${fmtFull(wtd)}</div></div>
-    </div>
-
-    <div class="drawer-section">
-      <div class="drawer-section-label">Stage Journey <span class="drawer-section-note">simulated — see Assumptions Register</span></div>
-      <div class="journey-list">${journeyHtml}</div>
-    </div>
-
-    <div class="drawer-section">
-      <div class="drawer-section-label">Deal Type</div>
-      <div class="drawer-chip-list">${deal.dealType.map(t => `<span class="drawer-chip">${t}</span>`).join('')}</div>
-    </div>
-
-    <div class="drawer-section">
-      <div class="drawer-section-label">Source</div>
-      <div class="drawer-section-text">${deal.source}</div>
-    </div>
-
-    <div class="drawer-section">
-      <div class="drawer-section-label">Organisations</div>
-      <div class="drawer-chip-list">${deal.organisations.map(o => `<span class="drawer-chip">${o}</span>`).join('')}</div>
-    </div>
-
-    <div class="drawer-section">
-      <div class="drawer-section-label">Properties</div>
-      <div class="drawer-chip-list">${deal.properties.map(p => `<span class="drawer-chip">${p}</span>`).join('')}</div>
-    </div>
-
-    ${statusBlock}
-
-    <a class="notion-link" href="#" id="notion-link">
-      Open in Notion
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 17L17 7M17 7H9M17 7v8"/></svg>
-    </a>
-  `;
-
-  document.getElementById('notion-link').addEventListener('click', (e) => {
-    e.preventDefault();
-    showDrawerToast('Prototype — this would deep-link to the live Notion record.');
-  });
-
-  document.getElementById('drawer').classList.add('open');
-  document.getElementById('drawer-overlay').classList.add('open');
-}
-
-function getComputedColor(varExpr) {
-  const name = varExpr.replace('var(', '').replace(')', '').trim();
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-function showDrawerToast(msg) {
-  let toast = document.querySelector('.drawer-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.className = 'drawer-toast';
-    document.getElementById('drawer').appendChild(toast);
-  }
-  toast.textContent = msg;
-  requestAnimationFrame(() => toast.classList.add('show'));
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => toast.classList.remove('show'), 2400);
-}
 
 function closeDrawer() {
   document.getElementById('drawer').classList.remove('open');
@@ -2443,11 +2323,18 @@ window.addEventListener('DOMContentLoaded', () => {
   initEngagementDrawer();
   initAssumptionsModal();
   initInfoIcons();
+
+  // Overview + Pipeline show a loading state immediately, then re-render
+  // once analytics.deals has been fetched (or show a clear error).
   renderOverview();
   renderPipelinePage();
+  initRealData().then(() => {
+    renderOverview();
+    renderPipelinePage();
+  });
 
   window.addEventListener('resize', () => {
-    [pipelineChartInstance, waterfallChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, cumulativeChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, marketingSpendChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
+    [pipelineChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, cumulativeChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, marketingSpendChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
       .forEach(c => c && c.resize());
   });
 });
