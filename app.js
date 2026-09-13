@@ -61,17 +61,17 @@ function fmtMetric(metric, value) {
 
 const INFO_TEXT = {
   // Overview
-  'ov-settled': { text: 'Sum of SDAHC Revenue (commission + advisory/tranche fees + conjunction + referral — never Transaction Value) for deals Won with a close date inside the current fiscal year.', assumptionId: 'fiscal-year-scope' },
+  'ov-settled': { text: 'Money actually collected: SDAHC Revenue of deals Won with a close date in the current fiscal year, PLUS Paid advisory tranches on every other (non-Paused, non-Won) deal. The Paid-tranche portion has no "paid on" date in Notion, so it\'s a present-day snapshot, not strictly FY-scoped — it can make this figure read higher than the Revenue page\'s Cumulative Actual chart, which only plots dated (Won) revenue.', assumptionId: 'fiscal-year-scope' },
   'ov-open-pipeline': { text: 'Full-value SDAHC Revenue of every deal currently In Progress — not probability-adjusted. Paused deals are excluded; they carry zero value here.', assumptionId: 'paused-exclusion' },
   'ov-weighted': { text: 'Σ (SDAHC Revenue × Probability) across every In Progress deal. Probability is each deal\'s own Notion value, never a stage default.' },
   'ov-active': { text: 'Count of deals with outcome = In Progress. Paused deals are counted separately and excluded here.', assumptionId: 'paused-exclusion' },
-  'ov-new-prospects': { text: 'Deals with a createdDate inside the current calendar month, regardless of outcome or stage.' },
+  'ov-new-prospects': { text: 'Deals with a createdDate inside the current calendar month, regardless of outcome or stage. Paused deals excluded, per the non-negotiable rule that they carry zero weight everywhere. createdDate is Notion\'s page-creation date, which for bulk-migrated deals is the migration date, not the real prospecting date — expect a spike around the migration month rather than a smooth trend.', assumptionId: 'paused-exclusion' },
   'ov-win-rate': { text: 'Won ÷ (Won + Lost), among deals that have actually been decided. Still-open deals aren\'t counted either way.' },
   'ov-avg-consultancy': { text: 'Mean advisory/consultancy fee across every deal with one, any outcome (Won, Lost or In Progress) — a typical engagement size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
   'ov-avg-listing': { text: 'Mean Transaction Value (the underlying asset price, never SDAHC revenue) across every deal tagged Brokerage / Divestment, any outcome — a typical listing size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
   'ov-conversion': { text: 'Of every deal ever tagged Paid advisory / DD, the % that was manually moved into a brokerage/negotiation/settlement stage AFTER being in an advisory stage, WITHIN the current FY — the mandate doesn\'t need to still be open or ever close to count. dealType is never re-tagged on conversion, so this reads stage history instead of a multi-select.', assumptionId: 'advisory-brokerage-conversion' },
   'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
-  'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly.', assumptionId: 'value-added-rate' },
+  'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly. Paused deals contribute to none of these. createdDate (used for New Opportunities) is Notion\'s page-creation date — for bulk-migrated deals that\'s the migration date, not the real deal date, so this can show a migration-driven spike.', assumptionId: 'value-added-rate' },
   'ov-pipeline-chart': { text: 'Every non-Paused deal grouped by its current stage, regardless of outcome — Won and Lost deals stay visible at the stage they froze at. Paused deals are excluded entirely (zero count, zero value) per the non-negotiable rule that they never contribute to any pipeline total.', assumptionId: 'paused-exclusion' },
 
   // Pipeline
@@ -281,13 +281,17 @@ function initSyncStatus() {
 /* ============================================================================
    OVERVIEW PAGE — REAL DATA (Supabase)
    Reads REAL_DEALS / RealAggregates from supabase-data.js, not data.js's
-   mock DEALS / Aggregates. Commercial Flow and Deal Activity are omitted —
-   both need a deal creation date, which analytics.deals doesn't expose (see
-   supabase-data.js header comment). They still appear on the mock pages.
+   mock DEALS / Aggregates. Deal Activity is omitted (wasn't part of this
+   pass — see the renderOverview() disclaimer panel) and Advisory→Brokerage
+   Conversion is omitted from the KPI strip (needs real stage-history that
+   analytics.deals doesn't expose — see supabase-data.js header comment).
+   Both still appear on the mock pages.
    ============================================================================ */
 
+let overviewPeriod = 'ytd';
 let overviewMetric = 'revenue';
 let pipelineChartInstance = null;
+let waterfallChartInstance = null;
 
 function renderOverview() {
   if (RealData.status === 'loading') {
@@ -303,32 +307,52 @@ function renderOverview() {
 
     <div class="kpi-row" id="kpi-row"></div>
 
-    <div class="panel section-gap">
-      <div class="panel-head">
-        <div>
-          <h3 class="panel-title">Pipeline by Stage${infoIcon('ov-pipeline-chart')}</h3>
-          <div class="panel-sub">All active + closed deals, excluding Paused</div>
+    <div class="chart-grid section-gap">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3 class="panel-title">Commercial Flow${infoIcon('ov-waterfall')}</h3>
+            <div class="panel-sub">Pipeline movement across the selected period · *Value Added is simulated</div>
+          </div>
+          <div class="seg-control" id="period-control">
+            <button class="seg-btn" data-period="7d">7D</button>
+            <button class="seg-btn" data-period="30d">30D</button>
+            <button class="seg-btn" data-period="quarter">Quarter</button>
+            <button class="seg-btn" data-period="ytd">YTD</button>
+          </div>
         </div>
+        <div class="chart-body"><div class="chart-canvas" id="waterfall-chart"></div></div>
       </div>
-      <div class="chart-body" style="padding-top:16px;">
-        <div class="seg-control" id="metric-control" style="margin-bottom:14px;">
-          <button class="seg-btn" data-metric="count">Count</button>
-          <button class="seg-btn" data-metric="transactionValue">Transaction Value</button>
-          <button class="seg-btn" data-metric="revenue">SDAHC Revenue</button>
-          <button class="seg-btn" data-metric="weighted">Weighted Revenue</button>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3 class="panel-title">Pipeline by Stage${infoIcon('ov-pipeline-chart')}</h3>
+            <div class="panel-sub">All active + closed deals, excluding Paused</div>
+          </div>
         </div>
-        <div class="chart-canvas tall" id="pipeline-chart"></div>
+        <div class="chart-body" style="padding-top:16px;">
+          <div class="seg-control" id="metric-control" style="margin-bottom:14px;">
+            <button class="seg-btn" data-metric="count">Count</button>
+            <button class="seg-btn" data-metric="transactionValue">Transaction Value</button>
+            <button class="seg-btn" data-metric="revenue">SDAHC Revenue</button>
+            <button class="seg-btn" data-metric="weighted">Weighted Revenue</button>
+          </div>
+          <div class="chart-canvas tall" id="pipeline-chart"></div>
+        </div>
       </div>
     </div>
 
     <div class="panel section-gap" style="padding:16px 24px;">
-      <div class="panel-sub" style="font-size:13px;">Commercial Flow and Deal Activity aren't shown on this live page — both need a deal <em>creation date</em>, which isn't currently synced from Notion into Supabase. They still appear on the mock-data pages.</div>
+      <div class="panel-sub" style="font-size:13px;">Deal Activity isn't shown on this live page — it wasn't part of this pass. Advisory→Brokerage Conversion is also omitted from the KPI strip below: it needs real stage-history (when a deal crossed from an advisory stage into a brokerage one), which analytics.deals doesn't expose yet — only each deal's current stage. Both still appear on the mock-data pages.</div>
     </div>
   `;
 
   renderHero();
   renderKpiRow();
+  wirePeriodControl();
   wireMetricControl();
+  renderWaterfallChart();
   renderPipelineChart();
 }
 
@@ -385,17 +409,35 @@ function renderKpiRow() {
   const expectedOpen = RealAggregates.expectedOpenPipelineRevenue();
   const weighted = RealAggregates.weightedPipelineRevenue();
   const active = RealAggregates.active().length;
+  const newProspects = RealAggregates.newProspectsThisMonth();
   const winRate = RealAggregates.winRate();
+  const avgConsultancy = RealAggregates.avgConsultancyValue();
+  const avgListing = RealAggregates.avgListingValue();
 
   const cards = [
     { label: 'Settled Revenue YTD', value: fmtCompact(settled), foot: `of ${fmtCompact(settings.annualTarget)} target`, infoKey: 'ov-settled' },
     { label: 'Expected Open Pipeline', value: fmtCompact(expectedOpen), foot: `${active} active deals, full value`, infoKey: 'ov-open-pipeline' },
     { label: 'Weighted Pipeline', value: fmtCompact(weighted), foot: 'probability-adjusted', infoKey: 'ov-weighted' },
     { label: 'Active Deals', value: String(active), foot: `${RealAggregates.won().length} won · ${RealAggregates.lost().length} lost · ${RealAggregates.paused().length} paused`, infoKey: 'ov-active' },
+    { label: 'New Prospects', value: String(newProspects), foot: 'this calendar month', infoKey: 'ov-new-prospects' },
     { label: 'Win Rate', value: fmtPct(winRate, 0), foot: `${RealAggregates.won().length} won of ${RealAggregates.won().length + RealAggregates.lost().length} decided`, infoKey: 'ov-win-rate' },
+    { label: 'Avg. Consultancy Value', value: fmtCompact(avgConsultancy.avg), foot: `across ${avgConsultancy.count} advisory deals`, infoKey: 'ov-avg-consultancy' },
+    { label: 'Avg. Listing Value', value: fmtCompact(avgListing.avg), foot: `across ${avgListing.count} brokerage deals`, infoKey: 'ov-avg-listing' },
   ];
 
   renderKpiCards('kpi-row', cards);
+}
+
+function wirePeriodControl() {
+  const control = document.getElementById('period-control');
+  control.querySelectorAll('.seg-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.period === overviewPeriod);
+    btn.addEventListener('click', () => {
+      overviewPeriod = btn.dataset.period;
+      control.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderWaterfallChart();
+    });
+  });
 }
 
 function wireMetricControl() {
@@ -407,6 +449,54 @@ function wireMetricControl() {
       control.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
       renderPipelineChart();
     });
+  });
+}
+
+function renderWaterfallChart() {
+  const el = document.getElementById('waterfall-chart');
+  if (!waterfallChartInstance) waterfallChartInstance = echarts.init(el);
+  const flow = RealAggregates.commercialFlow(overviewPeriod);
+
+  const cum0 = flow.opening;
+  const cum1 = cum0 + flow.newOpportunities;
+  const cum2 = cum1 + flow.valueAdded;
+  const cum3 = cum2 - flow.lost;
+  const cum4 = cum3 - flow.settled;
+
+  const categories = ['Opening', 'New Opps', 'Value Added*', 'Lost', 'Settled', 'Closing'];
+  const placeholder = [0, cum0, cum1, cum3, cum4, 0];
+  const values = [flow.opening, flow.newOpportunities, flow.valueAdded, flow.lost, flow.settled, flow.closing];
+  const colors = ['#8592A6', '#0476D9', '#14A8A0', '#D9534F', '#2FB37A', '#0A1E36'];
+
+  waterfallChartInstance.setOption({
+    grid: { left: 8, right: 16, top: 20, bottom: 28, containLabel: true },
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const idx = params[0].dataIndex;
+        const note = idx === 2 ? '<br/><span style="color:#94A3B8">Simulated — no stage-history to derive this from</span>' : '';
+        return `<strong>${categories[idx]}</strong><br/>${fmtFull(values[idx])}${note}`;
+      },
+      backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 },
+    },
+    xAxis: {
+      type: 'category', data: categories,
+      axisLine: { lineStyle: { color: '#E3E8F0' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#6B7688', fontSize: 11, fontFamily: 'IBM Plex Sans' },
+    },
+    yAxis: {
+      type: 'value', axisLabel: { formatter: (v) => fmtCompact(v), color: '#97A1B0', fontSize: 10.5 },
+      splitLine: { lineStyle: { color: '#EDF0F6' } },
+    },
+    series: [
+      { type: 'bar', stack: 'wf', silent: true, itemStyle: { color: 'transparent' }, data: placeholder, barWidth: '56%' },
+      {
+        type: 'bar', stack: 'wf', data: values.map((v, i) => ({ value: v, itemStyle: { color: colors[i], borderRadius: i === 0 || i === 5 ? [4,4,4,4] : [3,3,3,3] } })),
+        barWidth: '56%',
+        label: { show: true, position: 'top', formatter: (p) => fmtCompact(p.data.value), color: '#3B4657', fontSize: 10.5, fontFamily: 'IBM Plex Mono' },
+      },
+    ],
   });
 }
 
@@ -590,7 +680,7 @@ function renderDealsTable() {
     const probText = d.probability == null ? '—' : fmtPct(d.probability);
     const probWidth = d.probability == null ? 0 : d.probability * 100;
     return `
-      <tr data-id="${d.id}">
+      <tr data-id="${d.id}" class="row-${outcomeClass(d.outcome)}">
         <td class="deal-name-cell">${d.name}${highValueTag}<span class="deal-entity">${d.entity || '—'}</span></td>
         <td class="num-cell tabular score-cell">${d.score}</td>
         <td><span class="stage-chip" style="background:${hexToRgba(meta.color, 0.12)}; color:${meta.color}"><span class="dot" style="background:${meta.color}"></span>${stage.short}</span></td>
@@ -2324,17 +2414,18 @@ window.addEventListener('DOMContentLoaded', () => {
   initAssumptionsModal();
   initInfoIcons();
 
-  // Overview + Pipeline show a loading state immediately, then re-render
-  // once analytics.deals has been fetched (or show a clear error).
+  // Overview + Pipeline show a loading state immediately; each one's own
+  // 'loading' branch (see below) re-renders itself once analytics.deals
+  // resolves. Do NOT also chain a re-render here — a second .then() on the
+  // same initRealData() promise double-renders the page, leaving the first
+  // ECharts instance bound to a now-detached container while the visible
+  // (second) container stays empty. See FIX 4 in the accompanying report.
   renderOverview();
   renderPipelinePage();
-  initRealData().then(() => {
-    renderOverview();
-    renderPipelinePage();
-  });
+  initRealData();
 
   window.addEventListener('resize', () => {
-    [pipelineChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, cumulativeChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, marketingSpendChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
+    [waterfallChartInstance, pipelineChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, cumulativeChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, marketingSpendChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
       .forEach(c => c && c.resize());
   });
 });

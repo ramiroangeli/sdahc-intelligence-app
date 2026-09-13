@@ -68,6 +68,16 @@ function mapDealRow(row) {
     probability: row.probability, // may be null — ~70-75% of real deals have no financials yet
     score: row.score ?? 0,
     closeDate: row.close_date,
+    /* close_date/next_action_date are Postgres `date` columns, so Supabase
+       already hands them back as bare "YYYY-MM-DD" strings — what data.js's
+       parseDate()/inRange() expect. created_time is `timestamptz` (it's
+       Notion's page.created_time, synced with the full time-of-day — see
+       sync/sync-deals.js), so it comes back as a full ISO datetime
+       ("2026-08-31T02:14:00+00:00"). Feeding that whole string into
+       parseDate() (which appends its own "T00:00:00") produces an Invalid
+       Date and every date-based KPI below would silently read as 0 — so it's
+       truncated to the UTC calendar date here, once, at the boundary. */
+    createdDate: row.created_time ? row.created_time.slice(0, 10) : null,
     nextAction: row.next_action,
     nextActionDate: row.next_action_date,
     daysStale: row.days_stale ?? 0,
@@ -159,26 +169,91 @@ function renderRealDataStatusPanel(rootId) {
 /* ------------------------------- AGGREGATES -------------------------------
    Mirrors data.js's Aggregates API (same method names) so Overview/Pipeline/
    Revenue's render functions read almost identically to before — just
-   against REAL_DEALS/RealAggregates instead of DEALS/Aggregates. Not every
-   mock aggregate has a real counterpart: newProspectsThisMonth,
-   activitySummary and commercialFlow all key off a deal creation date that
-   analytics.deals does not expose (confirmed absent from raw.deals too — the
-   Notion page's created_time was never synced), so they have no equivalent
-   here and are intentionally omitted from the real-data pages rather than
-   guessed at. avgConsultancyValue / avgListingValue / advisoryToBrokerageConversion
-   are omitted for the same reason (the conversion KPI also needs stage
-   history, which isn't synced either). See the report given alongside this
-   file. */
+   against REAL_DEALS/RealAggregates instead of DEALS/Aggregates.
+
+   newProspectsThisMonth / commercialFlow now key off createdDate (mapped
+   from row.created_time — requires the analytics.deals view to expose
+   created_time; see the view SQL given alongside this file). avgConsultancyValue
+   / avgListingValue don't actually need a date at all (they never did) and
+   are included below too.
+
+   Still omitted: activitySummary and advisoryToBrokerageConversion. Both
+   need real STAGE HISTORY (when a deal crossed from one stage group into
+   another), which analytics.deals still doesn't expose — it only has each
+   deal's current stage, not a log of past ones (see the unused
+   history.deal_stage_events table in sync/schema.sql, built for exactly
+   this but not yet populated by any sync script). A "current stage" proxy
+   was considered for advisoryToBrokerageConversion and rejected: this
+   app's own ASSUMPTIONS register (data.js, id 'advisory-brokerage-conversion')
+   already documents, confirmed with Steve, that a deal's present state
+   doesn't reliably indicate whether it CONVERTED — a deal tagged both
+   'Paid advisory / DD' and currently sitting in a brokerage-group stage may
+   have been scoped as a combined engagement from day one, never having
+   "converted" from anything. Faking that distinction without stage history
+   would be a guess dressed up as a real number, so this KPI stays off the
+   live pages until stage history is actually synced. */
 const RealAggregates = {
   won: () => REAL_DEALS.filter(d => d.isWon),
   lost: () => REAL_DEALS.filter(d => d.isLost),
   paused: () => REAL_DEALS.filter(d => d.isPaused),
   active: () => REAL_DEALS.filter(d => d.isInProgress),
 
+  /* Deals created in the current calendar month, by Notion's created_time
+     (see the view SQL update needed for this column — schema.sql doesn't
+     have it yet). Paused excluded per the non-negotiable rule. */
+  newProspectsThisMonth: () => {
+    const start = new Date(TODAY.getFullYear(), TODAY.getMonth(), 1);
+    return REAL_DEALS.filter(d => !d.isPaused && inRange(d.createdDate, start, TODAY)).length;
+  },
+
+  /* Mean advisory/consultancy fee across every non-Paused deal that carries
+     one, any outcome (Won, Lost or In Progress) — a typical engagement size,
+     not a revenue forecast. Unlike the mock's advisoryRevenue() this doesn't
+     need a tranche-aware branch: the view's advisory_fee already IS the full
+     fee regardless of whether it's tranche-billed (see the double-counting
+     note on settledRevenueYTD above). */
+  avgConsultancyValue: () => {
+    const deals = REAL_DEALS.filter(d => !d.isPaused && d.advisoryFee > 0);
+    const total = deals.reduce((s, d) => s + d.advisoryFee, 0);
+    return { count: deals.length, avg: deals.length === 0 ? 0 : total / deals.length, deals };
+  },
+
+  /* Mean Transaction Value (the underlying asset price, never SDAHC revenue)
+     across every non-Paused deal tagged 'Brokerage / Divestment'. */
+  avgListingValue: () => {
+    const deals = REAL_DEALS.filter(d => !d.isPaused && d.dealType.includes('Brokerage / Divestment'));
+    const total = deals.reduce((s, d) => s + d.transactionValue, 0);
+    return { count: deals.length, avg: deals.length === 0 ? 0 : total / deals.length, deals };
+  },
+
+  /* "Settled" = money actually in the bank, from two non-overlapping sources:
+       (a) Won deals' full sdahcRevenue, closeDate in FY-to-date (as before).
+       (b) Paid advisory tranches (advisory_settled) on every OTHER
+           (non-Paused, non-Won) deal — this is real cash collected even
+           though the deal itself hasn't closed/isn't Won.
+     Why (b) excludes Won deals specifically: for every tranche-billed deal
+     inspected live, advisory_fee == tranche1_amount + tranche2_amount (the
+     tranche split is just a billing/status breakdown of the SAME fee, not a
+     separate revenue stream) — so a Won deal's sdahcRevenue already embeds
+     100% of that fee whether or not part of it happens to also be marked
+     "Paid" in the tranche fields. Adding advisory_settled on top of a Won
+     deal's sdahcRevenue would double-count that fee. No Won deal currently
+     has a Paid tranche (verified live), so today this guard is a no-op in
+     practice — it's here so the formula stays correct if that changes.
+     Caveat (can't be fixed without a new field, so it's disclosed instead of
+     hidden): advisory_settled has no "paid on" date, so component (b) is a
+     present-day snapshot, not truly "YTD" — the Revenue-Over-Time /
+     Cumulative charts (which bucket by month) intentionally do NOT include
+     it, since there's no honest month to place it in. That means this KPI
+     can legitimately read higher than "Cumulative Actual" on the Revenue
+     page — see that chart's info tooltip. */
   settledRevenueYTD: () => {
     const { start, end } = periodRange('ytd');
-    return REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end))
+    const wonInFY = REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end))
       .reduce((sum, d) => sum + d.sdahcRevenue, 0);
+    const paidTranches = REAL_DEALS.filter(d => !d.isPaused && !d.isWon)
+      .reduce((sum, d) => sum + d.advisorySettled, 0);
+    return wonInFY + paidTranches;
   },
 
   /* Same two-tier split as the mock (see data.js contractedTierBreakdown),
@@ -210,6 +285,38 @@ const RealAggregates = {
   winRate: () => {
     const won = RealAggregates.won().length, lost = RealAggregates.lost().length;
     return (won + lost) === 0 ? 0 : won / (won + lost);
+  },
+
+  /* Commercial flow waterfall — same shape as data.js's mock commercialFlow()
+     (see that function's header comment for the full rationale), now backed
+     by real createdDate/closeDate/probability/revenue instead of mock ones.
+     "Value Added" still has no real source (no stage-history to diff against
+     a prior period) so it stays an EXPLICIT MOCK FIGURE, flagged via
+     valueAddedIsMock — this was true in the mock version too, it isn't a
+     regression introduced by the real-data switch. Paused deals never enter
+     any of the four inputs: active()/weightedPipelineRevenue() already
+     exclude them, and isWon/isLost are both false for a Paused deal. */
+  commercialFlow: (periodKey) => {
+    const { start, end } = periodRange(periodKey);
+    const periodDays = (end - start) / 86400000 + 1;
+    const MOCK_VALUE_ADDED_ANNUAL_RATE = 0.35;
+
+    const closingPipeline = RealAggregates.weightedPipelineRevenue();
+
+    const newDeals = RealAggregates.active().filter(d => inRange(d.createdDate, start, end));
+    const newOpportunities = newDeals.reduce((s, d) => s + d.weightedRevenue, 0);
+
+    const settledDeals = REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end));
+    const settled = settledDeals.reduce((s, d) => s + d.sdahcRevenue, 0);
+
+    const lostDeals = REAL_DEALS.filter(d => d.isLost && inRange(d.closeDate, start, end));
+    const lost = lostDeals.reduce((s, d) => s + d.sdahcRevenue * (d.probability ?? 0), 0);
+
+    const valueAdded = closingPipeline * MOCK_VALUE_ADDED_ANNUAL_RATE * (periodDays / 365);
+
+    const opening = Math.max(0, closingPipeline - newOpportunities - valueAdded + lost + settled);
+
+    return { opening, newOpportunities, valueAdded, lost, settled, closing: closingPipeline, valueAddedIsMock: true };
   },
 
   /* Non-negotiable rule: Paused deals never contribute to any financial or

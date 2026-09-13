@@ -735,6 +735,17 @@ table.deals-table {
 .deals-table tbody tr:hover { background: #F7FAFD; }
 .deals-table tbody tr:last-child td { border-bottom: none; }
 
+/* Outcome row tinting — subtle, brand-token backgrounds (--green/--slate/--red
+   at low alpha) so a row's status reads at a glance without competing with
+   the outcome chip's text colour. Plain rgba, not color-mix(), for broader
+   browser support. */
+.deals-table tbody tr.row-won { background: rgba(47, 179, 122, 0.08); }
+.deals-table tbody tr.row-won:hover { background: rgba(47, 179, 122, 0.15); }
+.deals-table tbody tr.row-paused { background: rgba(100, 116, 139, 0.10); }
+.deals-table tbody tr.row-paused:hover { background: rgba(100, 116, 139, 0.17); }
+.deals-table tbody tr.row-lost { background: rgba(217, 83, 79, 0.07); }
+.deals-table tbody tr.row-lost:hover { background: rgba(217, 83, 79, 0.13); }
+
 .deal-name-cell { font-weight: 600; color: var(--ink); }
 .deal-name-cell .deal-entity { display: block; font-size: 10.5px; font-weight: 500; color: var(--ink-faint); margin-top: 1px; }
 

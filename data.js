@@ -1571,9 +1571,11 @@ Object.assign(Aggregates, {
    never breaks an existing saved settings blob). */
 
 const DEFAULT_SETTINGS = {
-  // Business
-  annualTarget: 1600000,
-  monthlyTarget: Math.round(1600000 / 12),
+  // Business — real FY target (Jul-Jun), confirmed with Steve. Change ONLY
+  // here (and, if a viewer already has a stale cached value, via Settings →
+  // Reset to Defaults) — every page reads it through getSettings().annualTarget.
+  annualTarget: 1250000,
+  monthlyTarget: Math.round(1250000 / 12),
   fyStartMonth: 6, // Australian Financial Year (1 Jul - 30 Jun) by default. 0=Jan, 3=Apr, 9=Oct.
 
   // Pipeline
