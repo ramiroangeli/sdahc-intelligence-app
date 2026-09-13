@@ -30,7 +30,7 @@ function fmtPct(n, decimals = 0) {
 }
 
 function fmtDate(d) {
-  if (!d) return '—';
+  if (!d) return '';
   const dt = new Date(d + 'T00:00:00');
   return dt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
@@ -38,7 +38,7 @@ function fmtDate(d) {
 /* Same formatting as fmtDate, for callers that already hold a Date object
    (e.g. quarterBounds()) rather than a 'YYYY-MM-DD' string. */
 function fmtDateObj(dt) {
-  if (!dt) return '—';
+  if (!dt) return '';
   return dt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
@@ -218,9 +218,22 @@ const PAGE_META = {
 /* Revenue and Sales Funnel contain ECharts instances; initialising a chart
    into a hidden (display:none) container measures 0×0 and renders blank. So
    those two pages render lazily, the first time their nav item is opened —
-   by then the view already has .active applied and a real size. */
+   by then the view already has .active applied and a real size.
+
+   Overview and Pipeline are also listed here (see the PIPELINE HANG fix
+   note above renderPipelinePage()) even though Overview is the one page
+   that also gets an explicit render call at DOMContentLoaded, before any
+   nav click ever happens — it has to, since it's the default active view.
+   That startup call manually does what a click on its nav item would do
+   (render, then mark it in renderedViews) so both pages funnel through the
+   exact same "was this page active when the data actually arrived" retry
+   contract every lazy page relies on, instead of Pipeline's old special
+   case: rendered eagerly while HIDDEN (Overview was the visible one), so
+   its "re-render once data arrives" callback checked `.active`, saw
+   Pipeline wasn't it, and gave up permanently with nothing left to ever
+   call it again. */
 const LAZY_PAGE_RENDERERS = {
-  revenue: renderRevenuePage, delivery: renderDeliveryPage, funnel: renderFunnelPage,
+  overview: renderOverview, pipeline: renderPipelinePage, revenue: renderRevenuePage, delivery: renderDeliveryPage, funnel: renderFunnelPage,
   'sda-report': renderSdaReportPage, marketing: renderMarketingPage, 'market-intel': renderMarketIntelPage,
   playbook: renderPlaybookPage, settings: renderSettingsPage,
 };
@@ -296,7 +309,16 @@ let waterfallChartInstance = null;
 function renderOverview() {
   if (RealData.status === 'loading') {
     renderRealDataStatusPanel('view-overview');
-    initRealData().then(() => { if (document.getElementById('view-overview').classList.contains('active')) renderOverview(); });
+    /* Same shape as the Pipeline/Revenue fix: if the user has already
+       clicked away from Overview by the time the fetch resolves, drop it
+       from renderedViews so the click handler renders it fresh (with the
+       chart instance vars still null, so a clean first init) next time
+       Overview is opened, instead of leaving it stuck on this placeholder
+       forever with nothing left to ever call renderOverview() again. */
+    initRealData().then(() => {
+      if (document.getElementById('view-overview').classList.contains('active')) renderOverview();
+      else renderedViews.delete('overview');
+    });
     return;
   }
   if (renderRealDataStatusPanel('view-overview')) return;
@@ -546,7 +568,15 @@ let pipelineMetric = 'count';
 function renderPipelinePage() {
   if (RealData.status === 'loading') {
     renderRealDataStatusPanel('view-pipeline');
-    initRealData().then(() => { if (document.getElementById('view-pipeline').classList.contains('active')) renderPipelinePage(); });
+    /* PIPELINE HANG FIX: Pipeline has no ECharts instance, but keep the same
+       shape as Revenue's fix (see its comment) for consistency — only drop
+       the renderedViews entry when we did NOT just render for real (view
+       navigated away before the fetch resolved), so a future visit gets one
+       clean render instead of silently doing nothing forever. */
+    initRealData().then(() => {
+      if (document.getElementById('view-pipeline').classList.contains('active')) renderPipelinePage();
+      else renderedViews.delete('pipeline');
+    });
     return;
   }
   if (renderRealDataStatusPanel('view-pipeline')) return;
@@ -677,15 +707,15 @@ function renderDealsTable() {
     const rev = d.sdahcRevenue;
     const wtd = d.weightedRevenue;
     const highValueTag = d.transactionValue >= highValueThreshold ? '<span class="high-value-badge">High Value</span>' : '';
-    const probText = d.probability == null ? '—' : fmtPct(d.probability);
+    const probText = d.probability == null ? '0%' : fmtPct(d.probability);
     const probWidth = d.probability == null ? 0 : d.probability * 100;
     return `
       <tr data-id="${d.id}" class="row-${outcomeClass(d.outcome)}">
-        <td class="deal-name-cell">${d.name}${highValueTag}<span class="deal-entity">${d.entity || '—'}</span></td>
+        <td class="deal-name-cell">${d.name}${highValueTag}<span class="deal-entity">${d.entity || ''}</span></td>
         <td class="num-cell tabular score-cell">${d.score}</td>
         <td><span class="stage-chip" style="background:${hexToRgba(meta.color, 0.12)}; color:${meta.color}"><span class="dot" style="background:${meta.color}"></span>${stage.short}</span></td>
-        <td>${d.owner || '—'}</td>
-        <td><div class="type-tags">${d.dealType.map(t => `<span class="type-tag">${t}</span>`).join('') || '—'}</div></td>
+        <td>${d.owner || '.'}</td>
+        <td><div class="type-tags">${d.dealType.map(t => `<span class="type-tag">${t}</span>`).join('') || '.'}</div></td>
         <td class="num-cell tabular">${fmtFull(d.transactionValue)}</td>
         <td class="num-cell tabular">${fmtFull(rev)}</td>
         <td class="num-cell"><div class="prob-cell" style="justify-content:flex-end;"><div class="prob-track"><div class="prob-fill" style="width:${probWidth}%"></div></div><span class="prob-num tabular">${probText}</span></div></td>
@@ -712,9 +742,9 @@ function openRealDealDrawer(id) {
   const meta = STAGE_GROUPS[(stage && stage.group) || 'prospecting'];
 
   document.getElementById('drawer-stage-chip').innerHTML =
-    `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${deal.stageLabel || (stage && stage.label) || '—'}</span>`;
+    `<span class="stage-chip" style="background:rgba(255,255,255,0.14); color:#fff"><span class="dot" style="background:${meta.color}"></span>${deal.stageLabel || (stage && stage.label) || '.'}</span>`;
   document.getElementById('drawer-name').textContent = deal.name;
-  document.getElementById('drawer-entity').textContent = `${deal.entity || '—'} · ${deal.owner || '—'}`;
+  document.getElementById('drawer-entity').textContent = `${deal.entity || '.'} · ${deal.owner || '.'}`;
 
   let statusBlock = '';
   if (deal.isLost) {
@@ -725,7 +755,7 @@ function openRealDealDrawer(id) {
     statusBlock = `
       <div class="drawer-section">
         <div class="drawer-section-label">Next Action</div>
-        <div class="drawer-section-text">${deal.nextAction || '—'}${deal.nextActionDate ? ' · ' + fmtDate(deal.nextActionDate) : ''}</div>
+        <div class="drawer-section-text">${deal.nextAction || '.'}${deal.nextActionDate ? ' · ' + fmtDate(deal.nextActionDate) : ''}</div>
       </div>
       <div class="drawer-section">
         <div class="drawer-section-label">Days Stale</div>
@@ -742,7 +772,7 @@ function openRealDealDrawer(id) {
     <div class="drawer-metric-row">
       <div class="drawer-metric"><div class="drawer-metric-label">Transaction Value</div><div class="drawer-metric-value tabular">${fmtFull(deal.transactionValue)}</div></div>
       <div class="drawer-metric"><div class="drawer-metric-label">Expected SDAHC Revenue</div><div class="drawer-metric-value tabular">${fmtFull(deal.sdahcRevenue)}</div></div>
-      <div class="drawer-metric"><div class="drawer-metric-label">Probability</div><div class="drawer-metric-value tabular">${deal.probability == null ? '—' : fmtPct(deal.probability)}</div></div>
+      <div class="drawer-metric"><div class="drawer-metric-label">Probability</div><div class="drawer-metric-value tabular">${deal.probability == null ? '0%' : fmtPct(deal.probability)}</div></div>
       <div class="drawer-metric"><div class="drawer-metric-label">Weighted Revenue</div><div class="drawer-metric-value tabular">${fmtFull(deal.weightedRevenue)}</div></div>
     </div>
 
@@ -750,7 +780,7 @@ function openRealDealDrawer(id) {
 
     <div class="drawer-section">
       <div class="drawer-section-label">Deal Type</div>
-      <div class="drawer-chip-list">${deal.dealType.length ? deal.dealType.map(t => `<span class="drawer-chip">${t}</span>`).join('') : '<span class="drawer-section-text">—</span>'}</div>
+      <div class="drawer-chip-list">${deal.dealType.length ? deal.dealType.map(t => `<span class="drawer-chip">${t}</span>`).join('') : '<span class="drawer-section-text">.</span>'}</div>
     </div>
 
     ${trancheLines.length ? `<div class="drawer-section"><div class="drawer-section-label">Advisory Tranches</div><div class="drawer-section-text">${trancheLines.join('<br/>')}</div></div>` : ''}
@@ -782,9 +812,19 @@ let cumulativeChartInstance = null;
 function renderRevenuePage() {
   if (RealData.status === 'loading') {
     renderRealDataStatusPanel('view-revenue');
+    /* Only delete from renderedViews when we DIDN'T just do a real render
+       (view navigated away before the fetch resolved) — that leaves this
+       page's chart instance vars untouched (still null) so a future visit
+       renders them for the first time. If we're still active, render now
+       and leave the Set entry initNav() already added alone: deleting it
+       here would make a later click call renderRevenuePage() a SECOND time
+       with the chart vars now non-null, which reuses each ECharts instance
+       against the freshly-rebuilt (so already-detached) old container
+       instead of the new one — a blank chart. See the Pipeline hang fix
+       above for the same bug in a different shape. */
     initRealData().then(() => {
-      renderedViews.delete('revenue');
       if (document.getElementById('view-revenue').classList.contains('active')) renderRevenuePage();
+      else renderedViews.delete('revenue');
     });
     return;
   }
@@ -1027,7 +1067,7 @@ function renderConcentration() {
         <div class="concentration-rank">#${i + 1}</div>
         <div class="concentration-info">
           <div class="concentration-name">${d.name}</div>
-          <div class="concentration-sub">${d.owner || '—'} · ${(stage && stage.short) || d.stageLabel}</div>
+          <div class="concentration-sub">${d.owner || '.'} · ${(stage && stage.short) || d.stageLabel}</div>
         </div>
         <div class="concentration-bar-track"><div class="concentration-bar-fill" style="width:${(rev / maxVal) * 100}%"></div></div>
         <div class="concentration-value tabular">${fmtCompact(rev)}<span class="concentration-pct">${fmtPct(pct)}</span></div>
@@ -1136,7 +1176,7 @@ function renderDeliveryKpis() {
     { label: 'Unlockable This Quarter', value: fmtCompact(k.unlockableThisQuarter), foot: `due by ${fmtDateObj(qEnd)}`, infoKey: 'del-unlockable' },
     { label: 'Revenue At Risk', value: fmtCompact(k.revenueAtRisk), foot: 'locked milestones on at-risk engagements', footClass: k.revenueAtRisk > 0 ? 'neg' : 'pos', infoKey: 'del-at-risk' },
     { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'advisory + brokerage in delivery', infoKey: 'del-active-engagements' },
-    { label: 'Next Milestone', value: nm ? fmtCompact(nm.milestone.amount) : '—', foot: nm ? `${fmtDate(nm.milestone.dueDate)} · ${nm.deal.name}` : 'none scheduled', infoKey: 'del-next-milestone' },
+    { label: 'Next Milestone', value: nm ? fmtCompact(nm.milestone.amount) : '$0', foot: nm ? `${fmtDate(nm.milestone.dueDate)} · ${nm.deal.name}` : 'none scheduled', infoKey: 'del-next-milestone' },
   ];
   renderKpiCards('delivery-kpi-row', cards);
 }
@@ -1495,8 +1535,8 @@ function renderFunnelTable() {
     <div class="funnel-row">
       <div class="funnel-row-label"><span class="dot" style="background:${FUNNEL_TIER_COLORS[i]}"></span>${r.label}${r.isEstimate ? ' *' : ''}</div>
       <div class="funnel-row-count tabular">${r.count}</div>
-      <div class="funnel-row-conv tabular">${r.conversionFromPrevious === null ? '—' : fmtPct(r.conversionFromPrevious)}</div>
-      <div class="funnel-row-drop tabular">${r.dropoffFromPrevious === null ? '—' : fmtPct(r.dropoffFromPrevious)}</div>
+      <div class="funnel-row-conv tabular">${r.conversionFromPrevious === null ? '0%' : fmtPct(r.conversionFromPrevious)}</div>
+      <div class="funnel-row-drop tabular">${r.dropoffFromPrevious === null ? '0%' : fmtPct(r.dropoffFromPrevious)}</div>
     </div>
   `).join('');
   document.getElementById('funnel-table-body').innerHTML = head + list;
@@ -1860,7 +1900,7 @@ function renderSdaFunnel() {
       <div class="funnel-row">
         <div class="funnel-row-label">${s.label}</div>
         <div class="funnel-row-count tabular">${valueStr}</div>
-        <div class="funnel-row-conv tabular">${s.conversionFromPrevious === null ? '—' : fmtPct(s.conversionFromPrevious)}</div>
+        <div class="funnel-row-conv tabular">${s.conversionFromPrevious === null ? '0%' : fmtPct(s.conversionFromPrevious)}</div>
         <div style="text-align:right;"><span class="scope-tag ${s.isReal ? 'real' : 'dashboard'}">${s.isReal ? 'Real' : 'Simulated'}</span></div>
       </div>
     `;
@@ -1877,7 +1917,7 @@ function renderSdaRoi() {
     { label: 'Cost per Opportunity', value: '$' + roi.costPerOpportunity.toFixed(2), foot: 'real ÷ simulated *' },
     { label: 'Pipeline Generated', value: fmtCompact(roi.pipelineGenerated), foot: 'real, from 3 SDA Report deals' },
     { label: 'Settled Revenue', value: fmtCompact(roi.settledRevenue), foot: 'real, from 3 SDA Report deals' },
-    { label: 'Return Multiple', value: roi.returnMultiple === null ? '—' : roi.returnMultiple.toFixed(2) + 'x', foot: 'Settled Revenue ÷ Cost' },
+    { label: 'Return Multiple', value: roi.returnMultiple === null ? '0x' : roi.returnMultiple.toFixed(2) + 'x', foot: 'Settled Revenue ÷ Cost' },
   ];
   renderKpiCards('sda-roi-row', cards);
 
@@ -2032,7 +2072,7 @@ function renderMarketingElectronic() {
   const cards = [
     { label: 'Electronic Sent', value: String(funnel.sent), foot: 'emailed copies *', infoKey: 'mkt-electronic-sent' },
     { label: 'Website Downloads', value: String(funnel.websiteDownloads), foot: 'from sdahc.com.au *', infoKey: 'mkt-electronic-downloads' },
-    { label: 'Cost per Engaged Contact', value: cost.engaged ? '$' + cost.costPerEngaged.toFixed(2) : '—', foot: `Digital spend ÷ ${cost.engaged} engaged`, infoKey: 'mkt-electronic-cost' },
+    { label: 'Cost per Engaged Contact', value: cost.engaged ? '$' + cost.costPerEngaged.toFixed(2) : '$0', foot: `Digital spend ÷ ${cost.engaged} engaged`, infoKey: 'mkt-electronic-cost' },
   ];
   renderKpiCards('marketing-electronic-kpi-row', cards);
 
@@ -2048,7 +2088,7 @@ function renderMarketingElectronic() {
       <div class="funnel-row">
         <div class="funnel-row-label">${s.label}</div>
         <div class="funnel-row-count tabular">${s.count}</div>
-        <div class="funnel-row-conv tabular">${conv === null ? '—' : fmtPct(conv)}</div>
+        <div class="funnel-row-conv tabular">${conv === null ? '0%' : fmtPct(conv)}</div>
         <div style="text-align:right;"><span class="scope-tag ${s.isReal ? 'real' : 'dashboard'}">${s.isReal ? 'Dashboard input' : 'Simulated'}</span></div>
       </div>
     `;
@@ -2414,14 +2454,28 @@ window.addEventListener('DOMContentLoaded', () => {
   initAssumptionsModal();
   initInfoIcons();
 
-  // Overview + Pipeline show a loading state immediately; each one's own
-  // 'loading' branch (see below) re-renders itself once analytics.deals
-  // resolves. Do NOT also chain a re-render here — a second .then() on the
-  // same initRealData() promise double-renders the page, leaving the first
-  // ECharts instance bound to a now-detached container while the visible
-  // (second) container stays empty. See FIX 4 in the accompanying report.
+  // Overview is the only real-data page rendered here — it's the default
+  // active view, so it needs to show *something* (its own loading
+  // placeholder, then itself again once ready) before any nav click ever
+  // fires. This mirrors exactly what initNav()'s click handler does for
+  // every lazy page (call the renderer, then mark it in renderedViews), so
+  // Overview's own "re-render once data arrives, only if still active"
+  // callback plays by the same rules as Pipeline/Revenue's. Do NOT also
+  // chain a re-render here — a second .then() on the same initRealData()
+  // promise double-renders Overview, leaving the first ECharts instance
+  // bound to a now-detached container while the visible (second) container
+  // stays empty. Pipeline and Revenue are NOT called here: they're lazy
+  // (see LAZY_PAGE_RENDERERS) and render themselves the first time their
+  // nav item is opened.
+  //
+  // initRealData() below kicks off the ONE Supabase fetch for the whole
+  // session immediately, regardless of which page is open — by the time the
+  // user clicks Pipeline or Revenue, REAL_DEALS is very likely already
+  // populated (from this call, not a fresh one), so those pages render
+  // synchronously from cache with no visible spinner. See supabase-data.js:
+  // fetchRealDeals() only ever runs once per session (realDataPromise memoizes it).
   renderOverview();
-  renderPipelinePage();
+  renderedViews.add('overview');
   initRealData();
 
   window.addEventListener('resize', () => {
