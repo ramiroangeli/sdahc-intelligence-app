@@ -69,7 +69,6 @@ const INFO_TEXT = {
   'ov-win-rate': { text: 'Won ÷ (Won + Lost), among deals that have actually been decided. Still-open deals aren\'t counted either way.' },
   'ov-avg-consultancy': { text: 'Mean advisory/consultancy fee across every deal with one, any outcome (Won, Lost or In Progress) — a typical engagement size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
   'ov-avg-listing': { text: 'Mean Transaction Value (the underlying asset price, never SDAHC revenue) across every deal tagged Brokerage / Divestment, any outcome — a typical listing size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
-  'ov-conversion': { text: 'Of every deal ever tagged Paid advisory / DD, the % that was manually moved into a brokerage/negotiation/settlement stage AFTER being in an advisory stage, WITHIN the current FY — the mandate doesn\'t need to still be open or ever close to count. dealType is never re-tagged on conversion, so this reads stage history instead of a multi-select.', assumptionId: 'advisory-brokerage-conversion' },
   'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
   'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly. Paused deals contribute to none of these. createdDate (used for New Opportunities) is Notion\'s page-creation date — for bulk-migrated deals that\'s the migration date, not the real deal date, so this can show a migration-driven spike.', assumptionId: 'value-added-rate' },
   'ov-pipeline-chart': { text: 'Every non-Paused deal grouped by its current stage, regardless of outcome — Won and Lost deals stay visible at the stage they froze at. Paused deals are excluded entirely (zero count, zero value) per the non-negotiable rule that they never contribute to any pipeline total.', assumptionId: 'paused-exclusion' },
@@ -294,11 +293,12 @@ function initSyncStatus() {
 /* ============================================================================
    OVERVIEW PAGE — REAL DATA (Supabase)
    Reads REAL_DEALS / RealAggregates from supabase-data.js, not data.js's
-   mock DEALS / Aggregates. Deal Activity is omitted (wasn't part of this
-   pass — see the renderOverview() disclaimer panel) and Advisory→Brokerage
-   Conversion is omitted from the KPI strip (needs real stage-history that
-   analytics.deals doesn't expose — see supabase-data.js header comment).
-   Both still appear on the mock pages.
+   mock DEALS / Aggregates. Advisory→Brokerage Conversion has been removed
+   app-wide (mock pages included, not just this one) — see ASSUMPTIONS
+   'advisory-brokerage-conversion' in data.js for why and what would bring
+   it back. Deal Activity, unlike that KPI, only ever needed createdDate +
+   each deal's current stage (never stage history) — see activitySummary()
+   in supabase-data.js — so it's shown here from real data.
    ============================================================================ */
 
 let overviewPeriod = 'ytd';
@@ -365,13 +365,20 @@ function renderOverview() {
       </div>
     </div>
 
-    <div class="panel section-gap" style="padding:16px 24px;">
-      <div class="panel-sub" style="font-size:13px;">Deal Activity isn't shown on this live page — it wasn't part of this pass. Advisory→Brokerage Conversion is also omitted from the KPI strip below: it needs real stage-history (when a deal crossed from an advisory stage into a brokerage one), which analytics.deals doesn't expose yet — only each deal's current stage. Both still appear on the mock-data pages.</div>
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Deal Activity</h3>
+          <div class="panel-sub">New opportunity entering the funnel vs. deals leaving it, for the selected period</div>
+        </div>
+      </div>
+      <div class="activity-row" id="activity-row"></div>
     </div>
   `;
 
   renderHero();
   renderKpiRow();
+  renderActivityRow();
   wirePeriodControl();
   wireMetricControl();
   renderWaterfallChart();
@@ -450,6 +457,25 @@ function renderKpiRow() {
   renderKpiCards('kpi-row', cards);
 }
 
+function renderActivityRow() {
+  const a = RealAggregates.activitySummary(overviewPeriod);
+  const items = [
+    { label: 'New Prospects', value: a.newProspects, color: 'var(--stage-prospecting)' },
+    { label: 'Qualified Opportunities', value: a.qualifiedOpportunities, color: 'var(--stage-advisory)' },
+    { label: 'Proposals Sent', value: a.proposalsSent, color: 'var(--blue)' },
+    { label: 'Engagements Won', value: a.engagementsWon, color: 'var(--stage-negotiation)' },
+    { label: 'Deals Lost', value: a.dealsLost, color: 'var(--red)' },
+    { label: 'Deals Settled', value: a.dealsSettled, color: 'var(--green)' },
+  ];
+  document.getElementById('activity-row').innerHTML = items.map(i => `
+    <div class="activity-item">
+      <div class="activity-bar" style="background:${i.color}"></div>
+      <div class="activity-figure tabular">${i.value}</div>
+      <div class="activity-caption">${i.label}</div>
+    </div>
+  `).join('');
+}
+
 function wirePeriodControl() {
   const control = document.getElementById('period-control');
   control.querySelectorAll('.seg-btn').forEach(btn => {
@@ -458,6 +484,7 @@ function wirePeriodControl() {
       overviewPeriod = btn.dataset.period;
       control.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
       renderWaterfallChart();
+      renderActivityRow();
     });
   });
 }

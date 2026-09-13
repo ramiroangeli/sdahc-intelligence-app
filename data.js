@@ -1527,41 +1527,6 @@ Object.assign(Aggregates, {
       return { ...h, stageMeta: getStage(h.stage), isCurrent: i === history.length - 1, daysInStage, transitionFlag };
     });
   },
-
-  /* Advisory→Brokerage conversion — see ASSUMPTIONS 'advisory-brokerage-conversion'
-     for why this reads stageHistory rather than a dealType multi-select (no
-     deal is ever re-tagged when it converts). A deal "converts" the moment
-     it's manually moved into a brokerage/negotiation/settlement stage AFTER
-     having been in an advisory stage — the brokerage mandate does not need
-     to close, or even still be open, for this to count. Denominator is every
-     deal tagged 'Paid advisory / DD' (ever); numerator is scoped to
-     conversions whose date falls in the CURRENT fiscal year, matching how
-     every other "this year" figure on Overview is windowed. */
-  advisoryToBrokerageConversion: () => {
-    const advisoryDeals = DEALS.filter(d => d.dealType.includes('Paid advisory / DD'));
-    const { start: fyStart, end: fyEnd } = fiscalYearBounds(TODAY);
-
-    const conversionDateFor = (deal) => {
-      let sawAdvisory = false;
-      for (const h of (deal.stageHistory || [])) {
-        const group = getStage(h.stage).group;
-        if (group === 'advisory') sawAdvisory = true;
-        else if (sawAdvisory && (group === 'brokerage' || group === 'negotiation' || group === 'settlement')) return h.enteredDate;
-      }
-      return null;
-    };
-
-    const withDates = advisoryDeals.map(d => ({ deal: d, conversionDate: conversionDateFor(d) }));
-    const convertedThisFY = withDates.filter(x => x.conversionDate && parseDate(x.conversionDate) >= fyStart && parseDate(x.conversionDate) < fyEnd);
-    const convertedEver = withDates.filter(x => x.conversionDate);
-
-    return {
-      denominator: advisoryDeals.length,
-      convertedThisFY,
-      convertedEverCount: convertedEver.length,
-      rate: advisoryDeals.length === 0 ? 0 : convertedThisFY.length / advisoryDeals.length,
-    };
-  },
 });
 
 /* ------------------------------ SETTINGS --------------------------------- */
@@ -2108,11 +2073,11 @@ const ASSUMPTIONS = [
   },
   {
     id: 'advisory-brokerage-conversion',
-    label: 'Advisory→Brokerage Conversion Rate — detected from stage history, not dealType',
-    usedIn: 'Overview → KPI strip (Advisory→Brokerage Conversion Rate)',
+    label: 'Advisory→Brokerage Conversion Rate — DEFERRED, removed app-wide',
+    usedIn: 'None currently — previously Overview → KPI strip, on both the mock and real pages',
     pages: ['Overview'],
     category: 'Modelled',
-    why: 'Confirmed with Steve: no deal is ever re-tagged with a second dealType when an advisory engagement is manually moved into a brokerage/listing mandate — dealType stays whatever it was created with. A literal dealType multi-select overlap (\'Paid advisory / DD\' AND \'Brokerage / Divestment\' together) is therefore always 0, not a real signal. Instead this reads each advisory-tagged deal\'s stageHistory[] (itself simulated — see \'delivery-stage-history\') for the first entry that moves into a brokerage/negotiation/settlement-group stage after having been in an advisory-group stage; the brokerage mandate does not need to still be open or ever close for that to count as a conversion, per Steve\'s framing — only that we manually advanced it. The denominator is every deal ever tagged \'Paid advisory / DD\' (8 currently); the numerator is scoped to conversions dated inside the CURRENT fiscal year, matching every other "this year" figure on Overview — so the 2 deals that did convert (Toowoomba Disability Housing Trust, Kallangur Supported Homes) don\'t count toward this FY\'s rate, because both conversions happened in a prior FY. Confirmed with Steve this reads 0% for the current FY, which the KPI\'s footnote states explicitly rather than leaving as an unexplained zero.',
+    why: 'Removed everywhere (mock pages included), not just the real one: this KPI can only mean something if it reads real stage-history — when a deal actually crossed from an advisory stage into a brokerage one — and that history isn\'t reliably available yet. A literal dealType multi-select overlap (\'Paid advisory / DD\' AND \'Brokerage / Divestment\' together) is always 0, not a real signal (confirmed with Steve: dealType is never re-tagged on conversion). The mock version worked around that by simulating a stageHistory[] log, which made the number look real without being backed by anything — precisely the kind of fabricated-looking figure this register exists to flag, so it\'s safer removed everywhere than shown anywhere, mock or real. history.deal_stage_events (sync/schema.sql) is now being captured nightly from real Notion stage changes; once that history has matured enough to compute a genuine conversion date per deal, this KPI should be reactivated app-wide from that real data — not reintroduced as a mock or a current-stage proxy.',
   },
   {
     id: 'avg-consultancy-listing-value',

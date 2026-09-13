@@ -171,27 +171,21 @@ function renderRealDataStatusPanel(rootId) {
    Revenue's render functions read almost identically to before — just
    against REAL_DEALS/RealAggregates instead of DEALS/Aggregates.
 
-   newProspectsThisMonth / commercialFlow now key off createdDate (mapped
-   from row.created_time — requires the analytics.deals view to expose
-   created_time; see the view SQL given alongside this file). avgConsultancyValue
-   / avgListingValue don't actually need a date at all (they never did) and
-   are included below too.
+   newProspectsThisMonth / commercialFlow / activitySummary all key off
+   createdDate (mapped from row.created_time — requires the analytics.deals
+   view to expose created_time; see the view SQL given alongside this file).
+   avgConsultancyValue / avgListingValue don't actually need a date at all
+   (they never did) and are included below too.
 
-   Still omitted: activitySummary and advisoryToBrokerageConversion. Both
-   need real STAGE HISTORY (when a deal crossed from one stage group into
-   another), which analytics.deals still doesn't expose — it only has each
-   deal's current stage, not a log of past ones (see the unused
-   history.deal_stage_events table in sync/schema.sql, built for exactly
-   this but not yet populated by any sync script). A "current stage" proxy
-   was considered for advisoryToBrokerageConversion and rejected: this
-   app's own ASSUMPTIONS register (data.js, id 'advisory-brokerage-conversion')
-   already documents, confirmed with Steve, that a deal's present state
-   doesn't reliably indicate whether it CONVERTED — a deal tagged both
-   'Paid advisory / DD' and currently sitting in a brokerage-group stage may
-   have been scoped as a combined engagement from day one, never having
-   "converted" from anything. Faking that distinction without stage history
-   would be a guess dressed up as a real number, so this KPI stays off the
-   live pages until stage history is actually synced. */
+   activitySummary's qualifiedOpportunities/proposalsSent/engagementsWon only
+   need each deal's CURRENT stage (via STAGE_INDEX, from data.js) compared
+   against a threshold — same as byStage() elsewhere in this file — so unlike
+   advisoryToBrokerageConversion (removed app-wide, mock included — see
+   ASSUMPTIONS 'advisory-brokerage-conversion' in data.js) it never needed
+   real stage-HISTORY (when a deal crossed stages) to begin with. That KPI
+   stays off every page — mock or real — until history.deal_stage_events
+   (sync/schema.sql, now capturing nightly) has matured enough to compute a
+   genuine conversion date per deal. */
 const RealAggregates = {
   won: () => REAL_DEALS.filter(d => d.isWon),
   lost: () => REAL_DEALS.filter(d => d.isLost),
@@ -317,6 +311,34 @@ const RealAggregates = {
     const opening = Math.max(0, closingPipeline - newOpportunities - valueAdded + lost + settled);
 
     return { opening, newOpportunities, valueAdded, lost, settled, closing: closingPipeline, valueAddedIsMock: true };
+  },
+
+  /* Deal Activity — same definition and same shared overviewPeriod control
+     as the mock's activitySummary() (data.js): the cohort is every deal
+     CREATED in the period (Paused excluded, per the non-negotiable rule);
+     qualified/proposals/engagements read how far that cohort has progressed
+     AS OF TODAY, using each deal's CURRENT stage (isTrack()/STAGE_INDEX,
+     both from data.js, unchanged) — never stage history, so this was always
+     safe to compute from real data once createdDate existed. Lost/Settled
+     use each deal's own closeDate instead of the cohort, exactly like the
+     mock; both naturally exclude Paused since isLost/isWon are false for a
+     Paused deal. */
+  activitySummary: (periodKey) => {
+    const { start, end } = periodRange(periodKey);
+    const cohort = REAL_DEALS.filter(d => !d.isPaused && inRange(d.createdDate, start, end));
+    const reached = (d, advisoryStage, brokerageStage) => {
+      if (isTrack(d, 'advisory')) return STAGE_INDEX[d.stage] >= STAGE_INDEX[advisoryStage] && STAGE_INDEX[d.stage] < STAGE_INDEX['B1'];
+      if (isTrack(d, 'brokerage')) return STAGE_INDEX[d.stage] >= STAGE_INDEX[brokerageStage];
+      return STAGE_INDEX[d.stage] >= STAGE_INDEX['A1'];
+    };
+    return {
+      newProspects: cohort.length,
+      qualifiedOpportunities: cohort.filter(d => reached(d, 'A1', 'B1')).length,
+      proposalsSent: cohort.filter(d => reached(d, 'A2', 'B2')).length,
+      engagementsWon: cohort.filter(d => reached(d, 'A3', 'B3')).length,
+      dealsLost: REAL_DEALS.filter(d => d.isLost && inRange(d.closeDate, start, end)).length,
+      dealsSettled: REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end)).length,
+    };
   },
 
   /* Non-negotiable rule: Paused deals never contribute to any financial or
