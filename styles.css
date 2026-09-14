@@ -77,12 +77,93 @@ body {
 
 a { color: inherit; }
 
+/* .app-shell and the login screen's own children set an explicit `display`
+   that would otherwise out-specificity/out-origin the browser's default
+   `[hidden]{display:none}` UA rule (same selector weight, and author CSS
+   always wins over UA CSS regardless of order) — so `el.hidden = true` alone
+   wouldn't actually hide them. These three make `.hidden` work correctly
+   everywhere in app.js, the same one property for every toggle. */
+.app-shell[hidden], .login-screen[hidden], #login-microsoft-btn[hidden], .login-error[hidden] { display: none; }
+
 /* -------------------------------- SHELL -------------------------------- */
 
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   min-height: 100vh;
+}
+
+/* ------------------------------ LOGIN SCREEN ----------------------------- */
+
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at 20% 15%, #0F2A4A 0%, var(--navy) 45%, #081729 100%);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 40px 36px 32px;
+  text-align: center;
+}
+
+.login-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.login-brand-mark {
+  width: 68px; height: 68px;
+  border-radius: 16px;
+  padding: 6px;
+  box-shadow: 0 6px 18px rgba(4, 118, 217, 0.4);
+}
+.login-brand-text { text-align: center; }
+.login-brand-name { font-family: var(--font-display); font-weight: 600; font-size: 17px; color: var(--ink); }
+.login-brand-sub { font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.06em; text-transform: uppercase; margin-top: 2px; }
+
+.login-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+.login-status { font-size: 13px; color: var(--ink-mute); margin: 0 0 22px; min-height: 18px; }
+
+.btn-microsoft {
+  width: 100%;
+  justify-content: center;
+  padding: 12px 16px;
+  font-size: 13.5px;
+}
+.btn-microsoft svg { flex-shrink: 0; }
+
+.login-error {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #FBEAE9;
+  border: 1px solid #F3C7C4;
+  color: #A32E2A;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.login-footnote {
+  margin: 22px 0 0;
+  font-size: 11px;
+  color: var(--ink-faint);
 }
 
 /* ------------------------------- SIDEBAR -------------------------------- */
@@ -108,18 +189,22 @@ a { color: inherit; }
   border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
+/* The source logo file is square with a white background (icon-over-wordmark
+   lockup) — it needs a light container of its own on this dark navy sidebar
+   (and on the login card's navy backdrop) so that white background reads as
+   "a clean badge" rather than a clashing rectangle. Padding keeps a small
+   margin around the artwork inside the rounded corners. */
 .brand-mark {
   width: 36px; height: 36px;
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--blue) 0%, #0596ea 60%, var(--teal) 130%);
+  background: #fff;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 16px;
-  color: #fff;
   box-shadow: 0 4px 14px rgba(4, 118, 217, 0.45);
   flex-shrink: 0;
+  padding: 3px;
+  overflow: hidden;
 }
+.brand-mark-img { width: 100%; height: 100%; object-fit: contain; display: block; }
 
 .brand-text { line-height: 1.25; }
 .brand-text .brand-name { font-family: var(--font-display); font-weight: 600; font-size: 15.5px; color: #fff; letter-spacing: 0.01em; }
@@ -190,6 +275,54 @@ a { color: inherit; }
   padding: 14px 20px 4px;
   border-top: 1px solid rgba(255,255,255,0.08);
 }
+
+.user-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.user-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--blue) 0%, var(--teal) 130%);
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12.5px;
+  display: flex; align-items: center; justify-content: center;
+  text-transform: uppercase;
+}
+
+.user-text { line-height: 1.3; min-width: 0; }
+.user-email {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #DCE6F5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 168px;
+}
+.user-signout {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--on-navy-mute);
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 2px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.user-signout:hover { color: #fff; }
 
 .sync-status {
   display: flex;
@@ -1341,10 +1474,10 @@ thead th.num-head { text-align: right; }
 
 @media (max-width: 900px) {
   :root { --sidebar-w: 76px; }
-  .brand-text, .nav-group-label, .nav-item span.nav-label, .sync-text { display: none; }
+  .brand-text, .nav-group-label, .nav-item span.nav-label, .sync-text, .user-text { display: none; }
   .nav-item { justify-content: center; }
   .nav-item.active::before { left: 0; }
-  .sync-status { justify-content: center; }
+  .sync-status, .user-status { justify-content: center; }
   .kpi-row { grid-template-columns: repeat(2, 1fr); }
   .activity-row { grid-template-columns: repeat(2, 1fr); }
   .content { padding: 20px 16px 48px; }

@@ -19,6 +19,71 @@
 const SUPABASE_URL = 'https://yngfaykhvegavzueukmc.supabase.co';
 const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InluZ2ZheWtodmVnYXZ6dWV1a21jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MTIyMzEsImV4cCI6MjEwNDQ4ODIzMX0.bY8wJl28cDSYm-UAL9cf7HGNhwhmdtY6CiuuryYmkVM';
 
+/* ---------------------------------- AUTH ----------------------------------
+   One shared Supabase client for the whole app — both auth (Microsoft/Azure
+   sign-in, session checks, sign-out) and the analytics.deals fetch below run
+   through this single instance. `db.schema` only scopes .from() queries;
+   .auth.* is schema-agnostic, so one client safely serves both.
+
+   Security note: the anon key here is the public client key, same as
+   before — it's meant to ship to the browser. What actually gates real data
+   is a Supabase RLS policy on analytics.deals restricted to the
+   'authenticated' role (see the SQL given alongside this file, applied by
+   hand in the Supabase dashboard, not from this code). Until that policy is
+   applied, an anon (logged-out) request would still succeed at the database
+   level — this app-side gate (login screen + initRealData() only ever
+   called after a session exists — see app.js) is what keeps a logged-out
+   visitor from seeing the dashboard in the meantime, but it is not itself
+   the security boundary. */
+let _supabaseClient = null;
+function getSupabaseClient() {
+  if (_supabaseClient) return _supabaseClient;
+  if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+    throw new Error('Supabase client library did not load — check the CDN <script> tag in index.html.');
+  }
+  if (!SUPABASE_URL || SUPABASE_URL === 'SUPABASE_URL' || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'SUPABASE_ANON_KEY') {
+    throw new Error('SUPABASE_URL / SUPABASE_ANON_KEY are still placeholders — fill them in at the top of supabase-data.js.');
+  }
+  _supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: 'analytics' } });
+  return _supabaseClient;
+}
+
+/* redirectTo is the app's OWN origin, read at click time rather than
+   hardcoded — window.location.origin resolves to whichever one the user is
+   actually on (http://localhost:8080 in dev, the Vercel URL in production),
+   so the same code works unchanged in both places. Supabase JS parses the
+   OAuth redirect's URL fragment automatically on the page it lands back on
+   (detectSessionInUrl defaults to true) — nothing extra is needed here for
+   that; see onAuthChange() below for how app.js picks up the resulting
+   session on return. */
+function signInWithMicrosoft() {
+  return getSupabaseClient().auth.signInWithOAuth({
+    provider: 'azure',
+    options: { scopes: 'email', redirectTo: window.location.origin },
+  });
+}
+
+function signOutUser() {
+  return getSupabaseClient().auth.signOut();
+}
+
+function getCurrentSession() {
+  return getSupabaseClient().auth.getSession();
+}
+
+/* Fires `callback(session)` once for the CURRENT auth state and again on
+   every future sign-in/sign-out. app.js's initAuthGate() needs both this AND
+   a direct getCurrentSession() call at startup, not just one or the other:
+   getSession() alone can race the OAuth redirect flow (it may resolve
+   before Supabase JS finishes parsing the token out of the URL fragment and
+   read `null`), and onAuthStateChange alone gives no way to show an initial
+   "checking session" state before its first event fires. Together: show
+   "checking…", ask getSession() once, and let this listener correct the
+   answer (in either direction) whenever the real state settles. */
+function onAuthChange(callback) {
+  getSupabaseClient().auth.onAuthStateChange((_event, session) => callback(session));
+}
+
 /* ---------------------------- FETCH + TRANSFORM --------------------------- */
 
 /* analytics.deals.stage carries the full Notion label, e.g. "A4. DD /
@@ -101,13 +166,7 @@ function mapDealRow(row) {
 }
 
 async function fetchRealDeals() {
-  if (!window.supabase || typeof window.supabase.createClient !== 'function') {
-    throw new Error('Supabase client library did not load — check the CDN <script> tag in index.html.');
-  }
-  if (!SUPABASE_URL || SUPABASE_URL === 'SUPABASE_URL' || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'SUPABASE_ANON_KEY') {
-    throw new Error('SUPABASE_URL / SUPABASE_ANON_KEY are still placeholders — fill them in at the top of supabase-data.js.');
-  }
-  const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: 'analytics' } });
+  const client = getSupabaseClient();
   const { data, error } = await client.from('deals').select('*');
   if (error) throw new Error(error.message);
   return data || [];

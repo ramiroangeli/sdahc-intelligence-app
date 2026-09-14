@@ -2469,10 +2469,38 @@ function showSettingsToast(msg) {
 }
 
 /* ============================================================================
-   INIT
+   AUTH GATE
+   The whole app is gated behind a Supabase session (Sign in with Microsoft —
+   Azure OAuth via supabase-data.js). bootDashboard() — everything the app used
+   to do unconditionally at DOMContentLoaded, including the one real-data
+   fetch — now runs only once a session is confirmed. See supabase-data.js's
+   AUTH section for why the app relies on BOTH an initial getCurrentSession()
+   call and an onAuthChange() subscription (not just one or the other), and
+   for the RLS note on what actually secures analytics.deals — this gate
+   controls what the UI SHOWS, not who the database allows to read it.
    ============================================================================ */
 
-window.addEventListener('DOMContentLoaded', () => {
+let dashboardBooted = false;
+
+function showDashboard(session) {
+  document.getElementById('login-screen').hidden = true;
+  document.getElementById('app-shell').hidden = false;
+  const email = session.user.email || session.user.user_metadata?.preferred_username || session.user.user_metadata?.name || 'Signed in';
+  document.getElementById('user-email').textContent = email;
+  document.getElementById('user-avatar').textContent = email.charAt(0).toUpperCase();
+}
+
+/* Everything below used to run unconditionally at DOMContentLoaded — moved
+   here verbatim, unchanged, just gated behind a session and guarded so it
+   only ever runs ONCE per page load (a token refresh or a second tab-visible
+   auth event must never re-attach initNav()'s click listeners a second time,
+   or re-init an ECharts instance against a container it's already bound to —
+   see the Pipeline/Overview hang fixes elsewhere in this file for exactly
+   that failure shape). */
+function bootDashboard() {
+  if (dashboardBooted) return;
+  dashboardBooted = true;
+
   initSettings();
   initNav();
   initSyncStatus();
@@ -2496,8 +2524,8 @@ window.addEventListener('DOMContentLoaded', () => {
   // nav item is opened.
   //
   // initRealData() below kicks off the ONE Supabase fetch for the whole
-  // session immediately, regardless of which page is open — by the time the
-  // user clicks Pipeline or Revenue, REAL_DEALS is very likely already
+  // session immediately (now that we know a session exists) — by the time
+  // the user clicks Pipeline or Revenue, REAL_DEALS is very likely already
   // populated (from this call, not a fresh one), so those pages render
   // synchronously from cache with no visible spinner. See supabase-data.js:
   // fetchRealDeals() only ever runs once per session (realDataPromise memoizes it).
@@ -2509,4 +2537,75 @@ window.addEventListener('DOMContentLoaded', () => {
     [waterfallChartInstance, pipelineChartInstance, revenueTimeChartInstance, revenueSourceChartInstance, cumulativeChartInstance, deliveryTimelineChartInstance, funnelChartInstance, prospectsChartInstance, marketingSpendChartInstance, ...sdaDistChartInstances, ...gaugeChartInstances]
       .forEach(c => c && c.resize());
   });
-});
+}
+
+function initAuthGate() {
+  const statusText = document.getElementById('login-status-text');
+  const signInBtn = document.getElementById('login-microsoft-btn');
+  const errorBox = document.getElementById('login-error');
+
+  signInBtn.addEventListener('click', async () => {
+    errorBox.hidden = true;
+    signInBtn.disabled = true;
+    statusText.textContent = 'Redirecting to Microsoft…';
+    try {
+      const { error } = await signInWithMicrosoft();
+      if (error) throw error;
+      // Success navigates the browser away to Microsoft's login page — there
+      // is nothing left to do here. The redirect back to this same origin is
+      // what the onAuthChange() listener below picks up.
+    } catch (err) {
+      signInBtn.disabled = false;
+      statusText.textContent = 'Sign in to continue';
+      errorBox.textContent = err.message || 'Sign-in failed — please try again.';
+      errorBox.hidden = false;
+    }
+  });
+
+  document.getElementById('sign-out-btn').addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    await signOutUser();
+    // No manual UI reset here — the SIGNED_OUT event this fires reaches the
+    // onAuthChange() listener below, which reloads. See that handler's
+    // comment for why a reload, not a soft reset back to the login screen.
+  });
+
+  /* Called both from the onAuthChange() subscription below (on every future
+     sign-in/out/token-refresh) and once directly from getCurrentSession() —
+     session is the real session object, or null. */
+  const onAuthEvent = (session) => {
+    if (session) {
+      showDashboard(session);
+      bootDashboard();
+    } else if (dashboardBooted) {
+      // The session disappeared AFTER the dashboard was already up — either
+      // the sign-out button above, or an externally invalidated/expired
+      // session. Reload rather than hand-rolling a teardown of
+      // bootDashboard()'s listeners and chart instances: a fresh page load
+      // re-runs this whole gate from a clean slate and correctly lands on
+      // the login screen once getCurrentSession() resolves null.
+      location.reload();
+    } else {
+      // Definitive "no session" with nothing booted yet — reveal the actual
+      // sign-in button (until now the screen just says "Checking session…",
+      // so a visitor who already has a valid session never sees this flash).
+      statusText.textContent = 'Sign in to continue';
+      signInBtn.hidden = false;
+    }
+  };
+
+  try {
+    onAuthChange(onAuthEvent);
+    getCurrentSession().then(({ data: { session } }) => onAuthEvent(session));
+  } catch (err) {
+    statusText.textContent = 'Sign in to continue';
+    errorBox.textContent = err.message || 'Could not reach Supabase Auth — check the browser console.';
+    errorBox.hidden = false;
+  }
+}
+
+/* ============================================================================
+   INIT
+   ============================================================================ */
+
+window.addEventListener('DOMContentLoaded', initAuthGate);
