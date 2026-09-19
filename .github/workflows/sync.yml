@@ -3,9 +3,9 @@ name: Nightly Notion Sync
 # Cuándo corre:
 on:
   schedule:
-    # Cron en UTC. 18:00 UTC = 4:00 AM en Brisbane (AEST, UTC+10).
+    # Cron en UTC. 18:00 UTC = 1:00 AM en Brisbane (AEST, UTC+10).
     # Corre "de madrugada" hora Australia, cuando nadie edita Notion.
-    - cron: '0 18 * * *'
+    - cron: '0 15 * * *'
   workflow_dispatch:   # permite lanzarlo a mano desde la web de GitHub
 
 jobs:
