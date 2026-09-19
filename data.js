@@ -1260,6 +1260,24 @@ const Aggregates = {
    consultancyFeeTotal/tranche1.../tranche2... fields (advisory deals — see
    the PART A rework below). There is no parallel dataset.
 
+   BROKERAGE-ONLY VIEW, for the Delivery PAGE specifically, as of the
+   ADVISORY → real-data migration (see supabase-data.js's
+   advisoryEngagements() and the report given alongside that change):
+   brokerageEngagements() below returns only the `milestones`-array deals.
+   The Delivery page's own render functions (and deliveryKpis/
+   deliveryTimelinePoints/deliveryInsights/nextMilestone, which back them)
+   were switched to call brokerageEngagements() instead of engagements() —
+   the real Delivery page now has its own separate, real Advisory section
+   sourced from analytics.deals, so showing the 2 advisory deals a second
+   time here, mock health/progress% and all, would be confusing at best.
+
+   engagements() ITSELF IS UNCHANGED and still returns both shapes — it has
+   an existing caller outside Delivery, Revenue's mock contractedTierBreakdown()
+   (which needs the advisory deals' WIP/Invoiced tranches to correctly
+   compute mock Contracted Revenue), and narrowing it there would have
+   silently changed mock Overview/Revenue numbers as a side effect of a
+   Delivery-only change — well outside this task's scope.
+
    PART A REWORK: advisory engagements used to have their two milestone
    amounts hardcoded as an implicit 50/50 split of sdahcRevenue(deal). That's
    now inverted — consultancyFeeTotal, tranche1Amount/Status/Date and
@@ -1345,6 +1363,7 @@ function trancheReconciliation(deal) {
 
 Object.assign(Aggregates, {
   engagements: () => DEALS.filter(d => (Array.isArray(d.milestones) && d.milestones.length > 0) || d.tranche1Amount != null),
+  brokerageEngagements: () => DEALS.filter(d => Array.isArray(d.milestones) && d.milestones.length > 0),
 
   engagementLocked: (deal) => engagementTranches(deal).filter(m => isTrancheLocked(m.status)).reduce((s, m) => s + m.amount, 0),
   engagementUnlocked: (deal) => engagementTranches(deal).filter(m => !isTrancheLocked(m.status)).reduce((s, m) => s + m.amount, 0),
@@ -1358,7 +1377,7 @@ Object.assign(Aggregates, {
      exists (soonest-overdue first, i.e. closest to today). */
   nextMilestone: () => {
     const all = [];
-    Aggregates.engagements().forEach(d => {
+    Aggregates.brokerageEngagements().forEach(d => {
       engagementTranches(d).forEach(m => { if (m.status !== 'Paid') all.push({ deal: d, milestone: m }); });
     });
     const upcoming = all.filter(x => parseDate(x.milestone.dueDate) >= TODAY)
@@ -1369,7 +1388,7 @@ Object.assign(Aggregates, {
   },
 
   deliveryKpis: () => {
-    const engagements = Aggregates.engagements();
+    const engagements = Aggregates.brokerageEngagements();
     const { end: quarterEnd } = quarterBounds(TODAY);
 
     let lockedRevenue = 0, unlockableThisQuarter = 0, revenueAtRisk = 0;
@@ -1395,7 +1414,7 @@ Object.assign(Aggregates, {
      billing milestone is a due date, not a worked date range. */
   deliveryTimelinePoints: () => {
     const points = [];
-    Aggregates.engagements().forEach(d => {
+    Aggregates.brokerageEngagements().forEach(d => {
       engagementTranches(d).forEach(m => points.push({
         dealId: d.id, dealName: d.name, owner: d.owner, health: d.health,
         name: m.name, dueDate: m.dueDate, amount: m.amount, status: m.status,
@@ -1411,7 +1430,7 @@ Object.assign(Aggregates, {
      the page. */
   deliveryInsights: () => {
     const insights = [];
-    const engagements = Aggregates.engagements();
+    const engagements = Aggregates.brokerageEngagements();
 
     const atRiskDeal = engagements.find(d => d.health === 'At risk');
     if (atRiskDeal) {
@@ -1426,23 +1445,16 @@ Object.assign(Aggregates, {
       }
     }
 
-    /* No brokerage-gating estimate here (removed — Steve confirmed brokerage
-       is not formally gated on advisory completing, only a tendency; see
-       advisoryToBrokerageNote on the deal instead of a modelled figure).
-       Still a useful, fully real insight without it: which near-complete
-       advisory engagement still has consultancy revenue to collect. */
-    const advisoryNearComplete = engagements
-      .filter(d => d.consultancyFeeTotal != null && d.progressPct >= 90)
-      .sort((a, b) => b.progressPct - a.progressPct)[0];
-    if (advisoryNearComplete) {
-      const remaining = engagementTranches(advisoryNearComplete).filter(m => m.status !== 'Paid').reduce((s, m) => s + m.amount, 0);
-      if (remaining > 0) {
-        insights.push({
-          key: 'advisory-completion',
-          text: `${advisoryNearComplete.name} is ${advisoryNearComplete.progressPct}% complete — ${fmtFullDelivery(remaining)} of consultancy revenue is still to be collected.`,
-        });
-      }
-    }
+    /* An "advisory near-complete" insight used to live here (which
+       near-complete advisory engagement still has consultancy revenue to
+       collect). Removed, not just left dead: engagements() above is now
+       brokerage-only (see this section's header comment) — that insight's
+       own real Advisory equivalent belongs on, and now lives on, the real
+       Delivery Advisory section instead (Settled/Contracted KPI cards,
+       supabase-data.js). Steve separately confirmed brokerage is not
+       formally gated on advisory completing anyway (see
+       advisoryToBrokerageNote on the deal for the soft note that replaced a
+       modelled gating figure). */
 
     const onTrackCount = engagements.filter(d => d.health === 'On track').length;
     const kpis = Aggregates.deliveryKpis();
@@ -2034,18 +2046,26 @@ const ASSUMPTIONS = [
   {
     id: 'delivery-milestone-model',
     label: 'Delivery deliverables, milestones, progress % and health (brokerage engagements)',
-    usedIn: 'Delivery (all sections) — SDA Abodes / Socia, Evergreen Built, Northline Community Housing, Bellbird Park SDA',
+    usedIn: 'Delivery — Brokerage Engagements section, Milestone Timeline, Delivery Insights — SDA Abodes / Socia, Evergreen Built, Northline Community Housing, Bellbird Park SDA',
     pages: ['Delivery'],
     category: 'Modelled',
-    why: 'Notion does not track deliverables, billing milestones, % complete or a health flag — Deals holds current stage and next action only. This models a plausible billing-milestone structure (commission on settlement, sometimes with an exchange-fee or conjunction-fee tranche first) for the 4 brokerage engagements on this page. Every milestone amount still sums exactly to that deal\'s sdahcRevenue() figure, so this can only re-slice real revenue, never add to it — but the split, due dates, deliverable statuses, progress % and health are dashboard-owned judgement calls, not Notion facts. Advisory engagements (Paramount Disability Homes, Horizon SDA Fund) no longer use this model — see \'delivery-tranche-fields\'. Production would need a new Notion structure (a Milestones or Deliverables database) or dashboard-owned modelling with finance sign-off.',
+    why: 'Notion does not track deliverables, billing milestones, % complete or a health flag — Deals holds current stage and next action only. This models a plausible billing-milestone structure (commission on settlement, sometimes with an exchange-fee or conjunction-fee tranche first) for the 4 brokerage engagements on this page. Every milestone amount still sums exactly to that deal\'s sdahcRevenue() figure, so this can only re-slice real revenue, never add to it — but the split, due dates, deliverable statuses, progress % and health are dashboard-owned judgement calls, not Notion facts. Advisory engagements no longer appear in this mock section at all — see \'delivery-advisory-real\': they moved to a separate, real Advisory Engagements section sourced from analytics.deals. Production would need a new Notion structure (a Milestones or Deliverables database) or dashboard-owned modelling with finance sign-off to bring brokerage delivery data current.',
+  },
+  {
+    id: 'delivery-advisory-real',
+    label: 'Delivery → Advisory Engagements — now real, sourced from analytics.deals tranche fields',
+    usedIn: 'Delivery → Advisory Engagements section (KPI row, engagement grid) — reuses the Pipeline real-deal drawer for detail',
+    pages: ['Delivery'],
+    category: 'Real (cross-page check)',
+    why: 'Sourced from the same analytics.deals view and the same REAL_DEALS cache as Overview/Pipeline/Revenue — no second fetch, no mock data. Qualifying rule: advisory_fee > 0 AND at least one tranche STATUS field is non-null (status, not amount, is the "is this deal tranche-tracked in Notion" signal — the view coalesces every *_amount to 0, so a real zero and a never-filled-in field are otherwise indistinguishable). Locked/Unlocked reuses the mapping already established for real advisory money everywhere else in this app: Paid → Settled, WIP/Invoiced → Contracted, Not started → neither. Paused deals appear in the list, clearly marked, contributing zero to every KPI sum — the non-negotiable rule. A deal with advisory_fee but no tranche fields at all does not qualify here yet; it is not missing or hidden, it simply is not tranche-tracked in Notion yet, and it keeps counting normally on Overview/Revenue via its flat advisory_fee. "Unlockable This Quarter", "Revenue At Risk" and "Next Milestone" — all present on the mock KPI strip — have no real advisory equivalent shown here: they key off a milestone due date and a health flag, and neither field exists for real tranches (amount + status only) — fabricating either would be a guess dressed up as a real number, so they were dropped rather than faked. Brokerage delivery (health %, deliverables, milestone dates) has no Notion source at all and stays entirely on the mock DEALS/Aggregates.brokerageEngagements() — see \'delivery-milestone-model\'. As raw.deals accumulates real stage/tranche history (see \'advisory-brokerage-conversion\' for the parallel effort on stage history specifically), more of the dropped mock-only fields may eventually get a real replacement here too — none should be faked in the meantime.',
   },
   {
     id: 'delivery-tranche-fields',
-    label: 'Explicit advisory billing tranches (consultancyFeeTotal, tranche1/2 Amount/Status/Date)',
-    usedIn: 'Delivery — Paramount Disability Homes, Horizon SDA Fund (Engagements grid + drawer, KPI strip, Milestone Timeline); Overview + Revenue (Contracted Revenue, for engagements not already at Contract Issued/Under Contract)',
-    pages: ['Delivery', 'Overview', 'Revenue'],
+    label: 'Explicit MOCK advisory billing tranches (consultancyFeeTotal, tranche1/2 Amount/Status/Date) — Overview/Revenue only now',
+    usedIn: 'Overview + Revenue (Contracted Revenue, for mock engagements not already at Contract Issued/Under Contract) — via the 2 mock advisory deals still in DEALS',
+    pages: ['Overview', 'Revenue'],
     category: 'Modelled',
-    why: 'These are NEW fields — they do not exist in Notion today. Production would need them created there (per-deal, on the Deals database or a linked Advisory Billing table) and filled in manually by whoever negotiates the engagement, exactly as entered here: a total fee, and two tranche amounts/statuses/dates that are NOT derived from a fixed 50/50 rule or from stage (Paramount is billed 60/40, Horizon 70/30 — real engagements are rarely an even split). Field names are chosen to map 1:1 to that future Notion schema. Statuses are exactly the four values the real Notion field uses — "Not started", "WIP", "Invoiced", "Paid" — manually set per tranche, never inferred from the deal\'s stage. They carry real financial meaning: Paid counts as Settled (cash); Invoiced AND WIP both count as Contracted (committed, not yet cash) — a WIP tranche means the engagement is under a signed contract with work underway, so that money is committed even though it hasn\'t been invoiced yet; Not started counts as neither. Locked vs Unlocked on this page is derived from that mapping, and the same mapping feeds the real Contracted Revenue figure on Overview/Revenue: engagements not already counted via the Contract Issued/Under Contract stage rule contribute their WIP + Invoiced tranche amounts there too, so Contracted Revenue reflects commitment signalled at the tranche level, not stage alone. Because two manually-entered numbers (a total, and two tranches) can drift apart by data-entry error, each engagement carries a live Tranche Reconciliation check (mirrors the equivalent Notion formula) — shown as a subtle ✓/⚠ indicator on the card and in the drawer. All mock data reconciles cleanly today, but the check runs unconditionally, not just for show.',
+    why: 'These are NEW fields — they do not exist in Notion today. This entry used to also cover Delivery\'s own Engagements grid/drawer/KPI strip/Milestone Timeline for these 2 mock advisory deals; that usage is GONE — Delivery\'s Advisory section is now real (see \'delivery-advisory-real\'), and Aggregates.engagements() (which still includes these 2 deals) is no longer called anywhere on the Delivery page, only by Revenue\'s mock contractedTierBreakdown() below. That one remaining caller is why these mock fields and this deal pair still exist in DEALS at all — removing them would change mock Overview/Revenue\'s Contracted Revenue figure, which is out of scope for the real-data migration. Field values are NOT derived from a fixed 50/50 rule or from stage (Paramount is billed 60/40, Horizon 70/30 — real engagements are rarely an even split); field names map 1:1 to a future Notion schema, and statuses are exactly the four values the real field uses — "Not started", "WIP", "Invoiced", "Paid". They carry the same financial meaning as the real version: Paid → Settled; Invoiced and WIP → Contracted; Not started → neither. That mapping is what feeds the mock Contracted Revenue figure on Overview/Revenue: engagements not already counted via the Contract Issued/Under Contract stage rule contribute their WIP + Invoiced tranche amounts there too.',
   },
   {
     id: 'delivery-stage-history',

@@ -520,4 +520,82 @@ const RealAggregates = {
     const variancePct = targetToDate === 0 ? 0 : variance / targetToDate;
     return { rows, actualToDate, targetToDate, variance, variancePct, aheadOfPlan: variance >= 0 };
   },
+
+  /* ---------------------------- DELIVERY: ADVISORY -------------------------
+     Real counterpart to data.js's mock Delivery "engagements" concept — see
+     the report given alongside this change for the full rationale. Scope:
+     ADVISORY only. Brokerage delivery (health %, deliverables, milestone due
+     dates) has no Notion source (ASSUMPTIONS 'delivery-milestone-model') and
+     stays entirely on the mock DEALS/Aggregates.engagements(), now narrowed
+     to brokerage-only in data.js.
+
+     QUALIFYING RULE: advisory_fee > 0 AND at least one tranche STATUS is
+     non-null. Status, not amount, is the "is there real tranche data" signal
+     — the view coalesces every *_amount column to 0, so a genuinely-zero
+     amount and a field Notion has never had filled in are indistinguishable
+     once mapped; *_status is passed through un-coalesced, so null there
+     really does mean "Notion has nothing here yet." A deal with advisory_fee
+     but no tranche fields at all doesn't qualify — it isn't hidden data, it
+     simply isn't tranche-tracked yet, and it keeps counting normally
+     everywhere else (Overview, Revenue) via its flat advisoryFee.
+
+     LOCKED vs UNLOCKED reuses the exact mapping already established for real
+     advisory money everywhere else in this app (see settledRevenueYTD()
+     above and the view's own advisory_settled/advisory_contracted columns):
+     Paid → Settled, WIP/Invoiced → Contracted, Not started → neither (still
+     just open/weighted pipeline). "Locked" here means the Not-started
+     portion — not yet committed; "Unlocked" is Contracted + Settled
+     combined, same two-bucket split the mock's own engagement cards use.
+
+     Paused deals: per the non-negotiable rule they contribute zero to every
+     sum, but they're NOT filtered out of advisoryEngagements() itself — the
+     list may still show them, clearly marked, at zero. */
+  advisoryEngagements: () => REAL_DEALS
+    .filter(d => d.advisoryFee > 0 && (d.tranche1Status != null || d.tranche2Status != null))
+    .sort((a, b) => b.advisoryFee - a.advisoryFee),
+
+  advisoryEngagementLocked: (d) => {
+    if (d.isPaused) return 0;
+    let sum = 0;
+    if (d.tranche1Status === 'Not started') sum += d.tranche1Amount;
+    if (d.tranche2Status === 'Not started') sum += d.tranche2Amount;
+    return sum;
+  },
+
+  advisoryEngagementUnlocked: (d) => {
+    if (d.isPaused) return 0;
+    let sum = 0;
+    if (d.tranche1Status != null && d.tranche1Status !== 'Not started') sum += d.tranche1Amount;
+    if (d.tranche2Status != null && d.tranche2Status !== 'Not started') sum += d.tranche2Amount;
+    return sum;
+  },
+
+  /* Same check as the mock's trancheReconciliation(), against advisory_fee
+     (the view's own single source of truth for "this deal's total advisory
+     revenue") instead of a separate consultancyFeeTotal field — the real
+     schema only has the one. */
+  advisoryTrancheReconciliation: (d) => {
+    const sum = d.tranche1Amount + d.tranche2Amount;
+    return { ok: Math.abs(sum - d.advisoryFee) < 0.01, sum, total: d.advisoryFee };
+  },
+
+  /* KPI strip equivalent to the mock's deliveryKpis() — deliberately NOT a
+     1:1 match. "Unlockable This Quarter", "Revenue At Risk" and "Next
+     Milestone" all key off a milestone DUE DATE and/or the health flag,
+     neither of which exists in the real schema (tranches have an amount and
+     a status, never a date) — fabricating one would be a guess dressed up
+     as a real number, so those three are dropped rather than faked. What's
+     left is fully real: Settled/Contracted (from the view's own
+     advisory_settled/advisory_contracted, summed only across non-Paused
+     qualifying deals) and Locked (Not-started tranches, same deals). */
+  advisoryDeliveryKpis: () => {
+    const engagements = RealAggregates.advisoryEngagements().filter(d => !d.isPaused);
+    let lockedRevenue = 0, settledRevenue = 0, contractedRevenue = 0;
+    engagements.forEach(d => {
+      lockedRevenue += RealAggregates.advisoryEngagementLocked(d);
+      settledRevenue += d.advisorySettled;
+      contractedRevenue += d.advisoryContracted;
+    });
+    return { lockedRevenue, settledRevenue, contractedRevenue, activeEngagements: engagements.length };
+  },
 };

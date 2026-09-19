@@ -95,12 +95,13 @@ const INFO_TEXT = {
   'rev-cumulative-variance': { text: 'Cumulative Actual − Cumulative Target (both through the current month). Positive = ahead of plan, negative = behind. % is variance ÷ Cumulative Target.' },
 
   // Delivery
-  'del-locked': { text: 'Sum of tranche/milestone amounts across all engagements whose status is "Not started" — not yet committed, still part of open pipeline only. WIP counts as committed (Contracted) here, same as Invoiced.', assumptionId: 'delivery-tranche-fields' },
-  'del-unlockable': { text: 'Of that Locked total, the portion whose due date falls within the current calendar quarter — i.e. what should convert to Invoiced/Paid soon if on schedule.' },
-  'del-at-risk': { text: 'Locked amounts specifically on engagements flagged health = "At risk" or "Slipped" — a subset of Locked Revenue, not an addition to it.' },
-  'del-active-engagements': { text: 'Count of deals carrying either billing milestones (brokerage) or explicit consultancy tranches (advisory) — the roster shown in the Engagements grid below.' },
-  'del-next-milestone': { text: 'The soonest tranche/milestone across all engagements that isn\'t yet Paid, by due date.' },
-  'del-timeline': { text: 'Every tranche/milestone from every engagement, plotted by due date and coloured by status. Dot size scales with the dollar amount.' },
+  'del-advisory-real': { text: 'Every deal in analytics.deals with advisory_fee > 0 AND at least one tranche STATUS field set in Notion (a status field being set, even to "Not started", is what "loaded" means — the amount columns are coalesced to 0 by the view and can\'t tell a real zero apart from never-filled-in). Locked = tranches still "Not started" — not yet committed. Unlocked = Contracted (WIP/Invoiced) + Settled (Paid) combined, the same mapping used everywhere else on this app for real advisory money. Paused deals appear here too but contribute zero. A deal with advisory_fee but no tranche fields at all doesn\'t qualify yet — it still counts normally on Overview/Revenue via its flat advisory_fee.', assumptionId: 'delivery-advisory-real' },
+  'del-locked': { text: 'Sum of milestone amounts across Brokerage engagements whose status is "Not started" — not yet committed, still part of open pipeline only. WIP counts as committed (Contracted) here, same as Invoiced. Brokerage only — see the Advisory Engagements section above for the real advisory equivalent.', assumptionId: 'delivery-milestone-model' },
+  'del-unlockable': { text: 'Of that Locked total, the portion whose due date falls within the current calendar quarter — i.e. what should convert to Invoiced/Paid soon if on schedule. Brokerage only — milestone due dates aren\'t a real field for advisory tranches, so this KPI has no advisory equivalent.' },
+  'del-at-risk': { text: 'Locked amounts specifically on Brokerage engagements flagged health = "At risk" or "Slipped" — a subset of Locked Revenue, not an addition to it. Health is a modelled field with no advisory equivalent, so this KPI is Brokerage-only.' },
+  'del-active-engagements': { text: 'Count of Brokerage deals carrying billing milestones — the roster shown in the Brokerage Engagements grid below. Advisory engagements have their own, separate "Active Engagements" count in the Advisory KPI row above.' },
+  'del-next-milestone': { text: 'The soonest tranche/milestone across Brokerage engagements that isn\'t yet Paid, by due date. Brokerage only — real advisory tranches have no due-date field to rank by.' },
+  'del-timeline': { text: 'Every tranche/milestone from every Brokerage engagement, plotted by due date and coloured by status. Dot size scales with the dollar amount. Brokerage only — real advisory tranches have no due date to plot.' },
 
   // Sales Funnel
   'funnel-chart': { text: 'Market/Relationships is an editorial estimate (not tracked in Notion); every tier below it is a real deal count at or past a stage-index threshold, collapsing the 16 real stages into 9 milestones.', assumptionId: 'funnel-tier-mapping' },
@@ -794,6 +795,16 @@ function openRealDealDrawer(id) {
   const trancheLines = [];
   if (deal.tranche1Status) trancheLines.push(`Tranche 1: ${fmtFull(deal.tranche1Amount)} · ${deal.tranche1Status}`);
   if (deal.tranche2Status) trancheLines.push(`Tranche 2: ${fmtFull(deal.tranche2Amount)} · ${deal.tranche2Status}`);
+  /* Same reconciliation check as the Advisory Engagements grid card (see
+     renderAdvisoryEngagementGrid()) — only meaningful once at least one
+     tranche has real data, same qualifying rule as advisoryEngagements(). */
+  const recon = (deal.advisoryFee > 0 && trancheLines.length)
+    ? RealAggregates.advisoryTrancheReconciliation(deal) : null;
+  if (recon) {
+    trancheLines.push(recon.ok
+      ? `✓ Tranches reconcile with the ${fmtFull(recon.total)} advisory fee.`
+      : `⚠ Tranches sum to ${fmtFull(recon.sum)}, which doesn't match the ${fmtFull(recon.total)} advisory fee — check entry in Notion.`);
+  }
 
   document.getElementById('drawer-body').innerHTML = `
     <div class="drawer-metric-row">
@@ -1142,17 +1153,55 @@ const HEALTH_COLOR = { 'On track': 'var(--green)', 'At risk': 'var(--gold)', 'Sl
 const MILESTONE_STATUS_COLOR = { 'Not started': '#8592A6', WIP: '#0476D9', Invoiced: '#0476D9', Paid: '#2FB37A' };
 
 function renderDeliveryPage() {
+  /* Advisory (below) reads REAL_DEALS/RealAggregates — the same shared,
+     single-fetch cache Overview/Pipeline/Revenue use, never a second fetch
+     (see supabase-data.js). Brokerage stays 100% mock/DEALS and doesn't
+     need this at all, but Delivery is a lazy page (rendered once, the first
+     time its nav item opens — see LAZY_PAGE_RENDERERS) and reusing the same
+     loading/error gate as the other real-data pages is what keeps this from
+     ever landing in the same stuck-forever state Pipeline was in before its
+     fix: without it, a visit that happens to land before the shared fetch
+     resolves would render the Advisory section empty with nothing left to
+     ever re-render it, since nothing else re-triggers a lazy page's first
+     render. In practice the fetch already kicked off when the dashboard
+     booted, several clicks before a user can reach Delivery, so this branch
+     essentially never shows — it's here for correctness, not because it's
+     expected to fire. */
+  if (RealData.status === 'loading') {
+    renderRealDataStatusPanel('view-delivery');
+    initRealData().then(() => {
+      if (document.getElementById('view-delivery').classList.contains('active')) renderDeliveryPage();
+      else renderedViews.delete('delivery');
+    });
+    return;
+  }
+  if (renderRealDataStatusPanel('view-delivery')) return;
+
   const root = document.getElementById('view-delivery');
   root.innerHTML = `
     <div class="delivery-subtitle">Engagements, milestones &amp; revenue unlock</div>
 
+    <div class="panel-sub" style="font-size:13px; margin-bottom:6px;"><span class="scope-tag real">Real — Supabase</span> Advisory engagements below are sourced live from analytics.deals' tranche fields — see the Assumptions Register.</div>
+    <div class="kpi-row kpi-row-4" id="advisory-kpi-row"></div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Advisory Engagements <span class="scope-tag real">Real</span>${infoIcon('del-advisory-real')}</h3>
+          <div class="panel-sub">Every deal with a real advisory fee and at least one tranche field loaded in Notion · Paused deals shown, zero-weighted · click a card for full deal detail</div>
+        </div>
+      </div>
+      <div class="chart-body" style="padding:8px 20px 22px;"><div class="engagement-grid" id="advisory-engagement-grid"></div></div>
+    </div>
+
+    <div class="panel-sub" style="font-size:13px; margin:28px 0 6px;"><span class="scope-tag dashboard">Illustrative / Mock</span> Everything below (Brokerage engagements, Milestone Timeline, Delivery Insights) is dashboard-owned modelling — Notion has no deliverables/milestone/health data for brokerage deals yet. See ASSUMPTIONS 'delivery-milestone-model'.</div>
     <div class="kpi-row" id="delivery-kpi-row"></div>
 
     <div class="panel section-gap">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Engagements</h3>
-          <div class="panel-sub">Derived from the Advisory/DD and Brokerage deals already in the pipeline · click a card for full delivery detail</div>
+          <h3 class="panel-title">Brokerage Engagements <span class="scope-tag dashboard">Mock</span></h3>
+          <div class="panel-sub">Derived from the Brokerage deals already in the pipeline, with a modelled deliverable/milestone structure · click a card for full delivery detail</div>
         </div>
       </div>
       <div class="chart-body" style="padding:8px 20px 22px;"><div class="engagement-grid" id="engagement-grid"></div></div>
@@ -1162,7 +1211,7 @@ function renderDeliveryPage() {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Milestone Timeline${infoIcon('del-timeline')}</h3>
-          <div class="panel-sub">Every billing milestone across active engagements, by due date</div>
+          <div class="panel-sub">Every billing milestone across Brokerage engagements, by due date · mock, see above</div>
         </div>
       </div>
       <div class="chart-body">
@@ -1177,21 +1226,84 @@ function renderDeliveryPage() {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Delivery Insights</h3>
-          <div class="panel-sub"><span class="ai-badge">✦ Simulated AI — prototype</span> Hardcoded insights computed live from this page's data — no model is called.</div>
+          <div class="panel-sub"><span class="ai-badge">✦ Simulated AI — prototype</span> Hardcoded insights computed live from this page's (Brokerage) data — no model is called.</div>
         </div>
       </div>
       <div class="chart-body" style="padding:8px 20px 22px;"><div class="ai-card-list" id="delivery-ai-list"></div></div>
     </div>
 
     <div class="revenue-recognition-note">
-      <strong>Invoiced ≠ paid.</strong> A tranche marked "Invoiced" is committed, high-confidence revenue (the same status this page treats as Contracted) — it is not yet cash. Only "Paid" tranches are cash (Settled). Whether revenue is recognised on a milestone basis or a % -of-completion basis is a finance decision, not asserted here — confirm treatment with finance before reporting externally. See the Assumptions Register.
+      <strong>Invoiced ≠ paid.</strong> A tranche marked "Invoiced" is committed, high-confidence revenue (the same status this page treats as Contracted) — it is not yet cash. Only "Paid" tranches are cash (Settled). Whether revenue is recognised on a milestone basis or a % -of-completion basis is a finance decision, not asserted here — confirm treatment with finance before reporting externally. Applies to both sections above. See the Assumptions Register.
     </div>
   `;
 
+  renderAdvisoryKpis();
+  renderAdvisoryEngagementGrid();
   renderDeliveryKpis();
   renderEngagementGrid();
   renderDeliveryTimeline();
   renderDeliveryAi();
+}
+
+/* ADVISORY (REAL) — reads RealAggregates from supabase-data.js, same shared
+   REAL_DEALS cache as Overview/Pipeline/Revenue, never a second fetch. See
+   RealAggregates.advisoryDeliveryKpis()/advisoryEngagements() for the
+   qualifying rule and the Locked/Unlocked mapping. */
+function renderAdvisoryKpis() {
+  const k = RealAggregates.advisoryDeliveryKpis();
+  const cards = [
+    { label: 'Advisory Settled', value: fmtCompact(k.settledRevenue), foot: 'Paid tranches', infoKey: 'del-advisory-real' },
+    { label: 'Advisory Contracted', value: fmtCompact(k.contractedRevenue), foot: 'WIP + Invoiced tranches', infoKey: 'del-advisory-real' },
+    { label: 'Advisory Locked', value: fmtCompact(k.lockedRevenue), foot: 'Not started — not yet committed', infoKey: 'del-advisory-real' },
+    { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'real advisory deals, Paused excluded', infoKey: 'del-advisory-real' },
+  ];
+  renderKpiCards('advisory-kpi-row', cards);
+}
+
+function renderAdvisoryEngagementGrid() {
+  const engagements = RealAggregates.advisoryEngagements();
+  document.getElementById('advisory-engagement-grid').innerHTML = engagements.map(d => {
+    const stage = getStage(d.stage) || { short: d.stageLabel, group: 'prospecting' };
+    const meta = STAGE_GROUPS[stage.group];
+    const locked = RealAggregates.advisoryEngagementLocked(d);
+    const unlocked = RealAggregates.advisoryEngagementUnlocked(d);
+    const total = locked + unlocked;
+    const recon = RealAggregates.advisoryTrancheReconciliation(d);
+    const t1 = d.tranche1Status != null ? `${fmtFull(d.tranche1Amount)} · ${d.tranche1Status}` : 'Not set';
+    const t2 = d.tranche2Status != null ? `${fmtFull(d.tranche2Amount)} · ${d.tranche2Status}` : 'Not set';
+
+    return `
+      <div class="engagement-card" data-id="${d.id}">
+        <div class="engagement-card-top">
+          <div>
+            <div class="engagement-card-name">${d.name}</div>
+            <span class="stage-chip" style="background:${hexToRgba(meta.color, 0.12)}; color:${meta.color}"><span class="dot" style="background:${meta.color}"></span>${stage.short}</span>
+          </div>
+          ${d.isPaused ? '<span class="paused-tag">Paused</span>' : '<span class="scope-tag real">Real</span>'}
+        </div>
+
+        <div class="engagement-split-track">
+          <div class="engagement-split-locked" style="width:${total ? (locked / total) * 100 : 0}%"></div>
+          <div class="engagement-split-unlocked" style="width:${total ? (unlocked / total) * 100 : 0}%"></div>
+        </div>
+        <div class="engagement-split-legend">
+          <span><span class="dot locked"></span>Locked <strong class="tabular">${fmtCompact(locked)}</strong></span>
+          <span><span class="dot unlocked"></span>Unlocked <strong class="tabular">${fmtCompact(unlocked)}</strong></span>
+        </div>
+
+        <div class="real-tranche-lines">
+          <div class="real-tranche-line"><span>Tranche 1</span><span class="tabular">${t1}</span></div>
+          <div class="real-tranche-line"><span>Tranche 2</span><span class="tabular">${t2}</span></div>
+          <div class="real-tranche-line"><span>Advisory Fee</span><span class="tabular">${fmtFull(d.advisoryFee)}</span></div>
+        </div>
+        <div class="tranche-recon ${recon.ok ? 'ok' : 'mismatch'}">${recon.ok ? '✓ Tranches reconcile with advisory fee' : '⚠ Tranches don’t match advisory fee total'}</div>
+      </div>
+    `;
+  }).join('');
+
+  document.querySelectorAll('#advisory-engagement-grid .engagement-card').forEach(card => {
+    card.addEventListener('click', () => openRealDealDrawer(card.dataset.id));
+  });
 }
 
 function renderDeliveryKpis() {
@@ -1202,7 +1314,7 @@ function renderDeliveryKpis() {
     { label: 'Locked Revenue', value: fmtCompact(k.lockedRevenue), foot: 'Not started — not yet committed', infoKey: 'del-locked' },
     { label: 'Unlockable This Quarter', value: fmtCompact(k.unlockableThisQuarter), foot: `due by ${fmtDateObj(qEnd)}`, infoKey: 'del-unlockable' },
     { label: 'Revenue At Risk', value: fmtCompact(k.revenueAtRisk), foot: 'locked milestones on at-risk engagements', footClass: k.revenueAtRisk > 0 ? 'neg' : 'pos', infoKey: 'del-at-risk' },
-    { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'advisory + brokerage in delivery', infoKey: 'del-active-engagements' },
+    { label: 'Active Engagements', value: String(k.activeEngagements), foot: 'brokerage engagements (mock)', infoKey: 'del-active-engagements' },
     { label: 'Next Milestone', value: nm ? fmtCompact(nm.milestone.amount) : '$0', foot: nm ? `${fmtDate(nm.milestone.dueDate)} · ${nm.deal.name}` : 'none scheduled', infoKey: 'del-next-milestone' },
   ];
   renderKpiCards('delivery-kpi-row', cards);
@@ -1213,7 +1325,7 @@ function healthBadgeClass(health) {
 }
 
 function renderEngagementGrid() {
-  const engagements = Aggregates.engagements();
+  const engagements = Aggregates.brokerageEngagements();
   document.getElementById('engagement-grid').innerHTML = engagements.map(d => {
     const stage = getStage(d.stage);
     const meta = STAGE_GROUPS[stage.group];
@@ -1264,7 +1376,7 @@ function renderDeliveryTimeline() {
   const el = document.getElementById('delivery-timeline-chart');
   if (!deliveryTimelineChartInstance) deliveryTimelineChartInstance = echarts.init(el);
   const points = Aggregates.deliveryTimelinePoints();
-  const engagementNames = Aggregates.engagements().map(d => d.name);
+  const engagementNames = Aggregates.brokerageEngagements().map(d => d.name);
   const maxAmount = Math.max(1, ...points.map(p => p.amount));
 
   deliveryTimelineChartInstance.setOption({
@@ -1324,7 +1436,7 @@ function renderDeliveryAi() {
 
 function openEngagementDrawer(id) {
   const deal = DEALS.find(d => d.id === id);
-  if (!deal || !Aggregates.engagements().includes(deal)) return;
+  if (!deal || !Aggregates.brokerageEngagements().includes(deal)) return;
   const stage = getStage(deal.stage);
   const meta = STAGE_GROUPS[stage.group];
   const locked = Aggregates.engagementLocked(deal);

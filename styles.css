@@ -1062,6 +1062,7 @@ thead th.num-head { text-align: right; }
 
 .kpi-row-6 { grid-template-columns: repeat(6, 1fr); }
 .kpi-row-7 { grid-template-columns: repeat(4, 1fr); }
+.kpi-row-4 { grid-template-columns: repeat(4, 1fr); }
 .kpi-row-3 { grid-template-columns: repeat(3, 1fr); }
 
 .legend-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
@@ -1129,6 +1130,16 @@ thead th.num-head { text-align: right; }
 .tranche-recon { font-size: 10.5px; font-weight: 600; margin-top: 8px; }
 .tranche-recon.ok { color: var(--green); }
 .tranche-recon.mismatch { color: var(--red); }
+
+/* Real Advisory engagement cards (renderAdvisoryEngagementGrid()) — per-
+   tranche detail shown directly on the card, since (unlike the mock's
+   milestones) real tranches have no due date to justify hiding them behind
+   a drawer click. */
+.real-tranche-lines { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--panel-border-soft); display: flex; flex-direction: column; gap: 5px; }
+.real-tranche-line { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--ink-mute); }
+.real-tranche-line span:last-child { color: var(--ink); font-weight: 600; }
+
+.paused-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: #8A6A16; background: #FCF0D3; padding: 3px 8px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
 
 .tranche-recon-detail { font-size: 11px; line-height: 1.5; margin-top: 10px; padding: 9px 11px; border-radius: 8px; }
 .tranche-recon-detail.ok { color: var(--green); background: #E5F6EE; }
@@ -1491,6 +1502,7 @@ thead th.num-head { text-align: right; }
   .settings-field-grid { grid-template-columns: 1fr; }
   .kpi-row-6 { grid-template-columns: repeat(2, 1fr); }
   .kpi-row-7 { grid-template-columns: repeat(2, 1fr); }
+  .kpi-row-4 { grid-template-columns: repeat(2, 1fr); }
   .kpi-row-3 { grid-template-columns: repeat(1, 1fr); }
   .cohort-head, .cohort-row { grid-template-columns: 88px 60px 50px 50px 74px; gap: 6px; font-size: 11.5px; }
   .engagement-grid { grid-template-columns: 1fr; }
