@@ -104,12 +104,12 @@ const INFO_TEXT = {
   'del-timeline': { text: 'Every tranche/milestone from every Brokerage engagement, plotted by due date and coloured by status. Dot size scales with the dollar amount. Brokerage only — real advisory tranches have no due date to plot.' },
 
   // Sales Funnel
-  'funnel-chart': { text: 'Market/Relationships is an editorial estimate (not tracked in Notion); every tier below it is a real deal count at or past a stage-index threshold, collapsing the 16 real stages into 9 milestones.', assumptionId: 'funnel-tier-mapping' },
-  'funnel-table': { text: 'Conversion = this tier\'s count ÷ the previous tier\'s count. Dropped = 1 − conversion.' },
-  'prospects-chart': { text: 'New Prospects = deals created that month, by createdDate. Lost = deals whose closeDate (in that month) has outcome Lost. Trailing 14 months.' },
-  'source-groups': { text: 'Every prospect source rolled into two channels (Relationship-led vs Marketing-sourced, per PROSPECT_SOURCES). Qualified = reached stage A1/B1 or later.', assumptionId: 'qualified-definition' },
-  'source-detail': { text: 'Same "qualified" definition as the channel comparison, broken out per individual source.' },
-  'cohort-table': { text: 'Deals grouped by the quarter they were CREATED (not decided). Conversion = Won ÷ (Won + Lost) within that cohort; still-open cohorts show "Too early."', assumptionId: 'cohort-conversion' },
+  'funnel-chart': { text: 'CUMULATIVE, not a snapshot: each tier counts every non-Paused deal that reached AT LEAST that stage or further — not deals sitting exactly there today (that\'s what Pipeline\'s Pipeline-by-Stage chart shows). A deal now frozen at a later stage, or Lost from one, still counts in every earlier tier it passed through. In real stage-ID terms: Prospects = every non-Paused deal (stage 0 or later — i.e. all of them). Qualified Opportunities = reached A1 or later. Advisory Proposal = reached A2 or later. Advisory Engagement = reached A3 or later. Transaction Ready = reached A5 (Advisory Complete) or later. Brokerage / Sale Mandate = reached B3 (Appointed & Market Prep) or later. Negotiation = reached B6 or later. Contract = reached B7 (Contract Issued) or later. Settlement = at stage 9 with outcome Won. Because every brokerage stage sits after every advisory stage in the pipeline order, a brokerage deal automatically satisfies every advisory tier too, even one that never visited A1-A5 — read as "reached an equivalent depth via a different service line," not as drop-off. The single most useful number here isn\'t any one tier\'s raw count — it\'s the drop-off % between consecutive tiers (Stage Conversion, alongside), which shows where deals are actually lost. Advisory Proposal onward is clickable — click a bar or table row to see exactly which deals qualify.', assumptionId: 'funnel-tier-mapping' },
+  'funnel-table': { text: 'Conversion = this tier\'s count ÷ the previous tier\'s count. Dropped = 1 − conversion. Same real, Paused-excluded, cumulative counts as the Conversion Funnel — see that chart\'s info icon for what each tier means in stage-ID terms. Rows from Advisory Proposal onward are clickable.' },
+  'prospects-chart': { text: 'New Prospects = mock deals created that month, by createdDate. Lost = mock deals whose closeDate (in that month) has outcome Lost. Trailing 14 months. Mock — not yet reconnected to real data.' },
+  'source-groups': { text: 'Every MOCK prospect source rolled into two channels (Relationship-led vs Marketing-sourced, per PROSPECT_SOURCES). Qualified = reached stage A1/B1 or later. No source field exists in the real Notion data — see ASSUMPTIONS \'prospect-source-mock\'.', assumptionId: 'prospect-source-mock' },
+  'source-detail': { text: 'Same "qualified" definition as the channel comparison, broken out per individual MOCK source.', assumptionId: 'prospect-source-mock' },
+  'cohort-table': { text: 'Mock deals grouped by the quarter they were CREATED (not decided). Conversion = Won ÷ (Won + Lost) within that cohort; still-open cohorts show "Too early." Mock — not yet reconnected to real data.', assumptionId: 'cohort-conversion' },
 
   // SDA Report
   'sda-inventory': { text: 'Printed/Allocated/Delivered are dashboard-owned counters (not in Notion). Pending and Available are always calculated from them live, never stored, so they can\'t drift.', assumptionId: 'sda-report-inventory' },
@@ -1557,8 +1557,10 @@ function initEngagementDrawer() {
 let funnelChartInstance = null;
 let prospectsChartInstance = null;
 
+/* 9 entries, 1:1 with FUNNEL_TIERS (data.js) — no "Market / Relationships"
+   entry: that estimate row is gone from the real funnel (see
+   RealAggregates.funnelStages() in supabase-data.js). */
 const FUNNEL_TIER_COLORS = [
-  '#B7C1D1',                       // Market / Relationships (estimate)
   STAGE_GROUPS.prospecting.color,  // Prospects
   STAGE_GROUPS.prospecting.color,  // Qualified Opportunities
   STAGE_GROUPS.advisory.color,     // Advisory Proposal
@@ -1571,14 +1573,32 @@ const FUNNEL_TIER_COLORS = [
 ];
 
 function renderFunnelPage() {
+  /* Conversion Funnel / Stage Conversion (below) read REAL_DEALS/
+     RealAggregates — the same shared, single-fetch cache Overview/Pipeline/
+     Revenue/Delivery use, never a second fetch. Sales Funnel is a lazy page
+     (LAZY_PAGE_RENDERERS), so this gate exists for the same reason Delivery's
+     does — see that page's render function for the full rationale; in
+     practice the shared fetch has almost always already resolved by the
+     time a user reaches this page. */
+  if (RealData.status === 'loading') {
+    renderRealDataStatusPanel('view-funnel');
+    initRealData().then(() => {
+      if (document.getElementById('view-funnel').classList.contains('active')) renderFunnelPage();
+      else renderedViews.delete('funnel');
+    });
+    return;
+  }
+  if (renderRealDataStatusPanel('view-funnel')) return;
+
   const root = document.getElementById('view-funnel');
   root.innerHTML = `
+    <div class="panel-sub" style="font-size:13px; margin-bottom:6px;"><span class="scope-tag real">Real — Supabase</span> Stage counts and conversion below are computed live from analytics.deals — see the Assumptions Register.</div>
     <div class="chart-grid" style="grid-template-columns: 1fr 1.05fr;">
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Conversion Funnel${infoIcon('funnel-chart')}</h3>
-            <div class="panel-sub">Market reach through to settlement · *Market/Relationships is estimated, not tracked in Notion</div>
+            <h3 class="panel-title">Conversion Funnel <span class="scope-tag real">Real</span>${infoIcon('funnel-chart')}</h3>
+            <div class="panel-sub">Prospect through to Settlement · real deal counts, Paused excluded</div>
           </div>
         </div>
         <div class="chart-body"><div class="chart-canvas" id="funnel-chart" style="height:430px;"></div></div>
@@ -1586,15 +1606,17 @@ function renderFunnelPage() {
 
       <div class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">Stage Conversion${infoIcon('funnel-table')}</h3><div class="panel-sub">Conversion and drop-off between each stage</div></div>
+          <div><h3 class="panel-title">Stage Conversion <span class="scope-tag real">Real</span>${infoIcon('funnel-table')}</h3><div class="panel-sub">Conversion and drop-off between each stage</div></div>
         </div>
         <div id="funnel-table-body" style="padding:8px 24px 20px;"></div>
       </div>
     </div>
 
+    <div class="panel-sub" style="font-size:13px; margin:28px 0 6px;"><span class="scope-tag dashboard">Illustrative / Mock</span> Everything below has no source field in the real Notion data today — see ASSUMPTIONS 'prospect-source-mock'.</div>
+
     <div class="panel section-gap">
       <div class="panel-head">
-        <div><h3 class="panel-title">New vs. Lost Prospects${infoIcon('prospects-chart')}</h3><div class="panel-sub">Trailing 14 months · created vs. lost, by month</div></div>
+        <div><h3 class="panel-title">New vs. Lost Prospects <span class="scope-tag dashboard">Mock</span>${infoIcon('prospects-chart')}</h3><div class="panel-sub">Trailing 14 months · created vs. lost, by month</div></div>
       </div>
       <div class="chart-body"><div class="chart-canvas" id="prospects-chart"></div></div>
     </div>
@@ -1602,14 +1624,14 @@ function renderFunnelPage() {
     <div class="chart-grid section-gap">
       <div class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">Relationship-Led vs Marketing-Sourced${infoIcon('source-groups')}</h3><div class="panel-sub">Volume and qualification rate by channel</div></div>
+          <div><h3 class="panel-title">Relationship-Led vs Marketing-Sourced <span class="scope-tag dashboard">Mock</span>${infoIcon('source-groups')}</h3><div class="panel-sub">Volume and qualification rate by channel</div></div>
         </div>
         <div id="source-group-body" style="padding:18px 24px 22px;"></div>
       </div>
 
       <div class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">Prospect Sources${infoIcon('source-detail')}</h3><div class="panel-sub">Individual channel performance</div></div>
+          <div><h3 class="panel-title">Prospect Sources <span class="scope-tag dashboard">Mock</span>${infoIcon('source-detail')}</h3><div class="panel-sub">Individual channel performance</div></div>
         </div>
         <div id="source-detail-body" style="padding:6px 24px 18px;"></div>
       </div>
@@ -1617,7 +1639,7 @@ function renderFunnelPage() {
 
     <div class="panel section-gap">
       <div class="panel-head">
-        <div><h3 class="panel-title">Cohort Conversion by Quarter${infoIcon('cohort-table')}</h3><div class="panel-sub">Ultimate win rate of deals created each quarter · recent cohorts still undecided</div></div>
+        <div><h3 class="panel-title">Cohort Conversion by Quarter <span class="scope-tag dashboard">Mock</span>${infoIcon('cohort-table')}</h3><div class="panel-sub">Ultimate win rate of deals created each quarter · recent cohorts still undecided</div></div>
       </div>
       <div id="cohort-body" style="padding:6px 24px 18px;"></div>
     </div>
@@ -1631,10 +1653,21 @@ function renderFunnelPage() {
   renderCohortTable();
 }
 
+/* Advisory Proposal onward is click-through (see openFunnelTierModal()) —
+   Prospects and Qualified Opportunities are too broad/early to be a useful
+   "who are these deals" list and stay non-interactive. Checked by position
+   in FUNNEL_TIERS (data.js), not a hardcoded index, so reordering that array
+   can't silently shift the clickable boundary. */
+function isFunnelTierClickable(tierKey) {
+  const from = FUNNEL_TIERS.findIndex(t => t.key === 'advisoryProposal');
+  const idx = FUNNEL_TIERS.findIndex(t => t.key === tierKey);
+  return idx >= from;
+}
+
 function renderFunnelChart() {
   const el = document.getElementById('funnel-chart');
   if (!funnelChartInstance) funnelChartInstance = echarts.init(el);
-  const rows = Aggregates.funnelStages();
+  const rows = RealAggregates.funnelStages();
   const maxVal = rows[0].count;
 
   funnelChartInstance.setOption({
@@ -1642,8 +1675,9 @@ function renderFunnelChart() {
       trigger: 'item',
       formatter: (p) => {
         const row = rows[p.dataIndex];
-        let s = `<strong>${row.label}${row.isEstimate ? ' (estimated)' : ''}</strong><br/>${row.count} ${row.isEstimate ? '' : 'deals'}`;
+        let s = `<strong>${row.label}</strong><br/>${row.count} deals`;
         if (row.conversionFromPrevious !== null) s += `<br/>Converted from previous stage: ${fmtPct(row.conversionFromPrevious)}`;
+        if (isFunnelTierClickable(row.key)) s += `<br/><span style="color:#94A3B8">Click to see the deals</span>`;
         return s;
       },
       backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 },
@@ -1660,25 +1694,86 @@ function renderFunnelChart() {
       itemStyle: { borderColor: '#fff', borderWidth: 1 },
       data: rows.map((r, i) => ({
         value: r.count,
-        name: r.label + (r.isEstimate ? ' *' : ''),
-        itemStyle: { color: FUNNEL_TIER_COLORS[i], opacity: r.isEstimate ? 0.6 : 1 },
+        name: r.label,
+        itemStyle: { color: FUNNEL_TIER_COLORS[i] },
+        cursor: isFunnelTierClickable(r.key) ? 'pointer' : 'default',
       })),
     }],
+  });
+
+  funnelChartInstance.off('click');
+  funnelChartInstance.on('click', (params) => {
+    const row = rows[params.dataIndex];
+    if (row && isFunnelTierClickable(row.key)) openFunnelTierModal(row.key);
   });
 }
 
 function renderFunnelTable() {
-  const rows = Aggregates.funnelStages();
+  const rows = RealAggregates.funnelStages();
   const head = `<div class="funnel-table-head"><div>Stage</div><div style="text-align:right">Count</div><div style="text-align:right">Converted</div><div style="text-align:right">Dropped</div></div>`;
-  const list = rows.map((r, i) => `
-    <div class="funnel-row">
-      <div class="funnel-row-label"><span class="dot" style="background:${FUNNEL_TIER_COLORS[i]}"></span>${r.label}${r.isEstimate ? ' *' : ''}</div>
+  const list = rows.map((r, i) => {
+    const clickable = isFunnelTierClickable(r.key);
+    return `
+    <div class="funnel-row${clickable ? ' clickable' : ''}"${clickable ? ` data-tier-key="${r.key}"` : ''}>
+      <div class="funnel-row-label"><span class="dot" style="background:${FUNNEL_TIER_COLORS[i]}"></span>${r.label}</div>
       <div class="funnel-row-count tabular">${r.count}</div>
       <div class="funnel-row-conv tabular">${r.conversionFromPrevious === null ? '0%' : fmtPct(r.conversionFromPrevious)}</div>
       <div class="funnel-row-drop tabular">${r.dropoffFromPrevious === null ? '0%' : fmtPct(r.dropoffFromPrevious)}</div>
     </div>
-  `).join('');
+  `;
+  }).join('');
   document.getElementById('funnel-table-body').innerHTML = head + list;
+
+  document.querySelectorAll('#funnel-table-body .funnel-row.clickable').forEach(row => {
+    row.addEventListener('click', () => openFunnelTierModal(row.dataset.tierKey));
+  });
+}
+
+/* ---------------------- SALES FUNNEL — TIER DEAL LIST MODAL ----------------
+   Reuses the same generic .modal-overlay/.modal markup/CSS as the
+   Assumptions Register modal (a separate DOM instance, not the same one —
+   see index.html) rather than inventing a new component. Lists just the
+   deal NAMES for one funnel tier, using the exact `deals` array
+   RealAggregates.funnelStages() already filtered for that tier's own count
+   — the list length always matches the tier's displayed number by
+   construction, never a second, potentially-diverging computation. Each
+   name opens the existing real deal drawer (openRealDealDrawer) — this
+   modal closes first, since the drawer and this modal would otherwise stack
+   (the drawer sits at a lower z-index, meant to layer under the topbar/
+   popovers, not under another modal's dimmed overlay). */
+function openFunnelTierModal(tierKey) {
+  const rows = RealAggregates.funnelStages();
+  const row = rows.find(r => r.key === tierKey);
+  if (!row || !isFunnelTierClickable(tierKey)) return;
+
+  document.getElementById('funnel-tier-modal-title').textContent = row.label;
+  document.getElementById('funnel-tier-modal-sub').textContent =
+    `${row.count} deal${row.count === 1 ? '' : 's'} that reached this stage or later · Paused excluded`;
+
+  const sorted = [...row.deals].sort((a, b) => a.name.localeCompare(b.name));
+  document.getElementById('funnel-tier-modal-body').innerHTML = sorted.length
+    ? `<div class="funnel-tier-deal-list">${sorted.map(d => `<button class="funnel-tier-deal-item" data-id="${d.id}">${d.name}</button>`).join('')}</div>`
+    : `<div class="panel-sub">No deals currently qualify for this tier.</div>`;
+
+  document.querySelectorAll('#funnel-tier-modal-body .funnel-tier-deal-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      closeFunnelTierModal();
+      openRealDealDrawer(id);
+    });
+  });
+
+  document.getElementById('funnel-tier-overlay').classList.add('open');
+}
+function closeFunnelTierModal() {
+  document.getElementById('funnel-tier-overlay').classList.remove('open');
+}
+function initFunnelTierModal() {
+  document.getElementById('funnel-tier-close').addEventListener('click', closeFunnelTierModal);
+  document.getElementById('funnel-tier-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'funnel-tier-overlay') closeFunnelTierModal();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeFunnelTierModal(); });
 }
 
 function renderProspectsChart() {
@@ -2619,6 +2714,7 @@ function bootDashboard() {
   initDrawer();
   initEngagementDrawer();
   initAssumptionsModal();
+  initFunnelTierModal();
   initInfoIcons();
 
   // Overview is the only real-data page rendered here — it's the default

@@ -598,4 +598,45 @@ const RealAggregates = {
     });
     return { lockedRevenue, settledRevenue, contractedRevenue, activeEngagements: engagements.length };
   },
+
+  /* ---------------------------- SALES FUNNEL: STAGE FUNNEL -----------------
+     Real counterpart to data.js's mock Aggregates.funnelStages() (now
+     removed — see ASSUMPTIONS 'funnel-tier-mapping'). Reuses FUNNEL_TIERS
+     from data.js unchanged: it's a stage-index threshold ladder, not mock
+     data itself — the same STAGE_INDEX a deal's furthest-reached stage
+     already needs to resolve is a fully real, derivable "has this deal
+     reached at least this depth" test, same rationale the mock version
+     documented. Two differences from the mock, both deliberate:
+       - Paused deals are excluded from every tier's count (the
+         non-negotiable rule) — the mock version didn't exclude them, since
+         that rule postdates it.
+       - No "Market / Relationships" top row. That figure was never a stage
+         count at all — a flat 60-relationship editorial guess with no
+         Notion source whatsoever (see the now-removed
+         'market-relationships-estimate' assumption) — carrying a fabricated
+         constant into the real funnel just to preserve the old shape would
+         undermine the entire point of this page being real. The funnel now
+         starts at Prospects (stage 0) and its own count is the true max. */
+  /* `deals` is included on every row (not just `count`) so the funnel's
+     click-through deal list (app.js's openFunnelTierModal()) reads the exact
+     same filtered array the tier's own count was computed from — one
+     predicate, so the list can never show a different number of names than
+     the tier's displayed count. */
+  funnelStages: () => {
+    const rows = FUNNEL_TIERS.map(tier => {
+      const deals = REAL_DEALS.filter(d => {
+        if (d.isPaused) return false;
+        const idx = STAGE_INDEX[d.stage];
+        if (idx == null) return false;
+        if (tier.key === 'settlement') return idx >= tier.minIndex && d.isWon;
+        return idx >= tier.minIndex;
+      });
+      return { key: tier.key, label: tier.label, count: deals.length, deals };
+    });
+    return rows.map((row, i) => {
+      const prev = i === 0 ? null : rows[i - 1].count;
+      const conversion = prev ? row.count / prev : null;
+      return { ...row, conversionFromPrevious: conversion, dropoffFromPrevious: conversion === null ? null : 1 - conversion };
+    });
+  },
 };

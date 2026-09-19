@@ -722,7 +722,14 @@ function estimatedCloseDate(deal) {
    B-track stage indices always sit after every A-track index in STAGES, a
    brokerage deal automatically satisfies the advisory-milestone thresholds
    too, which correctly models "reached an equivalent depth via a different
-   service line" rather than counting it as drop-off. */
+   service line" rather than counting it as drop-off.
+
+   SHARED CONFIG, not mock data: this ladder is used by the real Sales Funnel
+   page now (RealAggregates.funnelStages(), supabase-data.js) — the mock
+   Aggregates.funnelStages() that used to read it has been removed (see
+   ASSUMPTIONS 'funnel-tier-mapping'). Kept here, not in supabase-data.js,
+   because STAGE_INDEX/STAGES themselves already live here and both mock and
+   real deals resolve to the same stage ids. */
 const FUNNEL_TIERS = [
   { key: 'prospects',           label: 'Prospects',                minIndex: STAGE_INDEX['0'] },
   { key: 'qualified',           label: 'Qualified Opportunities',   minIndex: STAGE_INDEX['A1'] },
@@ -734,12 +741,6 @@ const FUNNEL_TIERS = [
   { key: 'contract',            label: 'Contract',                  minIndex: STAGE_INDEX['B7'] },
   { key: 'settlement',          label: 'Settlement',                minIndex: STAGE_INDEX['9'] },
 ];
-
-/* NOT tracked in Notion. An editorial estimate of SDAHC's active relationship
-   network (repeat clients, referral partners, valuers/advisers) that feeds
-   the top of the funnel before anything becomes a tracked Prospect. Shown
-   only to give the funnel its correct shape — always labelled as estimated. */
-const MARKET_RELATIONSHIPS_ESTIMATE = 60;
 
 /* Aggregate helpers — every KPI and chart in the app reads through these. */
 
@@ -1047,26 +1048,10 @@ const Aggregates = {
     return { rows, targetToDate, actualToDate, variance, variancePct, aheadOfPlan: variance >= 0 };
   },
 
-  /* Sales Funnel — see FUNNEL_TIERS comment above for methodology. */
-  funnelStages: () => {
-    const tiers = FUNNEL_TIERS.map(tier => {
-      const count = DEALS.filter(d => {
-        const idx = STAGE_INDEX[d.stage];
-        if (tier.key === 'settlement') return idx >= tier.minIndex && d.outcome === 'Won';
-        return idx >= tier.minIndex;
-      }).length;
-      return { key: tier.key, label: tier.label, count };
-    });
-    const rows = [
-      { key: 'market', label: 'Market / Relationships', count: MARKET_RELATIONSHIPS_ESTIMATE, isEstimate: true },
-      ...tiers,
-    ];
-    return rows.map((row, i) => {
-      const prev = i === 0 ? null : rows[i - 1].count;
-      const conversion = prev ? row.count / prev : null;
-      return { ...row, conversionFromPrevious: conversion, dropoffFromPrevious: conversion === null ? null : 1 - conversion };
-    });
-  },
+  /* funnelStages() (mock) removed — the Sales Funnel page's Conversion
+     Funnel / Stage Conversion panels now read RealAggregates.funnelStages()
+     instead (supabase-data.js), which reuses FUNNEL_TIERS above unchanged.
+     See ASSUMPTIONS 'funnel-tier-mapping'. */
 
   /* New prospects created vs. prospects lost, by month, over a trailing
      14-month window (covers every deal in the dataset). Real fields only. */
@@ -1933,27 +1918,35 @@ const ASSUMPTIONS = [
   },
   {
     id: 'market-relationships-estimate',
-    label: '"Market / Relationships" top-of-funnel = 60',
-    usedIn: 'Sales Funnel → Conversion Funnel (top tier)',
+    label: '"Market / Relationships" top-of-funnel = 60 — REMOVED',
+    usedIn: 'None currently — previously Sales Funnel → Conversion Funnel (top tier), mock only',
     pages: ['Sales Funnel'],
     category: 'Estimated constant',
-    why: 'Not tracked in Notion at all — an editorial estimate of SDAHC\'s active relationship network, shown only so the funnel has the correct shape.',
+    why: 'Not tracked in Notion at all — was an editorial estimate of SDAHC\'s active relationship network, shown only so the mock funnel had the correct shape. Removed as part of the Sales Funnel real-data migration (see \'funnel-tier-mapping\'): carrying a flat, made-up constant into a page whose whole point is now real data would undermine that. The real Conversion Funnel starts at Prospects (stage 0) instead, whose own count is the chart\'s true max — no replacement estimate needed.',
   },
   {
     id: 'qualified-definition',
     label: '"Qualified Opportunity" definition (reached stage A1 / B1)',
-    usedIn: 'Overview → Deal Activity; Sales Funnel → funnel tiers, Prospect Sources',
+    usedIn: 'Overview → Deal Activity (real); Sales Funnel → funnel tiers (real), Prospect Sources (mock)',
     pages: ['Overview', 'Sales Funnel'],
     category: 'Definitional',
-    why: 'Notion has no "qualified" flag. A deal is treated as qualified once its current/frozen stage is A1, B1 or later — a threshold judgement call, not a stored field.',
+    why: 'Notion has no "qualified" flag. A deal is treated as qualified once its current/frozen stage is A1, B1 or later — a threshold judgement call, not a stored field. Real on both Overview\'s Deal Activity and Sales Funnel\'s stage funnel (same STAGE_INDEX threshold, applied to real deals); still mock on Sales Funnel\'s Prospect Sources section specifically, since that section groups by prospect source — see \'prospect-source-mock\' — not by stage alone.',
   },
   {
     id: 'funnel-tier-mapping',
-    label: 'Sales Funnel tier → stage-index mapping',
+    label: 'Sales Funnel tier → stage-index mapping — now real',
     usedIn: 'Sales Funnel → Conversion Funnel, Stage Conversion table',
     pages: ['Sales Funnel'],
-    category: 'Definitional',
-    why: 'The real 16-stage pipeline is collapsed into 9 simplified milestones for readability. A deal\'s furthest-reached global stage index stands in for a true per-deal milestone history, which Notion does not store.',
+    category: 'Real (cross-page check)',
+    why: 'The real 16-stage pipeline is collapsed into 9 simplified milestones for readability — a scoping/definitional choice, not a fabrication: a deal\'s furthest-reached global stage index (real; Notion\'s Stage field, frozen at loss/pause, current if still active) stands in for a true per-deal milestone history, which Notion does not store, exactly as this always worked. What changed: this now reads REAL_DEALS via RealAggregates.funnelStages() (supabase-data.js) instead of mock DEALS — same FUNNEL_TIERS thresholds, same 9 tiers, both defined once in data.js and shared by the removed mock function and the real one. Two differences from the old mock version: Paused deals are excluded from every tier (the non-negotiable rule — the mock predates that rule and didn\'t exclude them), and the "Market / Relationships" top estimate row is gone entirely (see \'market-relationships-estimate\') rather than carried over. The page\'s other sections (Relationship-Led vs Marketing-Sourced, Prospect Sources, New vs. Lost Prospects, Cohort Conversion by Quarter) remain mock — see \'prospect-source-mock\' for why the source-based ones can\'t follow yet.',
+  },
+  {
+    id: 'prospect-source-mock',
+    label: 'Prospect source (Relationship-led vs Marketing-sourced) — entirely mock',
+    usedIn: 'Sales Funnel → Relationship-Led vs Marketing-Sourced, Prospect Sources',
+    pages: ['Sales Funnel'],
+    category: 'Modelled',
+    why: 'No field in the real Notion Deals database captures where a prospect came from — PROSPECT_SOURCES (Steve Relationship Network, Referral, Existing Client, Valuer/Adviser, SDA Report, LinkedIn/Marketing, Other) and every deal\'s `source` value exist only in this mock dataset. Unlike the stage funnel alongside it (now real — see \'funnel-tier-mapping\'), there is no real-data equivalent to fall back to today, so this stays fully mock rather than being partially migrated or approximated. Future improvement: once an origination-tracking field exists in Notion (a Source select/multi-select on the Deals database, populated going forward — backfilling history would need Steve\'s recollection, not a sync), this section should move to real data the same way the stage funnel just did.',
   },
   {
     id: 'revenue-scope',
