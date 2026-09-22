@@ -735,11 +735,24 @@ a { color: inherit; }
   position: relative;
   overflow: hidden;
 }
+.activity-item.clickable { cursor: pointer; transition: background 0.12s ease; }
+.activity-item.clickable:hover { background: #E4E9F1; }
 .activity-item .activity-bar {
   position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
 }
 .activity-figure { font-family: var(--font-mono); font-size: 21px; font-weight: 600; color: var(--ink); }
 .activity-caption { font-size: 11px; color: var(--ink-mute); margin-top: 4px; font-weight: 500; }
+
+/* Sales Funnel's Proposal Funnel row — same card look as .activity-item
+   (reused directly: .activity-item/.activity-bar/.activity-figure/
+   .activity-caption), just a 3-up grid instead of Deal Activity's 6-up,
+   since this row always has exactly 3 cards (sent/progressed/lost). */
+.proposal-funnel-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 18px 24px 22px;
+}
 
 /* --------------------------------- PIPELINE ------------------------------ */
 
@@ -1290,14 +1303,16 @@ thead th.num-head { text-align: right; }
 
 .modal-narrow { max-width: 440px; }
 
-/* Sales Funnel — Advisory Proposal onward click-through (deal name list). */
-.funnel-tier-deal-list { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
-.funnel-tier-deal-item {
+/* Shared deal-list modal (openDealListModal(), app.js) — Sales Funnel tier
+   click-through, Overview Pipeline-by-Stage bars, Overview Deal Activity
+   cards. Plain name buttons; clicking one opens the real deal drawer. */
+.deal-list { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.deal-list-item {
   display: block; width: 100%; text-align: left; padding: 9px 12px; border-radius: 8px;
   border: none; background: none; font-family: var(--font-body); font-size: 13px; color: var(--ink);
   cursor: pointer; transition: background 0.12s ease;
 }
-.funnel-tier-deal-item:hover { background: var(--bg-inset); color: var(--blue); }
+.deal-list-item:hover { background: var(--bg-inset); color: var(--blue); }
 
 .assumption-page-group { margin-bottom: 6px; }
 .assumption-page-group:last-child { margin-bottom: 0; }
@@ -1510,6 +1525,7 @@ thead th.num-head { text-align: right; }
   .sync-status, .user-status { justify-content: center; }
   .kpi-row { grid-template-columns: repeat(2, 1fr); }
   .activity-row { grid-template-columns: repeat(2, 1fr); }
+  .proposal-funnel-row { grid-template-columns: 1fr; }
   .content { padding: 20px 16px 48px; }
   .topbar { padding: 14px 16px; }
   .channel-compare { grid-template-columns: 1fr; }

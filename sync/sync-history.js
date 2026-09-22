@@ -27,31 +27,46 @@ async function main() {
   if (readErr) { console.error('❌ Error leyendo raw.deals:', readErr.message); return; }
   console.log(`  ${deals.length} deals actuales.`);
 
-  // 2. Trae la foto más reciente ANTERIOR a hoy, por deal, para saber el stage previo
+  // 2. Trae la foto más reciente ANTERIOR a hoy, por deal, para saber el stage
+  //    Y el outcome previos — una sola lectura, se compara todo contra ella
+  //    (no hace falta un segundo viaje a Supabase para el outcome).
   const { data: prevSnaps, error: snapErr } = await historyDb
     .from('deal_snapshots')
-    .select('notion_page_id, stage, snapshot_date')
+    .select('notion_page_id, stage, outcome, snapshot_date')
     .lt('snapshot_date', today)
     .order('snapshot_date', { ascending: false });
   if (snapErr) { console.error('❌ Error leyendo snapshots previos:', snapErr.message); return; }
 
-  // Nos quedamos con el stage de la foto MÁS reciente de cada deal
+  // Nos quedamos con el stage/outcome de la foto MÁS reciente de cada deal
   const prevStageByDeal = {};
+  const prevOutcomeByDeal = {};
   for (const s of (prevSnaps || [])) {
     if (!(s.notion_page_id in prevStageByDeal)) {
-      prevStageByDeal[s.notion_page_id] = s.stage;   // el primero que aparece = el más reciente
+      prevStageByDeal[s.notion_page_id] = s.stage;     // el primero que aparece = el más reciente
+      prevOutcomeByDeal[s.notion_page_id] = s.outcome;
     }
   }
 
-  // 3. Detecta cambios de stage → eventos
+  // 3. Detecta cambios de stage Y de outcome → eventos (mismo loop, misma foto previa)
   const events = [];
+  const outcomeEvents = [];
   for (const d of deals) {
-    const prev = prevStageByDeal[d.notion_page_id];
-    if (prev !== undefined && prev !== d.stage) {
+    const prevStage = prevStageByDeal[d.notion_page_id];
+    if (prevStage !== undefined && prevStage !== d.stage) {
       events.push({
         notion_page_id: d.notion_page_id,
-        from_stage: prev,
+        from_stage: prevStage,
         to_stage: d.stage,
+        changed_at: today,
+      });
+    }
+
+    const prevOutcome = prevOutcomeByDeal[d.notion_page_id];
+    if (prevOutcome !== undefined && prevOutcome !== d.outcome) {
+      outcomeEvents.push({
+        notion_page_id: d.notion_page_id,
+        from_outcome: prevOutcome,
+        to_outcome: d.outcome,
         changed_at: today,
       });
     }
@@ -62,6 +77,12 @@ async function main() {
     if (evErr) { console.error('❌ Error insertando eventos:', evErr.message); return; }
   }
   console.log(`  ${events.length} cambios de stage detectados.`);
+
+  if (outcomeEvents.length > 0) {
+    const { error: outEvErr } = await historyDb.from('deal_outcome_events').insert(outcomeEvents);
+    if (outEvErr) { console.error('❌ Error insertando eventos de outcome:', outEvErr.message); return; }
+  }
+  console.log(`  ${outcomeEvents.length} cambios de outcome detectados.`);
 
   // 4. Toma la foto de hoy (upsert: una por deal por día, no duplica si ya corrió)
   const snapshots = deals.map(d => ({

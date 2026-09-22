@@ -71,10 +71,10 @@ const INFO_TEXT = {
   'ov-avg-listing': { text: 'Mean Transaction Value (the underlying asset price, never SDAHC revenue) across every deal tagged Brokerage / Divestment, any outcome — a typical listing size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
   'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
   'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly. Paused deals contribute to none of these. createdDate (used for New Opportunities) is Notion\'s page-creation date — for bulk-migrated deals that\'s the migration date, not the real deal date, so this can show a migration-driven spike.', assumptionId: 'value-added-rate' },
-  'ov-pipeline-chart': { text: 'Every non-Paused deal grouped by its current stage, regardless of outcome — Won and Lost deals stay visible at the stage they froze at. Paused deals are excluded entirely (zero count, zero value) per the non-negotiable rule that they never contribute to any pipeline total.', assumptionId: 'paused-exclusion' },
+  'ov-pipeline-chart': { text: 'Every deal still in play grouped by its current stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely (zero count, zero value): a Lost deal is a finished, unsuccessful outcome, not part of an active pipeline picture, and Paused carries zero weight everywhere per the non-negotiable rule. Both still appear, colour-coded, in Pipeline\'s deals table below — this chart is about pipeline shape, not a record of every deal that ever existed. Click a bar to see which deals make it up.', assumptionId: 'pipeline-funnel-lost-exclusion' },
 
   // Pipeline
-  'pipeline-flow': { text: 'Same per-stage grouping as Overview\'s Pipeline by Stage — Won/Lost/Paused deals stay visible at their frozen stage. Toggle changes what each stage card reports.' },
+  'pipeline-flow': { text: 'Same per-stage grouping as Overview\'s Pipeline by Stage, same exclusions — In Progress and Won deals only; Paused AND Lost are excluded entirely (zero count, zero value), though both still appear, colour-coded, in the deals table below. Toggle changes what each stage card reports.', assumptionId: 'pipeline-funnel-lost-exclusion' },
   'pipeline-score': { text: 'The table\'s order is fixed to Score, descending, and isn\'t user-sortable — Score is meant to mirror Notion\'s own Score-sorted view exactly.', assumptionId: 'pipeline-score-mock' },
 
   // Revenue
@@ -88,7 +88,7 @@ const INFO_TEXT = {
   'rev-time-chart': { text: 'Actual bars read real closeDate history. Forecast bars bucket each open deal into a month using an estimated close date derived from its probability — directional only, Notion doesn\'t track an expected close date.', assumptionId: 'estimated-close-date' },
   'rev-source-chart': { text: 'SDAHC Revenue split by fee type across Won + In Progress deals. Lost and Paused are excluded — Paused carries zero value. Only Brokerage and Advisory are shown — Conjunction and Referral fees aren\'t columns in the current Notion sync, so they can\'t be split out from real data yet.', assumptionId: 'paused-exclusion' },
   'rev-concentration': { text: 'Share of total Won + In Progress revenue sitting in the top 3 deals by SDAHC Revenue — a concentration-risk read, same scope as Revenue Composition.', assumptionId: 'revenue-scope' },
-  'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage, across every outcome — the same per-stage data as byStage(), filtered to stages with at least one deal.' },
+  'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely, same rule and same byStage({excludeLost:true}) call as Pipeline by Stage and the Sales Funnel — filtered to stages with at least one qualifying deal.', assumptionId: 'pipeline-funnel-lost-exclusion' },
   'rev-cumulative': { text: 'A business-plan-style pace chart: cumulative Target (annual target ÷ 12, accumulated month by month across the FY) vs. cumulative Actual (settled revenue, accumulated through the current month — the line simply stops at today, since future actuals don\'t exist yet).', assumptionId: 'monthly-target-split' },
   'rev-cumulative-actual': { text: 'Cumulative settled SDAHC Revenue from the start of the FY through today — identical figure to Settled Revenue elsewhere on this page.' },
   'rev-cumulative-target': { text: 'Cumulative plan value through the current month only (not the full annual target) — monthly target × months elapsed so far this FY — so it\'s a fair like-for-like comparison against Cumulative Actual.', assumptionId: 'monthly-target-split' },
@@ -106,6 +106,7 @@ const INFO_TEXT = {
   // Sales Funnel
   'funnel-chart': { text: 'CUMULATIVE, not a snapshot: each tier counts every non-Paused deal that reached AT LEAST that stage or further — not deals sitting exactly there today (that\'s what Pipeline\'s Pipeline-by-Stage chart shows). A deal now frozen at a later stage, or Lost from one, still counts in every earlier tier it passed through. In real stage-ID terms: Prospects = every non-Paused deal (stage 0 or later — i.e. all of them). Qualified Opportunities = reached A1 or later. Advisory Proposal = reached A2 or later. Advisory Engagement = reached A3 or later. Transaction Ready = reached A5 (Advisory Complete) or later. Brokerage / Sale Mandate = reached B3 (Appointed & Market Prep) or later. Negotiation = reached B6 or later. Contract = reached B7 (Contract Issued) or later. Settlement = at stage 9 with outcome Won. Because every brokerage stage sits after every advisory stage in the pipeline order, a brokerage deal automatically satisfies every advisory tier too, even one that never visited A1-A5 — read as "reached an equivalent depth via a different service line," not as drop-off. The single most useful number here isn\'t any one tier\'s raw count — it\'s the drop-off % between consecutive tiers (Stage Conversion, alongside), which shows where deals are actually lost. Advisory Proposal onward is clickable — click a bar or table row to see exactly which deals qualify.', assumptionId: 'funnel-tier-mapping' },
   'funnel-table': { text: 'Conversion = this tier\'s count ÷ the previous tier\'s count. Dropped = 1 − conversion. Same real, Paused-excluded, cumulative counts as the Conversion Funnel — see that chart\'s info icon for what each tier means in stage-ID terms. Rows from Advisory Proposal onward are clickable.' },
+  'funnel-proposal-outcomes': { text: 'Of every deal that has EVER reached Proposal Sent (A2 Advisory or B2 Brokerage, whichever track the deal is on) — Proposal Sent: that count, any current outcome. Progressed Further: of those, still In Progress at a stage after Proposal Sent, or Won outright. Lost: of those, Lost. A deal still sitting exactly at Proposal Sent, not yet moved either way, counts in Proposal Sent only — Progressed + Lost is not expected to equal Proposal Sent. Paused deals never enter Proposal Sent, same as every other pipeline aggregate. Click any card to see the deals.', assumptionId: 'funnel-proposal-outcomes' },
   'prospects-chart': { text: 'New Prospects = mock deals created that month, by createdDate. Lost = mock deals whose closeDate (in that month) has outcome Lost. Trailing 14 months. Mock — not yet reconnected to real data.' },
   'source-groups': { text: 'Every MOCK prospect source rolled into two channels (Relationship-led vs Marketing-sourced, per PROSPECT_SOURCES). Qualified = reached stage A1/B1 or later. No source field exists in the real Notion data — see ASSUMPTIONS \'prospect-source-mock\'.', assumptionId: 'prospect-source-mock' },
   'source-detail': { text: 'Same "qualified" definition as the channel comparison, broken out per individual MOCK source.', assumptionId: 'prospect-source-mock' },
@@ -351,7 +352,7 @@ function renderOverview() {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Pipeline by Stage${infoIcon('ov-pipeline-chart')}</h3>
-            <div class="panel-sub">All active + closed deals, excluding Paused</div>
+            <div class="panel-sub">In Progress + Won deals only, excluding Paused and Lost · click a bar for the deal list</div>
           </div>
         </div>
         <div class="chart-body" style="padding-top:16px;">
@@ -370,7 +371,7 @@ function renderOverview() {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Deal Activity</h3>
-          <div class="panel-sub">New opportunity entering the funnel vs. deals leaving it, for the selected period</div>
+          <div class="panel-sub">New opportunity entering the funnel vs. deals leaving it, for the selected period · click a card for the deal list</div>
         </div>
       </div>
       <div class="activity-row" id="activity-row"></div>
@@ -458,23 +459,33 @@ function renderKpiRow() {
   renderKpiCards('kpi-row', cards);
 }
 
+/* Matches the period-control labels (7D/30D/Quarter/YTD) with the actual
+   window periodRange() applies, for the deal-list modal's subtitle. */
+const OVERVIEW_PERIOD_LABELS = { '7d': 'trailing 7 days', '30d': 'trailing 30 days', quarter: 'quarter-to-date', ytd: 'fiscal-year-to-date' };
+
 function renderActivityRow() {
   const a = RealAggregates.activitySummary(overviewPeriod);
   const items = [
-    { label: 'New Prospects', value: a.newProspects, color: 'var(--stage-prospecting)' },
-    { label: 'Qualified Opportunities', value: a.qualifiedOpportunities, color: 'var(--stage-advisory)' },
-    { label: 'Proposals Sent', value: a.proposalsSent, color: 'var(--blue)' },
-    { label: 'Engagements Won', value: a.engagementsWon, color: 'var(--stage-negotiation)' },
-    { label: 'Deals Lost', value: a.dealsLost, color: 'var(--red)' },
-    { label: 'Deals Settled', value: a.dealsSettled, color: 'var(--green)' },
+    { label: 'New Prospects', value: a.newProspects, color: 'var(--stage-prospecting)', deals: a.newProspectsDeals },
+    { label: 'Qualified Opportunities', value: a.qualifiedOpportunities, color: 'var(--stage-advisory)', deals: a.qualifiedOpportunitiesDeals },
+    { label: 'Proposals Sent', value: a.proposalsSent, color: 'var(--blue)', deals: a.proposalsSentDeals },
+    { label: 'Engagements Won', value: a.engagementsWon, color: 'var(--stage-negotiation)', deals: a.engagementsWonDeals },
+    { label: 'Deals Lost', value: a.dealsLost, color: 'var(--red)', deals: a.dealsLostDeals },
+    { label: 'Deals Settled', value: a.dealsSettled, color: 'var(--green)', deals: a.dealsSettledDeals },
   ];
-  document.getElementById('activity-row').innerHTML = items.map(i => `
-    <div class="activity-item">
+  document.getElementById('activity-row').innerHTML = items.map((i, idx) => `
+    <div class="activity-item clickable" data-idx="${idx}">
       <div class="activity-bar" style="background:${i.color}"></div>
       <div class="activity-figure tabular">${i.value}</div>
       <div class="activity-caption">${i.label}</div>
     </div>
   `).join('');
+  document.querySelectorAll('#activity-row .activity-item').forEach((el, idx) => {
+    el.addEventListener('click', () => {
+      const item = items[idx];
+      openDealListModal(item.label, `${item.value} deal${item.value === 1 ? '' : 's'} · ${OVERVIEW_PERIOD_LABELS[overviewPeriod] || overviewPeriod}`, item.deals);
+    });
+  });
 }
 
 function wirePeriodControl() {
@@ -553,7 +564,7 @@ function renderWaterfallChart() {
 function renderPipelineChart() {
   const el = document.getElementById('pipeline-chart');
   if (!pipelineChartInstance) pipelineChartInstance = echarts.init(el);
-  const rows = RealAggregates.byStage(overviewMetric);
+  const rows = RealAggregates.byStage(overviewMetric, { excludeLost: true });
 
   pipelineChartInstance.setOption({
     grid: { left: 8, right: 16, top: 10, bottom: 56, containLabel: true },
@@ -561,7 +572,7 @@ function renderPipelineChart() {
       trigger: 'axis', axisPointer: { type: 'shadow' },
       formatter: (params) => {
         const row = rows[params[0].dataIndex];
-        return `<strong>${row.stage.label}</strong><br/>${METRIC_LABELS[overviewMetric]}: ${fmtMetric(overviewMetric, row.value)}<br/>${row.count} deal${row.count === 1 ? '' : 's'}`;
+        return `<strong>${row.stage.label}</strong><br/>${METRIC_LABELS[overviewMetric]}: ${fmtMetric(overviewMetric, row.value)}<br/>${row.count} deal${row.count === 1 ? '' : 's'}<br/><span style="color:#94A3B8">Click to see the deals</span>`;
       },
       backgroundColor: '#0A1E36', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 },
     },
@@ -577,9 +588,15 @@ function renderPipelineChart() {
     },
     series: [{
       type: 'bar',
-      data: rows.map(r => ({ value: r.value, itemStyle: { color: STAGE_GROUPS[r.stage.group].color, borderRadius: [4,4,0,0] } })),
+      data: rows.map(r => ({ value: r.value, itemStyle: { color: STAGE_GROUPS[r.stage.group].color, borderRadius: [4,4,0,0] }, cursor: 'pointer' })),
       barWidth: '62%',
     }],
+  });
+
+  pipelineChartInstance.off('click');
+  pipelineChartInstance.on('click', (params) => {
+    const row = rows[params.dataIndex];
+    if (row) openDealListModal(row.stage.label, `${row.count} deal${row.count === 1 ? '' : 's'} in play at this stage · Paused and Lost excluded`, row.deals);
   });
 }
 
@@ -613,7 +630,7 @@ function renderPipelinePage() {
   root.innerHTML = `
     <div class="pipeline-toolbar">
       <div>
-        <div class="panel-sub" style="font-size:13px;">Every stage of the Notion Deals database, coloured by phase (Paused excluded). Metric toggle changes what each stage reports.${infoIcon('pipeline-flow')}</div>
+        <div class="panel-sub" style="font-size:13px;">Every stage of the Notion Deals database, coloured by phase (Paused and Lost excluded — still in the deals table below). Metric toggle changes what each stage reports.${infoIcon('pipeline-flow')}</div>
       </div>
       <div class="seg-control" id="pipeline-metric-control">
         <button class="seg-btn" data-metric="count">Count</button>
@@ -676,7 +693,7 @@ function wirePipelineMetricControl() {
 }
 
 function renderPipelineFlow() {
-  const rows = RealAggregates.byStage(pipelineMetric);
+  const rows = RealAggregates.byStage(pipelineMetric, { excludeLost: true });
   const maxVal = Math.max(1, ...rows.map(r => r.value));
 
   // group consecutive stages by their stage.group
@@ -912,7 +929,7 @@ function renderRevenuePage() {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Revenue by Stage${infoIcon('rev-by-stage')}</h3>
-            <div class="panel-sub">Expected SDAHC revenue currently held at each stage</div>
+            <div class="panel-sub">Expected SDAHC revenue currently held at each stage · excluding Paused and Lost</div>
           </div>
         </div>
         <div id="revenue-stage-body" style="padding:14px 24px 20px;"></div>
@@ -1121,7 +1138,7 @@ function renderConcentration() {
 }
 
 function renderRevenueByStageList() {
-  const rows = RealAggregates.byStage('revenue').filter(r => r.count > 0);
+  const rows = RealAggregates.byStage('revenue', { excludeLost: true }).filter(r => r.count > 0);
   const maxVal = Math.max(1, ...rows.map(r => r.revenue));
   document.getElementById('revenue-stage-body').innerHTML = rows.map(r => `
     <div class="stage-list-row">
@@ -1612,6 +1629,16 @@ function renderFunnelPage() {
       </div>
     </div>
 
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Proposal Funnel <span class="scope-tag real">Real</span>${infoIcon('funnel-proposal-outcomes')}</h3>
+          <div class="panel-sub">Deals that reached Proposal Sent or beyond · click a card for the deal list</div>
+        </div>
+      </div>
+      <div class="proposal-funnel-row" id="proposal-funnel-row"></div>
+    </div>
+
     <div class="panel-sub" style="font-size:13px; margin:28px 0 6px;"><span class="scope-tag dashboard">Illustrative / Mock</span> Everything below has no source field in the real Notion data today — see ASSUMPTIONS 'prospect-source-mock'.</div>
 
     <div class="panel section-gap">
@@ -1647,6 +1674,7 @@ function renderFunnelPage() {
 
   renderFunnelChart();
   renderFunnelTable();
+  renderProposalFunnelRow();
   renderProspectsChart();
   renderSourceGroups();
   renderSourceDetail();
@@ -1729,51 +1757,87 @@ function renderFunnelTable() {
   });
 }
 
-/* ---------------------- SALES FUNNEL — TIER DEAL LIST MODAL ----------------
+/* Proposal Funnel — three clickable cards (sent / progressed / lost), same
+   pattern as Overview's Deal Activity row (renderActivityRow, above): each
+   card's number and its click-through deal list come from the exact same
+   filtered array in RealAggregates.proposalFunnel() (supabase-data.js), so
+   they can never diverge. Not period-scoped — this is a lifetime measure of
+   every deal that has ever reached proposal sent, same as the Conversion
+   Funnel above it. */
+function renderProposalFunnelRow() {
+  const f = RealAggregates.proposalFunnel();
+  const items = [
+    { label: 'Proposal Sent', value: f.sent, color: 'var(--blue)', deals: f.sentDeals, sub: 'reached Advisory or Brokerage Proposal Sent or later' },
+    { label: 'Progressed Further', value: f.progressed, color: 'var(--green)', deals: f.progressedDeals, sub: 'still In Progress beyond Proposal Sent, or Won' },
+    { label: 'Lost', value: f.lost, color: 'var(--red)', deals: f.lostDeals, sub: 'lost after reaching Proposal Sent' },
+  ];
+  document.getElementById('proposal-funnel-row').innerHTML = items.map((i, idx) => `
+    <div class="activity-item clickable" data-idx="${idx}">
+      <div class="activity-bar" style="background:${i.color}"></div>
+      <div class="activity-figure tabular">${i.value}</div>
+      <div class="activity-caption">${i.label}</div>
+    </div>
+  `).join('');
+  document.querySelectorAll('#proposal-funnel-row .activity-item').forEach((el, idx) => {
+    el.addEventListener('click', () => {
+      const item = items[idx];
+      openDealListModal(item.label, `${item.value} deal${item.value === 1 ? '' : 's'} · ${item.sub}`, item.deals);
+    });
+  });
+}
+
+/* ------------------------- SHARED DEAL LIST MODAL --------------------------
    Reuses the same generic .modal-overlay/.modal markup/CSS as the
    Assumptions Register modal (a separate DOM instance, not the same one —
-   see index.html) rather than inventing a new component. Lists just the
-   deal NAMES for one funnel tier, using the exact `deals` array
-   RealAggregates.funnelStages() already filtered for that tier's own count
-   — the list length always matches the tier's displayed number by
-   construction, never a second, potentially-diverging computation. Each
-   name opens the existing real deal drawer (openRealDealDrawer) — this
+   see index.html) rather than inventing a new component per feature. One
+   generic function, three callers: Sales Funnel's tier click-through
+   (openFunnelTierModal, below), Overview's Pipeline-by-Stage bars, and
+   Overview's Deal Activity cards (both in the OVERVIEW PAGE section). Each
+   caller passes the exact `deals` array its own displayed number was
+   computed from — same discipline everywhere: the list length can never
+   diverge from the count next to it, because there is only ever one filter,
+   not a count-side one and a list-side one that could drift apart.
+
+   Each name opens the existing real deal drawer (openRealDealDrawer) — this
    modal closes first, since the drawer and this modal would otherwise stack
    (the drawer sits at a lower z-index, meant to layer under the topbar/
    popovers, not under another modal's dimmed overlay). */
-function openFunnelTierModal(tierKey) {
-  const rows = RealAggregates.funnelStages();
-  const row = rows.find(r => r.key === tierKey);
-  if (!row || !isFunnelTierClickable(tierKey)) return;
+function openDealListModal(title, subtitle, deals) {
+  document.getElementById('deal-list-modal-title').textContent = title;
+  document.getElementById('deal-list-modal-sub').textContent = subtitle;
 
-  document.getElementById('funnel-tier-modal-title').textContent = row.label;
-  document.getElementById('funnel-tier-modal-sub').textContent =
-    `${row.count} deal${row.count === 1 ? '' : 's'} that reached this stage or later · Paused excluded`;
+  const sorted = [...deals].sort((a, b) => a.name.localeCompare(b.name));
+  document.getElementById('deal-list-modal-body').innerHTML = sorted.length
+    ? `<div class="deal-list">${sorted.map(d => `<button class="deal-list-item" data-id="${d.id}">${d.name}</button>`).join('')}</div>`
+    : `<div class="panel-sub">No deals currently qualify.</div>`;
 
-  const sorted = [...row.deals].sort((a, b) => a.name.localeCompare(b.name));
-  document.getElementById('funnel-tier-modal-body').innerHTML = sorted.length
-    ? `<div class="funnel-tier-deal-list">${sorted.map(d => `<button class="funnel-tier-deal-item" data-id="${d.id}">${d.name}</button>`).join('')}</div>`
-    : `<div class="panel-sub">No deals currently qualify for this tier.</div>`;
-
-  document.querySelectorAll('#funnel-tier-modal-body .funnel-tier-deal-item').forEach(btn => {
+  document.querySelectorAll('#deal-list-modal-body .deal-list-item').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
-      closeFunnelTierModal();
+      closeDealListModal();
       openRealDealDrawer(id);
     });
   });
 
-  document.getElementById('funnel-tier-overlay').classList.add('open');
+  document.getElementById('deal-list-overlay').classList.add('open');
 }
-function closeFunnelTierModal() {
-  document.getElementById('funnel-tier-overlay').classList.remove('open');
+function closeDealListModal() {
+  document.getElementById('deal-list-overlay').classList.remove('open');
 }
-function initFunnelTierModal() {
-  document.getElementById('funnel-tier-close').addEventListener('click', closeFunnelTierModal);
-  document.getElementById('funnel-tier-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'funnel-tier-overlay') closeFunnelTierModal();
+function initDealListModal() {
+  document.getElementById('deal-list-close').addEventListener('click', closeDealListModal);
+  document.getElementById('deal-list-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'deal-list-overlay') closeDealListModal();
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeFunnelTierModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDealListModal(); });
+}
+
+/* Sales Funnel tier click-through — thin wrapper around the shared modal. */
+function openFunnelTierModal(tierKey) {
+  const rows = RealAggregates.funnelStages();
+  const row = rows.find(r => r.key === tierKey);
+  if (!row || !isFunnelTierClickable(tierKey)) return;
+  openDealListModal(row.label, `${row.count} deal${row.count === 1 ? '' : 's'} that reached this stage or later · Paused and Lost excluded`, row.deals);
 }
 
 function renderProspectsChart() {
@@ -2714,7 +2778,7 @@ function bootDashboard() {
   initDrawer();
   initEngagementDrawer();
   initAssumptionsModal();
-  initFunnelTierModal();
+  initDealListModal();
   initInfoIcons();
 
   // Overview is the only real-data page rendered here — it's the default

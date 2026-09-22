@@ -382,6 +382,11 @@ const RealAggregates = {
      use each deal's own closeDate instead of the cohort, exactly like the
      mock; both naturally exclude Paused since isLost/isWon are false for a
      Paused deal. */
+  /* Every count below is paired with the `*Deals` array it was counted
+     from, so Overview's Deal Activity click-through (app.js) always shows
+     exactly the deals behind the number, never a second, separately-
+     computed list that could drift from it — same discipline as
+     byStage()/funnelStages(). */
   activitySummary: (periodKey) => {
     const { start, end } = periodRange(periodKey);
     const cohort = REAL_DEALS.filter(d => !d.isPaused && inRange(d.createdDate, start, end));
@@ -390,24 +395,36 @@ const RealAggregates = {
       if (isTrack(d, 'brokerage')) return STAGE_INDEX[d.stage] >= STAGE_INDEX[brokerageStage];
       return STAGE_INDEX[d.stage] >= STAGE_INDEX['A1'];
     };
+    const qualifiedDeals = cohort.filter(d => reached(d, 'A1', 'B1'));
+    const proposalsSentDeals = cohort.filter(d => reached(d, 'A2', 'B2'));
+    const engagementsWonDeals = cohort.filter(d => reached(d, 'A3', 'B3'));
+    const dealsLostDeals = REAL_DEALS.filter(d => d.isLost && inRange(d.closeDate, start, end));
+    const dealsSettledDeals = REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end));
     return {
-      newProspects: cohort.length,
-      qualifiedOpportunities: cohort.filter(d => reached(d, 'A1', 'B1')).length,
-      proposalsSent: cohort.filter(d => reached(d, 'A2', 'B2')).length,
-      engagementsWon: cohort.filter(d => reached(d, 'A3', 'B3')).length,
-      dealsLost: REAL_DEALS.filter(d => d.isLost && inRange(d.closeDate, start, end)).length,
-      dealsSettled: REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end)).length,
+      newProspects: cohort.length, newProspectsDeals: cohort,
+      qualifiedOpportunities: qualifiedDeals.length, qualifiedOpportunitiesDeals: qualifiedDeals,
+      proposalsSent: proposalsSentDeals.length, proposalsSentDeals,
+      engagementsWon: engagementsWonDeals.length, engagementsWonDeals,
+      dealsLost: dealsLostDeals.length, dealsLostDeals,
+      dealsSettled: dealsSettledDeals.length, dealsSettledDeals,
     };
   },
 
   /* Non-negotiable rule: Paused deals never contribute to any financial or
-     pipeline total, including this chart's per-stage totals — so unlike the
-     mock's byStage() (which intentionally includes Paused for a structural
-     picture — see INFO_TEXT 'ov-pipeline-chart' in the mock), Paused rows are
-     filtered out here entirely, not just zero-valued. */
-  byStage: (metric) => {
+     pipeline total, including this chart's per-stage totals — Paused rows
+     are filtered out here entirely, not just zero-valued, for every caller.
+
+     `excludeLost` (default false) additionally drops Lost deals — passed by
+     all three callers of byStage() in this app: Overview's and Pipeline's
+     "Pipeline by Stage" charts, and Revenue's "Revenue by Stage" list (see
+     ASSUMPTIONS 'pipeline-funnel-lost-exclusion', which now covers all
+     three). The default stays false rather than being flipped, so any
+     future caller has to opt in deliberately instead of inheriting the
+     exclusion silently. */
+  byStage: (metric, opts = {}) => {
+    const { excludeLost = false } = opts;
     return STAGES.map(stage => {
-      const deals = REAL_DEALS.filter(d => d.stage === stage.id && !d.isPaused);
+      const deals = REAL_DEALS.filter(d => d.stage === stage.id && !d.isPaused && !(excludeLost && d.isLost));
       const count = deals.length;
       const transactionValue = deals.reduce((s, d) => s + d.transactionValue, 0);
       const revenue = deals.reduce((s, d) => s + d.sdahcRevenue, 0);
@@ -606,18 +623,27 @@ const RealAggregates = {
      data itself — the same STAGE_INDEX a deal's furthest-reached stage
      already needs to resolve is a fully real, derivable "has this deal
      reached at least this depth" test, same rationale the mock version
-     documented. Two differences from the mock, both deliberate:
-       - Paused deals are excluded from every tier's count (the
-         non-negotiable rule) — the mock version didn't exclude them, since
-         that rule postdates it.
+     documented. Differences from the mock, all deliberate:
+       - Paused AND Lost deals are excluded from EVERY tier's count, not just
+         Settlement — see ASSUMPTIONS 'pipeline-funnel-lost-exclusion'. A
+         funnel is meant to represent deals still in play; a deal that
+         reached "DD Engaged" and was later Lost shouldn't keep inflating
+         that tier forever. The mock version excluded neither, since both
+         rules postdate it. Settlement's own `&& d.isWon` check already
+         excluded Lost deals on its own (isWon/isLost are mutually
+         exclusive), so the explicit `|| d.isLost` guard below is a no-op
+         for that one tier specifically — added anyway so every tier states
+         its exclusions the same way, rather than one tier relying on an
+         reader noticing the implication.
        - No "Market / Relationships" top row. That figure was never a stage
          count at all — a flat 60-relationship editorial guess with no
          Notion source whatsoever (see the now-removed
          'market-relationships-estimate' assumption) — carrying a fabricated
          constant into the real funnel just to preserve the old shape would
          undermine the entire point of this page being real. The funnel now
-         starts at Prospects (stage 0) and its own count is the true max. */
-  /* `deals` is included on every row (not just `count`) so the funnel's
+         starts at Prospects (stage 0) and its own count is the true max.
+
+     `deals` is included on every row (not just `count`) so the funnel's
      click-through deal list (app.js's openFunnelTierModal()) reads the exact
      same filtered array the tier's own count was computed from — one
      predicate, so the list can never show a different number of names than
@@ -625,7 +651,7 @@ const RealAggregates = {
   funnelStages: () => {
     const rows = FUNNEL_TIERS.map(tier => {
       const deals = REAL_DEALS.filter(d => {
-        if (d.isPaused) return false;
+        if (d.isPaused || d.isLost) return false;
         const idx = STAGE_INDEX[d.stage];
         if (idx == null) return false;
         if (tier.key === 'settlement') return idx >= tier.minIndex && d.isWon;
@@ -638,5 +664,67 @@ const RealAggregates = {
       const conversion = prev ? row.count / prev : null;
       return { ...row, conversionFromPrevious: conversion, dropoffFromPrevious: conversion === null ? null : 1 - conversion };
     });
+  },
+
+  /* --------------------- SALES FUNNEL: PROPOSAL FUNNEL ---------------------
+     Lifetime measure (not scoped to any period control, same as
+     funnelStages() above): of every deal that has EVER reached "proposal
+     sent" — A2 (Advisory Proposal Sent) for advisory-track deals, B2
+     (Brokerage Proposal Sent) for brokerage-track deals — how many
+     subsequently progressed further vs. ended up Lost, as of today.
+
+     Reuses the exact per-track STAGE_INDEX threshold shape already
+     established by activitySummary()'s `reached()` helper above (isTrack()/
+     STAGE_INDEX, both from data.js): advisory-track deals are bounded above
+     by B1 (so a deal that has moved into brokerage stages is read via the
+     brokerage branch instead, not double-counted via the advisory one);
+     deals tagged neither track fall back to the A1 threshold, same fallback
+     activitySummary() already uses. Paused deals never enter `sent` — the
+     non-negotiable rule, same as every other pipeline aggregate here.
+
+     Three buckets, each carrying its own `deals` array (not just a count),
+     same discipline as byStage()/funnelStages()/activitySummary() — the
+     click-through modal can never show a different list than the number
+     beside it:
+       sent       — reached proposal-sent (their track's A2/B2) or later,
+                    current outcome any (In Progress, Won or Lost).
+       progressed — of `sent`: Won outright (checked via isWon directly, not
+                    stage index — a pure-advisory Won deal's stage can sit at
+                    A5 rather than the brokerage-only '9' Settlement id, see
+                    FUNNEL_TIERS' settlement-tier comment in data.js), OR
+                    still In Progress at a stage AFTER their own proposal-
+                    sent threshold.
+       lost       — of `sent`: isLost.
+     `sent` is NOT simply progressed+lost — a deal still sitting exactly at
+     its proposal-sent stage, neither moved on nor lost yet, is counted in
+     `sent` only. That's intentional, not a gap: those deals are the ones
+     still awaiting a response. */
+  proposalFunnel: () => {
+    const reachedProposal = (d) => {
+      const idx = STAGE_INDEX[d.stage];
+      if (idx == null) return false;
+      if (isTrack(d, 'advisory')) return idx >= STAGE_INDEX['A2'] && idx < STAGE_INDEX['B1'];
+      if (isTrack(d, 'brokerage')) return idx >= STAGE_INDEX['B2'];
+      return idx >= STAGE_INDEX['A1'];
+    };
+    const progressedFurther = (d) => {
+      if (d.isWon) return true;
+      if (!d.isInProgress) return false;
+      const idx = STAGE_INDEX[d.stage];
+      if (idx == null) return false;
+      if (isTrack(d, 'advisory')) return idx > STAGE_INDEX['A2'] && idx < STAGE_INDEX['B1'];
+      if (isTrack(d, 'brokerage')) return idx > STAGE_INDEX['B2'];
+      return idx > STAGE_INDEX['A1'];
+    };
+
+    const sentDeals = REAL_DEALS.filter(d => !d.isPaused && reachedProposal(d));
+    const progressedDeals = sentDeals.filter(progressedFurther);
+    const lostDeals = sentDeals.filter(d => d.isLost);
+
+    return {
+      sent: sentDeals.length, sentDeals,
+      progressed: progressedDeals.length, progressedDeals,
+      lost: lostDeals.length, lostDeals,
+    };
   },
 };

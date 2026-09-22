@@ -240,19 +240,23 @@
   </div>
 </div>
 
-<!-- ===================== SALES FUNNEL — TIER DEAL LIST MODAL ================= -->
-<div class="modal-overlay" id="funnel-tier-overlay">
-  <div class="modal modal-narrow" id="funnel-tier-modal" role="dialog" aria-labelledby="funnel-tier-modal-title">
+<!-- ===================== DEAL LIST MODAL (shared) ============================
+     One generic "here are the deal names behind this number" modal, reused
+     by Sales Funnel's tier click-through, Overview's Pipeline-by-Stage bars,
+     and Overview's Deal Activity cards (see openDealListModal() in app.js) —
+     not a separate modal per feature. ============================ -->
+<div class="modal-overlay" id="deal-list-overlay">
+  <div class="modal modal-narrow" id="deal-list-modal" role="dialog" aria-labelledby="deal-list-modal-title">
     <div class="modal-head">
       <div>
-        <div id="funnel-tier-modal-title" class="modal-title"></div>
-        <div class="modal-sub" id="funnel-tier-modal-sub"></div>
+        <div id="deal-list-modal-title" class="modal-title"></div>
+        <div class="modal-sub" id="deal-list-modal-sub"></div>
       </div>
-      <button class="drawer-close" id="funnel-tier-close" aria-label="Close" style="position:static; background:var(--bg-inset); color:var(--ink-mute);">
+      <button class="drawer-close" id="deal-list-close" aria-label="Close" style="position:static; background:var(--bg-inset); color:var(--ink-mute);">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
-    <div class="modal-body" id="funnel-tier-modal-body"></div>
+    <div class="modal-body" id="deal-list-modal-body"></div>
   </div>
 </div>
 

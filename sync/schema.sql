@@ -163,11 +163,24 @@ create table history.deal_stage_events (
   detected_at       timestamptz default now()
 );
 
+-- Log de cambios de outcome (In Progress/Won/Lost/Paused), detectados
+-- comparando fotos exactamente igual que deal_stage_events arriba.
+create table history.deal_outcome_events (
+  id                bigint generated always as identity primary key,
+  notion_page_id    text not null,
+  from_outcome      text,                            -- null si es el primero
+  to_outcome        text,
+  changed_at        date not null,
+  detected_at       timestamptz default now()
+);
+
 create index idx_snapshots_deal on history.deal_snapshots (notion_page_id);
 create index idx_stage_events_deal on history.deal_stage_events (notion_page_id);
+create index idx_outcome_events_deal on history.deal_outcome_events (notion_page_id);
 
 alter table history.deal_snapshots enable row level security;
 alter table history.deal_stage_events enable row level security;
+alter table history.deal_outcome_events enable row level security;
 
 grant usage on schema history to service_role;
 grant all privileges on all tables in schema history to service_role;
