@@ -72,7 +72,7 @@ const INFO_TEXT = {
   'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
   'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly. Paused deals contribute to none of these. createdDate (used for New Opportunities) is Notion\'s page-creation date — for bulk-migrated deals that\'s the migration date, not the real deal date, so this can show a migration-driven spike.', assumptionId: 'value-added-rate' },
   'ov-pipeline-chart': { text: 'Every deal still in play grouped by its current stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely (zero count, zero value): a Lost deal is a finished, unsuccessful outcome, not part of an active pipeline picture, and Paused carries zero weight everywhere per the non-negotiable rule. Both still appear, colour-coded, in Pipeline\'s deals table below — this chart is about pipeline shape, not a record of every deal that ever existed. Click a bar to see which deals make it up.', assumptionId: 'pipeline-funnel-lost-exclusion' },
-  'ov-proposal-funnel': { text: 'Of every deal that has EVER reached Proposal Sent (A2 Advisory or B2 Brokerage, whichever track it\'s on) — Sent: that count. Progressed: of those, still In Progress or Won. Lost: of those, Lost OR Paused — a Paused deal counts as lost for this KPI specifically, since in practice it\'s dead until reactivated. Sent always equals Progressed + Lost, unlike Sales Funnel\'s own Proposal Funnel card. Click any number to see the deals.', assumptionId: 'proposal-funnel-kpi-paused-as-lost' },
+  'ov-proposal-funnel': { text: 'Of every deal that reached Proposal Sent (A2 Advisory or B2 Brokerage, whichever track it\'s on) AND was created in the selected financial year — Sent: that count. Progressed: of those, still In Progress or Won. Lost: of those, Lost OR Paused — a Paused deal counts as lost for this KPI specifically, since in practice it\'s dead until reactivated. Sent always equals Progressed + Lost, unlike Sales Funnel\'s own Proposal Funnel card (which is lifetime, not FY-filtered). The FY filter reads each deal\'s CREATED date in Notion, not the date a proposal was actually sent — Notion has no separate field for that, so this is an approximation, not an exact measure. Use the ‹ › switcher to move between financial years (matches Settings → Financial Year Start); "next" disables once you\'re back at the current FY. Click any number to see the deals.', assumptionId: 'proposal-funnel-kpi-paused-as-lost' },
 
   // Pipeline
   'pipeline-flow': { text: 'Same per-stage grouping as Overview\'s Pipeline by Stage, same exclusions — In Progress and Won deals only; Paused AND Lost are excluded entirely (zero count, zero value), though both still appear, colour-coded, in the deals table below. Toggle changes what each stage card reports.', assumptionId: 'pipeline-funnel-lost-exclusion' },
@@ -89,7 +89,7 @@ const INFO_TEXT = {
   'rev-time-chart': { text: 'Actual bars read real closeDate history. Forecast bars bucket each open deal into a month using an estimated close date derived from its probability — directional only, Notion doesn\'t track an expected close date.', assumptionId: 'estimated-close-date' },
   'rev-source-chart': { text: 'SDAHC Revenue split by fee type across Won + In Progress deals. Lost and Paused are excluded — Paused carries zero value. Only Brokerage and Advisory are shown — Conjunction and Referral fees aren\'t columns in the current Notion sync, so they can\'t be split out from real data yet.', assumptionId: 'paused-exclusion' },
   'rev-concentration': { text: 'Share of total Won + In Progress revenue sitting in the top 3 deals by SDAHC Revenue — a concentration-risk read, same scope as Revenue Composition.', assumptionId: 'revenue-scope' },
-  'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely, same rule and same byStage({excludeLost:true}) call as Pipeline by Stage and the Sales Funnel — filtered to stages with at least one qualifying deal.', assumptionId: 'pipeline-funnel-lost-exclusion' },
+  'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely, same rule and same byStage({excludeLost:true}) call as Pipeline by Stage and the Sales Funnel — filtered to stages with at least one qualifying deal. Click a row to see the deals behind it.', assumptionId: 'pipeline-funnel-lost-exclusion' },
   'rev-cumulative': { text: 'A business-plan-style pace chart: cumulative Target (annual target ÷ 12, accumulated month by month across the FY) vs. cumulative Actual (settled revenue, accumulated through the current month — the line simply stops at today, since future actuals don\'t exist yet).', assumptionId: 'monthly-target-split' },
   'rev-cumulative-actual': { text: 'Cumulative settled SDAHC Revenue from the start of the FY through today — identical figure to Settled Revenue elsewhere on this page.' },
   'rev-cumulative-target': { text: 'Cumulative plan value through the current month only (not the full annual target) — monthly target × months elapsed so far this FY — so it\'s a fair like-for-like comparison against Cumulative Actual.', assumptionId: 'monthly-target-split' },
@@ -306,6 +306,10 @@ function initSyncStatus() {
 
 let overviewPeriod = 'ytd';
 let overviewMetric = 'revenue';
+/* 0 = current FY, -1 = previous FY, etc. Never > 0 — a future FY can't have
+   any created deals yet, so "next" is disabled once back at 0. See
+   proposalFunnelFyBounds() below. */
+let proposalFunnelFyOffset = 0;
 let pipelineChartInstance = null;
 let waterfallChartInstance = null;
 
@@ -382,7 +386,12 @@ function renderOverview() {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Proposal Funnel${infoIcon('ov-proposal-funnel')}</h3>
-          <div class="panel-sub">Every deal that ever reached Proposal Sent or later · Sent = Progressed + Lost · click a card for the deal list</div>
+          <div class="panel-sub">Deals that reached Proposal Sent or later and were CREATED in the selected FY · Sent = Progressed + Lost · click a card for the deal list</div>
+        </div>
+        <div class="fy-switcher" id="proposal-funnel-fy-switcher">
+          <button class="fy-switcher-btn" data-fy-nav="-1" aria-label="Previous financial year">‹</button>
+          <span class="fy-switcher-label" id="proposal-funnel-fy-label"></span>
+          <button class="fy-switcher-btn" data-fy-nav="1" aria-label="Next financial year">›</button>
         </div>
       </div>
       <div class="proposal-funnel-row" id="proposal-funnel-kpi-row"></div>
@@ -392,6 +401,7 @@ function renderOverview() {
   renderHero();
   renderKpiRow();
   renderActivityRow();
+  wireProposalFunnelFySwitcher();
   renderProposalFunnelKpiRow();
   wirePeriodControl();
   wireMetricControl();
@@ -500,19 +510,52 @@ function renderActivityRow() {
   });
 }
 
-/* Not period-scoped, unlike Deal Activity above it — a lifetime measure of
-   every deal that ever reached Proposal Sent, same as Sales Funnel's own
-   Proposal Funnel card (renderProposalFunnelRow()). Same click-through
-   discipline: each card's number and its openDealListModal() list come from
-   the exact same filtered array in RealAggregates.proposalFunnelKpi()
-   (supabase-data.js), so they can never diverge — see
-   'proposal-funnel-kpi-paused-as-lost' for why Lost folds in Paused here. */
+/* Reuses fiscalYearBounds() (data.js) unchanged — just feeds it an anchor
+   date shifted by whole years from TODAY, rather than building any new
+   date-range math. Shifting the anchor by exactly N years always lands in
+   the FY N windows away, regardless of fyStartMonth (Settings → Financial
+   Year Start), since every FY spans exactly 12 months. fiscalYearBounds()'s
+   `end` is documented as EXCLUSIVE (first day of the next FY) — callers
+   elsewhere always re-derive a to-date end from periodRange('ytd') instead,
+   so this is the first caller needing the true, full-FY-inclusive-end
+   boundary; see proposalFunnelKpi() in supabase-data.js for how that
+   exclusivity is honoured (strict `<`, not inRange()'s inclusive `<=`). */
+function proposalFunnelFyBounds() {
+  const anchor = new Date(TODAY.getFullYear() + proposalFunnelFyOffset, TODAY.getMonth(), TODAY.getDate());
+  const { start, end } = fiscalYearBounds(anchor);
+  return { start, end, label: `FY${fiscalYearLabel(anchor)}` };
+}
+
+function wireProposalFunnelFySwitcher() {
+  document.querySelectorAll('#proposal-funnel-fy-switcher .fy-switcher-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      proposalFunnelFyOffset += Number(btn.dataset.fyNav);
+      renderProposalFunnelKpiRow();
+    });
+  });
+}
+
+/* Not period-scoped by Overview's 7D/30D/Quarter/YTD control — this has its
+   own FY switcher instead (see proposalFunnelFyBounds() above), filtering by
+   each deal's CREATED date, same as Sales Funnel's own Proposal Funnel card
+   is lifetime-scoped. Same click-through discipline: each card's number and
+   its openDealListModal() list come from the exact same filtered array in
+   RealAggregates.proposalFunnelKpi() (supabase-data.js), so they can never
+   diverge — see 'proposal-funnel-kpi-paused-as-lost' for why Lost folds in
+   Paused here, and for the "created date, not actual proposal-sent date"
+   approximation this FY filter now relies on. */
 function renderProposalFunnelKpiRow() {
-  const f = RealAggregates.proposalFunnelKpi();
+  const { start, end, label } = proposalFunnelFyBounds();
+  const f = RealAggregates.proposalFunnelKpi(start, end);
+
+  document.getElementById('proposal-funnel-fy-label').textContent = label;
+  const nextBtn = document.querySelector('#proposal-funnel-fy-switcher .fy-switcher-btn[data-fy-nav="1"]');
+  if (nextBtn) nextBtn.disabled = proposalFunnelFyOffset >= 0;
+
   const items = [
-    { label: 'Sent', value: f.sent, color: 'var(--blue)', deals: f.sentDeals, sub: 'reached Advisory or Brokerage Proposal Sent or later' },
-    { label: 'Progressed', value: f.progressed, color: 'var(--green)', deals: f.progressedDeals, sub: 'still In Progress, or Won' },
-    { label: 'Lost', value: f.lost, color: 'var(--red)', deals: f.lostDeals, sub: 'Lost or Paused, of those that reached Proposal Sent' },
+    { label: 'Sent', value: f.sent, color: 'var(--blue)', deals: f.sentDeals, sub: `reached Advisory or Brokerage Proposal Sent or later · created ${label}` },
+    { label: 'Progressed', value: f.progressed, color: 'var(--green)', deals: f.progressedDeals, sub: `still In Progress, or Won · created ${label}` },
+    { label: 'Lost', value: f.lost, color: 'var(--red)', deals: f.lostDeals, sub: `Lost or Paused, of those that reached Proposal Sent · created ${label}` },
   ];
   document.getElementById('proposal-funnel-kpi-row').innerHTML = items.map((i, idx) => `
     <div class="activity-item clickable" data-idx="${idx}">
@@ -970,7 +1013,7 @@ function renderRevenuePage() {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Revenue by Stage${infoIcon('rev-by-stage')}</h3>
-            <div class="panel-sub">Expected SDAHC revenue currently held at each stage · excluding Paused and Lost</div>
+            <div class="panel-sub">Expected SDAHC revenue currently held at each stage · excluding Paused and Lost · click a row for the deal list</div>
           </div>
         </div>
         <div id="revenue-stage-body" style="padding:14px 24px 20px;"></div>
@@ -1178,16 +1221,29 @@ function renderConcentration() {
   `;
 }
 
+/* Click-through added: same discipline as every other stage/tier visual in
+   this app (Overview/Pipeline's Pipeline by Stage, Sales Funnel's Conversion
+   Funnel + Proposal Funnel) — each row's deal list comes from the exact same
+   `r.deals` array byStage() already computed the row's revenue total from,
+   via the shared openDealListModal(), so the list can never show a
+   different set of deals than the number implies. */
 function renderRevenueByStageList() {
   const rows = RealAggregates.byStage('revenue', { excludeLost: true }).filter(r => r.count > 0);
   const maxVal = Math.max(1, ...rows.map(r => r.revenue));
-  document.getElementById('revenue-stage-body').innerHTML = rows.map(r => `
-    <div class="stage-list-row">
+  document.getElementById('revenue-stage-body').innerHTML = rows.map((r, idx) => `
+    <div class="stage-list-row clickable" data-idx="${idx}">
       <div class="stage-list-label" style="color:${STAGE_GROUPS[r.stage.group].color}">${r.stage.short}</div>
       <div class="stage-list-bar-track"><div class="stage-list-bar-fill" style="width:${(r.revenue / maxVal) * 100}%; background:${STAGE_GROUPS[r.stage.group].color}"></div></div>
       <div class="stage-list-value tabular">${fmtCompact(r.revenue)}</div>
     </div>
   `).join('');
+
+  document.querySelectorAll('#revenue-stage-body .stage-list-row').forEach(el => {
+    el.addEventListener('click', () => {
+      const row = rows[Number(el.dataset.idx)];
+      openDealListModal(row.stage.label, `${row.count} deal${row.count === 1 ? '' : 's'} · ${fmtCompact(row.revenue)} SDAHC revenue · Paused and Lost excluded`, row.deals);
+    });
+  });
 }
 
 /* ============================================================================

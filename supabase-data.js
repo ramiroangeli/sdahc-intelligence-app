@@ -748,8 +748,24 @@ const RealAggregates = {
                     response) — i.e. still alive.
      Because Paused deals are NOT excluded from `sent` here (unlike
      proposalFunnel()'s sent cohort), a deal frozen at proposal-sent when
-     paused still counts in `sent`, then lands in `lost`. */
-  proposalFunnelKpi: () => {
+     paused still counts in `sent`, then lands in `lost`.
+
+     `start`/`end` (required — app.js's proposalFunnelFyBounds(), itself just
+     fiscalYearBounds() from data.js fed a shifted anchor date) scope the
+     cohort to deals CREATED in that FY. `end` is the exclusive first-day-of-
+     next-FY boundary fiscalYearBounds() documents, so this compares directly
+     with `<` rather than reusing inRange()'s inclusive `<=` (inRange is built
+     for to-date windows elsewhere, whose `end` is always TODAY itself, not a
+     year boundary — reusing it here would misclassify a deal created exactly
+     on the next FY's first day as still in this one).
+
+     This is a CREATED-date filter, not an "proposal actually sent on this
+     date" filter — Notion has no separate proposal-sent-date field, so
+     created_time is the closest real proxy. Directional, not exact — see
+     'proposal-funnel-kpi-paused-as-lost'. Still guarantees
+     sent === progressed + lost within the filtered FY, since the FY filter
+     is applied to the cohort before the two buckets are split, not after. */
+  proposalFunnelKpi: (start, end) => {
     const reachedProposal = (d) => {
       const idx = STAGE_INDEX[d.stage];
       if (idx == null) return false;
@@ -757,8 +773,12 @@ const RealAggregates = {
       if (isTrack(d, 'brokerage')) return idx >= STAGE_INDEX['B2'];
       return idx >= STAGE_INDEX['A1'];
     };
+    const createdInFy = (d) => {
+      const created = parseDate(d.createdDate);
+      return !!created && created >= start && created < end;
+    };
 
-    const sentDeals = REAL_DEALS.filter(reachedProposal);
+    const sentDeals = REAL_DEALS.filter(d => reachedProposal(d) && createdInFy(d));
     const lostDeals = sentDeals.filter(d => d.isLost || d.isPaused);
     const progressedDeals = sentDeals.filter(d => !d.isLost && !d.isPaused);
 
