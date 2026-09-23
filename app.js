@@ -72,6 +72,7 @@ const INFO_TEXT = {
   'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
   'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly. Paused deals contribute to none of these. createdDate (used for New Opportunities) is Notion\'s page-creation date — for bulk-migrated deals that\'s the migration date, not the real deal date, so this can show a migration-driven spike.', assumptionId: 'value-added-rate' },
   'ov-pipeline-chart': { text: 'Every deal still in play grouped by its current stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely (zero count, zero value): a Lost deal is a finished, unsuccessful outcome, not part of an active pipeline picture, and Paused carries zero weight everywhere per the non-negotiable rule. Both still appear, colour-coded, in Pipeline\'s deals table below — this chart is about pipeline shape, not a record of every deal that ever existed. Click a bar to see which deals make it up.', assumptionId: 'pipeline-funnel-lost-exclusion' },
+  'ov-proposal-funnel': { text: 'Of every deal that has EVER reached Proposal Sent (A2 Advisory or B2 Brokerage, whichever track it\'s on) — Sent: that count. Progressed: of those, still In Progress or Won. Lost: of those, Lost OR Paused — a Paused deal counts as lost for this KPI specifically, since in practice it\'s dead until reactivated. Sent always equals Progressed + Lost, unlike Sales Funnel\'s own Proposal Funnel card. Click any number to see the deals.', assumptionId: 'proposal-funnel-kpi-paused-as-lost' },
 
   // Pipeline
   'pipeline-flow': { text: 'Same per-stage grouping as Overview\'s Pipeline by Stage, same exclusions — In Progress and Won deals only; Paused AND Lost are excluded entirely (zero count, zero value), though both still appear, colour-coded, in the deals table below. Toggle changes what each stage card reports.', assumptionId: 'pipeline-funnel-lost-exclusion' },
@@ -376,11 +377,22 @@ function renderOverview() {
       </div>
       <div class="activity-row" id="activity-row"></div>
     </div>
+
+    <div class="panel section-gap">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Proposal Funnel${infoIcon('ov-proposal-funnel')}</h3>
+          <div class="panel-sub">Every deal that ever reached Proposal Sent or later · Sent = Progressed + Lost · click a card for the deal list</div>
+        </div>
+      </div>
+      <div class="proposal-funnel-row" id="proposal-funnel-kpi-row"></div>
+    </div>
   `;
 
   renderHero();
   renderKpiRow();
   renderActivityRow();
+  renderProposalFunnelKpiRow();
   wirePeriodControl();
   wireMetricControl();
   renderWaterfallChart();
@@ -484,6 +496,35 @@ function renderActivityRow() {
     el.addEventListener('click', () => {
       const item = items[idx];
       openDealListModal(item.label, `${item.value} deal${item.value === 1 ? '' : 's'} · ${OVERVIEW_PERIOD_LABELS[overviewPeriod] || overviewPeriod}`, item.deals);
+    });
+  });
+}
+
+/* Not period-scoped, unlike Deal Activity above it — a lifetime measure of
+   every deal that ever reached Proposal Sent, same as Sales Funnel's own
+   Proposal Funnel card (renderProposalFunnelRow()). Same click-through
+   discipline: each card's number and its openDealListModal() list come from
+   the exact same filtered array in RealAggregates.proposalFunnelKpi()
+   (supabase-data.js), so they can never diverge — see
+   'proposal-funnel-kpi-paused-as-lost' for why Lost folds in Paused here. */
+function renderProposalFunnelKpiRow() {
+  const f = RealAggregates.proposalFunnelKpi();
+  const items = [
+    { label: 'Sent', value: f.sent, color: 'var(--blue)', deals: f.sentDeals, sub: 'reached Advisory or Brokerage Proposal Sent or later' },
+    { label: 'Progressed', value: f.progressed, color: 'var(--green)', deals: f.progressedDeals, sub: 'still In Progress, or Won' },
+    { label: 'Lost', value: f.lost, color: 'var(--red)', deals: f.lostDeals, sub: 'Lost or Paused, of those that reached Proposal Sent' },
+  ];
+  document.getElementById('proposal-funnel-kpi-row').innerHTML = items.map((i, idx) => `
+    <div class="activity-item clickable" data-idx="${idx}">
+      <div class="activity-bar" style="background:${i.color}"></div>
+      <div class="activity-figure tabular">${i.value}</div>
+      <div class="activity-caption">${i.label}</div>
+    </div>
+  `).join('');
+  document.querySelectorAll('#proposal-funnel-kpi-row .activity-item').forEach((el, idx) => {
+    el.addEventListener('click', () => {
+      const item = items[idx];
+      openDealListModal(item.label, `${item.value} deal${item.value === 1 ? '' : 's'} · ${item.sub}`, item.deals);
     });
   });
 }

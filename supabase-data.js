@@ -727,4 +727,45 @@ const RealAggregates = {
       lost: lostDeals.length, lostDeals,
     };
   },
+
+  /* ------------------ OVERVIEW: PROPOSAL FUNNEL KPI (2-way) -----------------
+     A separate, deliberately SIMPLER KPI from proposalFunnel() above — see
+     ASSUMPTIONS 'proposal-funnel-kpi-paused-as-lost'. Same "reached proposal
+     sent" cohort (A2 Advisory / B2 Brokerage or later, per-track, same
+     STAGE_INDEX/isTrack() shape as proposalFunnel() and activitySummary()'s
+     reached() helper) but every qualifying deal falls into EXACTLY one of two
+     buckets, so sent === progressed + lost always, by construction:
+       lost       — isLost OR isPaused. A Paused deal counts as lost for THIS
+                    KPI specifically — a deliberate business call (in
+                    practice a paused deal is dead until/unless reactivated),
+                    NOT the general Paused-exclusion rule used everywhere
+                    else in this app (that rule zeroes Paused out of totals
+                    entirely; here it's folded into "lost" instead, so it
+                    doesn't vanish from the KPI without a home).
+       progressed — everything else in the sent cohort: Won outright, or
+                    still In Progress (whether that's beyond the proposal
+                    stage already, or still sitting at it awaiting a
+                    response) — i.e. still alive.
+     Because Paused deals are NOT excluded from `sent` here (unlike
+     proposalFunnel()'s sent cohort), a deal frozen at proposal-sent when
+     paused still counts in `sent`, then lands in `lost`. */
+  proposalFunnelKpi: () => {
+    const reachedProposal = (d) => {
+      const idx = STAGE_INDEX[d.stage];
+      if (idx == null) return false;
+      if (isTrack(d, 'advisory')) return idx >= STAGE_INDEX['A2'] && idx < STAGE_INDEX['B1'];
+      if (isTrack(d, 'brokerage')) return idx >= STAGE_INDEX['B2'];
+      return idx >= STAGE_INDEX['A1'];
+    };
+
+    const sentDeals = REAL_DEALS.filter(reachedProposal);
+    const lostDeals = sentDeals.filter(d => d.isLost || d.isPaused);
+    const progressedDeals = sentDeals.filter(d => !d.isLost && !d.isPaused);
+
+    return {
+      sent: sentDeals.length, sentDeals,
+      progressed: progressedDeals.length, progressedDeals,
+      lost: lostDeals.length, lostDeals,
+    };
+  },
 };
