@@ -71,7 +71,7 @@ const INFO_TEXT = {
   'ov-avg-listing': { text: 'Mean Transaction Value (the underlying asset price, never SDAHC revenue) across every deal tagged Brokerage / Divestment, any outcome — a typical listing size, not a revenue forecast.', assumptionId: 'avg-consultancy-listing-value' },
   'ov-hero': { text: 'Settled (Won, cash) + Unconditional Contracted (Under Contract, ~99% certain) + Contracted conditional (Contract Issued, or WIP/Invoiced delivery tranches — committed but a condition can still apply) + Weighted Pipeline (probability-adjusted) stacked against the Annual Target. Gap to Target = Target − that total; the marker shows how far through the FY you are.' },
   'ov-waterfall': { text: 'A bridge from Opening to Closing weighted pipeline: + New Opportunities (created this period) + Value Added (simulated re-rating) − Lost − Settled = Closing. Opening is back-solved so the bridge always balances exactly. Paused deals contribute to none of these. createdDate (used for New Opportunities) is Notion\'s page-creation date — for bulk-migrated deals that\'s the migration date, not the real deal date, so this can show a migration-driven spike.', assumptionId: 'value-added-rate' },
-  'ov-pipeline-chart': { text: 'Every deal still in play grouped by its current stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely (zero count, zero value): a Lost deal is a finished, unsuccessful outcome, not part of an active pipeline picture, and Paused carries zero weight everywhere per the non-negotiable rule. Both still appear, colour-coded, in Pipeline\'s deals table below — this chart is about pipeline shape, not a record of every deal that ever existed. Click a bar to see which deals make it up.', assumptionId: 'pipeline-funnel-lost-exclusion' },
+  'ov-pipeline-chart': { text: 'Open pipeline only: every In Progress deal grouped by its current stage. Won deals have left the open pipeline (their revenue is realised by Close Date — see Revenue). Paused AND Lost deals are excluded entirely (zero count, zero value): a Lost deal is a finished, unsuccessful outcome, not part of an active pipeline picture, and Paused carries zero weight everywhere per the non-negotiable rule. Both still appear, colour-coded, in Pipeline\'s deals table below — this chart is about pipeline shape, not a record of every deal that ever existed. Click a bar to see which deals make it up.', assumptionId: 'pipeline-funnel-lost-exclusion' },
   'ov-proposal-funnel': { text: 'Of every deal that reached Proposal Sent (A2 Advisory or B2 Brokerage, whichever track it\'s on) AND was created in the selected financial year — Sent: that count. Progressed: of those, still In Progress or Won. Lost: of those, Lost OR Paused — a Paused deal counts as lost for this KPI specifically, since in practice it\'s dead until reactivated. Sent always equals Progressed + Lost, unlike Sales Funnel\'s own Proposal Funnel card (which is lifetime, not FY-filtered). The FY filter reads each deal\'s CREATED date in Notion, not the date a proposal was actually sent — Notion has no separate field for that, so this is an approximation, not an exact measure. Use the ‹ › switcher to move between financial years (matches Settings → Financial Year Start); "next" disables once you\'re back at the current FY. Click any number to see the deals.', assumptionId: 'proposal-funnel-kpi-paused-as-lost' },
 
   // Pipeline
@@ -87,9 +87,9 @@ const INFO_TEXT = {
   'rev-target': { text: 'The Annual Revenue Target set in Settings → Business, for the current fiscal year.' },
   'rev-gap': { text: 'Target − (Settled + Contracted + Weighted Open). Shown as "on track" once Settled + Contracted + Weighted already covers the target.' },
   'rev-time-chart': { text: 'Actual bars read real closeDate history. Forecast bars bucket each open deal into a month using an estimated close date derived from its probability — directional only, Notion doesn\'t track an expected close date.', assumptionId: 'estimated-close-date' },
-  'rev-source-chart': { text: 'SDAHC Revenue split by fee type across Won + In Progress deals. Lost and Paused are excluded — Paused carries zero value. Only Brokerage and Advisory are shown — Conjunction and Referral fees aren\'t columns in the current Notion sync, so they can\'t be split out from real data yet.', assumptionId: 'paused-exclusion' },
-  'rev-concentration': { text: 'Share of total Won + In Progress revenue sitting in the top 3 deals by SDAHC Revenue — a concentration-risk read, same scope as Revenue Composition.', assumptionId: 'revenue-scope' },
-  'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage — In Progress and Won deals only. Paused AND Lost deals are excluded entirely, same rule and same byStage({excludeLost:true}) call as Pipeline by Stage and the Sales Funnel — filtered to stages with at least one qualifying deal. Click a row to see the deals behind it.', assumptionId: 'pipeline-funnel-lost-exclusion' },
+  'rev-source-chart': { text: 'SDAHC Revenue split by fee type. Use the toggle: Realised = Won deals with a Close Date in the current financial year; Open Pipeline = In Progress deals; Total Visibility = both (disjoint, so no double counting). Lost and Paused are excluded — Paused carries zero value. Only Brokerage and Advisory are shown — Conjunction and Referral fees aren\'t columns in the current Notion sync, so they can\'t be split out from real data yet.', assumptionId: 'paused-exclusion' },
+  'rev-concentration': { text: 'Share of revenue sitting in the top 3 deals by SDAHC Revenue — a concentration-risk read. Same toggle and scope as Revenue Composition (Realised = Won in current FY by Close Date; Open Pipeline = In Progress; Total Visibility = both). Defaults to Open Pipeline, where concentration is a forward risk.', assumptionId: 'revenue-scope' },
+  'rev-by-stage': { text: 'SDAHC Revenue currently held at each stage — In Progress and Won deals only (Won stays at its real stage here). Paused AND Lost deals are excluded entirely, same byStage({excludeLost:true}) rule as Pipeline by Stage and the Sales Funnel — filtered to stages with at least one qualifying deal. Click a row to see the deals behind it.', assumptionId: 'pipeline-funnel-lost-exclusion' },
   'rev-cumulative': { text: 'A business-plan-style pace chart: cumulative Target (annual target ÷ 12, accumulated month by month across the FY) vs. cumulative Actual (settled revenue, accumulated through the current month — the line simply stops at today, since future actuals don\'t exist yet).', assumptionId: 'monthly-target-split' },
   'rev-cumulative-actual': { text: 'Cumulative settled SDAHC Revenue from the start of the FY through today — identical figure to Settled Revenue elsewhere on this page.' },
   'rev-cumulative-target': { text: 'Cumulative plan value through the current month only (not the full annual target) — monthly target × months elapsed so far this FY — so it\'s a fair like-for-like comparison against Cumulative Actual.', assumptionId: 'monthly-target-split' },
@@ -357,7 +357,7 @@ function renderOverview() {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Pipeline by Stage${infoIcon('ov-pipeline-chart')}</h3>
-            <div class="panel-sub">In Progress + Won deals only, excluding Paused and Lost · click a bar for the deal list</div>
+            <div class="panel-sub">Open pipeline (In Progress) only · click a bar for the deal list</div>
           </div>
         </div>
         <div class="chart-body" style="padding-top:16px;">
@@ -648,7 +648,7 @@ function renderWaterfallChart() {
 function renderPipelineChart() {
   const el = document.getElementById('pipeline-chart');
   if (!pipelineChartInstance) pipelineChartInstance = echarts.init(el);
-  const rows = RealAggregates.byStage(overviewMetric, { excludeLost: true });
+  const rows = RealAggregates.byStage(overviewMetric, { excludeLost: true, excludeWon: true });
 
   pipelineChartInstance.setOption({
     grid: { left: 8, right: 16, top: 10, bottom: 56, containLabel: true },
@@ -777,7 +777,7 @@ function wirePipelineMetricControl() {
 }
 
 function renderPipelineFlow() {
-  const rows = RealAggregates.byStage(pipelineMetric, { excludeLost: true });
+  const rows = RealAggregates.byStage(pipelineMetric, { excludeLost: true, excludeWon: true });
   const maxVal = Math.max(1, ...rows.map(r => r.value));
 
   // group consecutive stages by their stage.group
@@ -988,7 +988,12 @@ function renderRevenuePage() {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Revenue Composition${infoIcon('rev-source-chart')}</h3>
-            <div class="panel-sub">By fee source · Won + active pipeline · Brokerage + Advisory only</div>
+            <div class="panel-sub" id="revenue-source-sub"></div>
+          </div>
+          <div class="seg-control" id="revenue-source-control">
+            <button class="seg-btn" data-rv="realised">Realised</button>
+            <button class="seg-btn" data-rv="open">Open Pipeline</button>
+            <button class="seg-btn" data-rv="total">Total Visibility</button>
           </div>
         </div>
         <div class="chart-body" style="padding-bottom:20px;">
@@ -1003,7 +1008,12 @@ function renderRevenuePage() {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Revenue Concentration${infoIcon('rev-concentration')}</h3>
-            <div class="panel-sub">Concentration risk across Won + active deals</div>
+            <div class="panel-sub" id="concentration-sub"></div>
+          </div>
+          <div class="seg-control" id="concentration-control">
+            <button class="seg-btn" data-rv="realised">Realised</button>
+            <button class="seg-btn" data-rv="open">Open Pipeline</button>
+            <button class="seg-btn" data-rv="total">Total Visibility</button>
           </div>
         </div>
         <div id="concentration-body" style="padding:6px 24px 24px;"></div>
@@ -1032,12 +1042,31 @@ function renderRevenuePage() {
     </div>
   `;
 
+  renderRevenueDataQualityWarning();
+  wireRevenueViewControls();
   renderRevenueKpiRow();
   renderRevenueTimeChart();
   renderRevenueSourceChart();
   renderConcentration();
   renderRevenueByStageList();
   renderCumulativeSection();
+}
+
+/* High-severity data-quality flag: Won deals with no Close Date can't be
+   placed in a financial period, so they're excluded from realised revenue
+   (never back-filled from Created Date). Warns without blocking render. */
+function renderRevenueDataQualityWarning() {
+  const missing = RealAggregates.wonMissingCloseDate();
+  const root = document.getElementById('view-revenue');
+  const existing = document.getElementById('rev-dq-warning');
+  if (existing) existing.remove();
+  if (!missing.length) return;
+  const names = missing.map(d => d.name).join(', ');
+  root.insertAdjacentHTML('afterbegin', `
+    <div class="panel" id="rev-dq-warning" style="border-left:4px solid #DC2626; padding:12px 18px; margin-bottom:16px;">
+      <strong>High · Won Deal missing Close Date (${missing.length})</strong>
+      <div class="panel-sub">Financial period can't be determined, so these are excluded from realised revenue: ${names}. Add a Close Date in Notion.</div>
+    </div>`);
 }
 
 function renderRevenueKpiRow() {
@@ -1162,10 +1191,38 @@ function renderRevenueTimeChart() {
   });
 }
 
+/* Composition and Concentration each have their own scope toggle so the two
+   commercial questions (realised vs open pipeline vs both) are never mixed
+   under one ambiguous label. Defaults: Composition = Realised, Concentration
+   = Open Pipeline (forward risk). */
+let revenueSourceView = 'realised';
+let concentrationView = 'open';
+const REVENUE_VIEW_LABEL = {
+  realised: 'Realised · Won, Close Date in current FY',
+  open: 'Open Pipeline · In Progress only',
+  total: 'Total Visibility · Realised + Open Pipeline',
+};
+function wireRevenueViewControls() {
+  [['revenue-source-control', () => revenueSourceView, v => { revenueSourceView = v; }, renderRevenueSourceChart],
+   ['concentration-control', () => concentrationView, v => { concentrationView = v; }, renderConcentration]]
+    .forEach(([id, get, set, render]) => {
+      const control = document.getElementById(id);
+      control.querySelectorAll('.seg-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.rv === get());
+        btn.addEventListener('click', () => {
+          set(btn.dataset.rv);
+          control.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+          render();
+        });
+      });
+    });
+}
+
 function renderRevenueSourceChart() {
   const el = document.getElementById('revenue-source-chart');
   if (!revenueSourceChartInstance) revenueSourceChartInstance = echarts.init(el);
-  const { totals, total } = RealAggregates.revenueBySource();
+  const { totals, total } = RealAggregates.revenueBySource(revenueSourceView);
+  document.getElementById('revenue-source-sub').textContent = `By fee source · ${REVENUE_VIEW_LABEL[revenueSourceView]} · Brokerage + Advisory only`;
   const rows = [
     { name: 'Brokerage / Sale', value: totals.brokerage, color: '#0476D9' },
     { name: 'Paid Advisory', value: totals.advisory, color: '#7A5CC7' },
@@ -1195,7 +1252,8 @@ function renderRevenueSourceChart() {
 }
 
 function renderConcentration() {
-  const c = RealAggregates.revenueConcentration(3);
+  const c = RealAggregates.revenueConcentration(3, concentrationView);
+  document.getElementById('concentration-sub').textContent = `Concentration risk · ${REVENUE_VIEW_LABEL[concentrationView]}`;
   const maxVal = c.top.length ? c.top[0].sdahcRevenue : 1;
   const rows = c.top.map((d, i) => {
     const rev = d.sdahcRevenue;
@@ -1215,8 +1273,8 @@ function renderConcentration() {
   }).join('');
 
   document.getElementById('concentration-body').innerHTML = `
-    <div class="concentration-headline">Top ${c.n} deals = <strong>${fmtPct(c.pct)}</strong> of expected revenue</div>
-    <div class="concentration-headline-sub">Across ${c.top.length ? c.top.length + '+' : ''} Won + active deals · excludes Lost</div>
+    <div class="concentration-headline">Top ${c.n} deals = <strong>${fmtPct(c.pct)}</strong> of ${concentrationView === 'realised' ? 'realised' : concentrationView === 'open' ? 'open pipeline' : 'total visible'} revenue</div>
+    <div class="concentration-headline-sub">${REVENUE_VIEW_LABEL[concentrationView]} · excludes Lost and Paused</div>
     <div class="concentration-list">${rows}</div>
   `;
 }
@@ -2236,7 +2294,7 @@ function renderSdaAdjustmentPanel() {
 function applySdaAdjustment(key, qty, label) {
   const current = getSettings().sdaReport;
   const nextVal = (current[key] || 0) + qty;
-  const log = [{ type: label, qty, date: TODAY.toISOString().slice(0, 10) }, ...current.adjustmentLog].slice(0, 20);
+  const log = [{ type: label, qty, date: `${TODAY.getFullYear()}-${String(TODAY.getMonth() + 1).padStart(2, '0')}-${String(TODAY.getDate()).padStart(2, '0')}` }, ...current.adjustmentLog].slice(0, 20);
   updateSettings({ sdaReport: { [key]: nextVal, adjustmentLog: log } });
   renderSdaInventorySummary();
   renderSdaAdjustmentLog();

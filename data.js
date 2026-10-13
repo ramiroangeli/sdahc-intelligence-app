@@ -657,7 +657,11 @@ function isTrack(deal, track) {
 
 function parseDate(d) { return d ? new Date(d + 'T00:00:00') : null; }
 
-const TODAY = new Date('2026-08-31T00:00:00');
+/* Real current date (local midnight), evaluated at page load. Fiscal-year
+   boundaries are derived from it via fiscalYearBounds() — nothing is pinned
+   to a specific year. The mock DEALS data keeps its own fixed dates; it just
+   renders relative to the real today. */
+const TODAY = (() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); })();
 
 function inRange(dateStr, start, end) {
   const d = parseDate(dateStr);

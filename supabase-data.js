@@ -245,11 +245,41 @@ function renderRealDataStatusPanel(rootId) {
    stays off every page — mock or real — until history.deal_stage_events
    (sync/schema.sql, now capturing nightly) has matured enough to compute a
    genuine conversion date per deal. */
+/* Realised (cash-earned) revenue of a deal, for the portion attributable to
+   its outcome date. Advisory and brokerage are kept separate:
+     - advisory: if the deal has ANY tranche structure (a tranche status is
+       set — status, not amount, is the signal; see Delivery note below),
+       realised advisory = the PAID tranches only (advisorySettled). The
+       consultancy fee total is NOT added on top (T1+T2 already is the fee).
+       Only a deal with no tranche structure falls back to the flat fee.
+     - brokerage: commission (transactionValue × commissionPct) — only ever
+       realised on a Won deal, so callers pass Won deals here.
+   Never use for open-pipeline figures; those keep sdahcRevenue. */
+function hasTrancheStructure(d) { return d.tranche1Status != null || d.tranche2Status != null; }
+function realisedAdvisory(d) { return hasTrancheStructure(d) ? d.advisorySettled : d.advisoryFee; }
+function realisedWonRevenue(d) { return d.transactionValue * d.commissionPct + realisedAdvisory(d); }
+
 const RealAggregates = {
   won: () => REAL_DEALS.filter(d => d.isWon),
   lost: () => REAL_DEALS.filter(d => d.isLost),
   paused: () => REAL_DEALS.filter(d => d.isPaused),
   active: () => REAL_DEALS.filter(d => d.isInProgress),
+
+  /* Data-quality rule (High): Outcome = Won AND Close Date blank. Close Date
+     is the sole authority for which period a Won deal's revenue belongs to —
+     Created Date is never used as a fallback — so these deals are excluded
+     from every period-based realised figure (inRange(null) is false) and
+     surfaced here instead of being silently dropped or guessed. */
+  wonMissingCloseDate: () => REAL_DEALS.filter(d => d.isWon && !d.closeDate),
+
+  /* Won deals REALISED in the current financial year, by Close Date. Shared
+     by Revenue Composition / Concentration so they can't drift from the
+     FY window settledRevenueYTD() uses. Prior-FY and undated Won deals fall
+     out naturally. */
+  wonInCurrentFY: () => {
+    const { start, end } = periodRange('ytd');
+    return REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end));
+  },
 
   /* Deals created in the current calendar month, by Notion's created_time
      (see the view SQL update needed for this column — schema.sql doesn't
@@ -280,7 +310,9 @@ const RealAggregates = {
   },
 
   /* "Settled" = money actually in the bank, from two non-overlapping sources:
-       (a) Won deals' full sdahcRevenue, closeDate in FY-to-date (as before).
+       (a) Won deals' realisedWonRevenue() — brokerage commission plus paid
+           advisory tranches (flat fee only if the deal has no tranche
+           structure) — closeDate in FY-to-date.
        (b) Paid advisory tranches (advisory_settled) on every OTHER
            (non-Paused, non-Won) deal — this is real cash collected even
            though the deal itself hasn't closed/isn't Won.
@@ -303,7 +335,7 @@ const RealAggregates = {
   settledRevenueYTD: () => {
     const { start, end } = periodRange('ytd');
     const wonInFY = REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, start, end))
-      .reduce((sum, d) => sum + d.sdahcRevenue, 0);
+      .reduce((sum, d) => sum + realisedWonRevenue(d), 0);
     const paidTranches = REAL_DEALS.filter(d => !d.isPaused && !d.isWon)
       .reduce((sum, d) => sum + d.advisorySettled, 0);
     return wonInFY + paidTranches;
@@ -420,11 +452,15 @@ const RealAggregates = {
      ASSUMPTIONS 'pipeline-funnel-lost-exclusion', which now covers all
      three). The default stays false rather than being flipped, so any
      future caller has to opt in deliberately instead of inheriting the
-     exclusion silently. */
+     exclusion silently.
+
+     `excludeWon` (default false) restricts to OPEN pipeline: a Won deal has
+     left the open pipeline (its revenue is realised, by Close Date, via
+     settledRevenueYTD / monthlyRevenueSeries) while keeping its real stage. */
   byStage: (metric, opts = {}) => {
-    const { excludeLost = false } = opts;
+    const { excludeLost = false, excludeWon = false } = opts;
     return STAGES.map(stage => {
-      const deals = REAL_DEALS.filter(d => d.stage === stage.id && !d.isPaused && !(excludeLost && d.isLost));
+      const deals = REAL_DEALS.filter(d => d.stage === stage.id && !d.isPaused && !(excludeLost && d.isLost) && !(excludeWon && d.isWon));
       const count = deals.length;
       const transactionValue = deals.reduce((s, d) => s + d.transactionValue, 0);
       const revenue = deals.reduce((s, d) => s + d.sdahcRevenue, 0);
@@ -455,19 +491,34 @@ const RealAggregates = {
      commission_pct + advisory_fee — there is no conjunction_fee or
      referral_fee column anywhere in raw.deals or the view, so those two
      mock categories simply don't exist in the real schema yet. */
-  revenueBySource: () => {
-    const deals = REAL_DEALS.filter(d => d.isWon || d.isInProgress);
+  /* Deals behind Revenue Composition / Concentration, by view:
+       realised — Won, Close Date in the current FY (never Created Date)
+       open     — In Progress only
+       total    — realised + open (disjoint by outcome, so no double count)
+     Paid advisory tranches on In Progress deals are NOT added here — that
+     cash belongs to settledRevenueYTD() only, and these views are scoped by
+     deal outcome. */
+  revenueViewDeals: (view) => {
+    if (view === 'realised') return RealAggregates.wonInCurrentFY();
+    if (view === 'open') return RealAggregates.active();
+    return [...RealAggregates.wonInCurrentFY(), ...RealAggregates.active()];
+  },
+
+  revenueBySource: (view = 'realised') => {
+    const deals = RealAggregates.revenueViewDeals(view);
     const totals = { brokerage: 0, advisory: 0 };
     deals.forEach(d => {
       totals.brokerage += d.transactionValue * d.commissionPct;
-      totals.advisory += d.advisoryFee;
+      /* Won deals contribute REALISED advisory (paid tranches, else flat
+         fee); open deals contribute their full expected advisory fee. */
+      totals.advisory += d.isWon ? realisedAdvisory(d) : d.advisoryFee;
     });
     const total = totals.brokerage + totals.advisory;
     return { totals, total, dealCount: deals.length };
   },
 
-  revenueConcentration: (n = 3) => {
-    const deals = REAL_DEALS.filter(d => d.isWon || d.isInProgress);
+  revenueConcentration: (n = 3, view = 'open') => {
+    const deals = RealAggregates.revenueViewDeals(view);
     const sorted = [...deals].sort((a, b) => b.sdahcRevenue - a.sdahcRevenue);
     const total = sorted.reduce((s, d) => s + d.sdahcRevenue, 0);
     const top = sorted.slice(0, n);
@@ -493,7 +544,7 @@ const RealAggregates = {
       let actual = null;
       if (isPast || isCurrent) {
         actual = REAL_DEALS.filter(d => d.isWon && inRange(d.closeDate, monthStart, monthEnd))
-          .reduce((s, d) => s + d.sdahcRevenue, 0);
+          .reduce((s, d) => s + realisedWonRevenue(d), 0);
       }
 
       let forecast = null;
