@@ -255,7 +255,8 @@ function updateDataSourceBadge(view) {
 }
 
 function initNav() {
-  const items = document.querySelectorAll('.nav-item');
+  // Only items that switch an in-page view; external links (e.g. RFIs) have no data-view and are plain <a> links.
+  const items = document.querySelectorAll('.nav-item[data-view]');
   items.forEach(btn => {
     btn.addEventListener('click', () => {
       const view = btn.dataset.view;

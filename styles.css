@@ -257,6 +257,9 @@ a { color: inherit; }
 }
 
 .nav-icon { width: 17px; height: 17px; flex-shrink: 0; opacity: 0.9; }
+.nav-item .nav-external { width: 13px; height: 13px; margin-left: auto; flex-shrink: 0; opacity: 0.5; }
+.nav-item:hover .nav-external { opacity: 0.85; }
+.nav-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 .nav-item.active .nav-icon { opacity: 1; }
 
 .nav-item .nav-badge {
@@ -1558,6 +1561,7 @@ thead th.num-head { text-align: right; }
   :root { --sidebar-w: 76px; }
   .brand-text, .nav-group-label, .nav-item span.nav-label, .sync-text, .user-text { display: none; }
   .nav-item { justify-content: center; }
+  .nav-item .nav-external { display: none; }
   .nav-item.active::before { left: 0; }
   .sync-status, .user-status { justify-content: center; }
   .kpi-row { grid-template-columns: repeat(2, 1fr); }
