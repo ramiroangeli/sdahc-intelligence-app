@@ -189,7 +189,8 @@ alter default privileges in schema history grant all on tables to service_role;
 
 -- ============================================================
 -- Esquema ANALYTICS — dato transformado listo para la app
--- La app lo lee con la clave anon (solo lectura). Nunca toca raw.
+-- La app lo lee como usuario autenticado (rol 'authenticated', solo lectura). Nunca toca raw directamente.
+-- anon NO tiene acceso (ver bloque de permisos al final).
 -- ============================================================
 create schema if not exists analytics;
 
@@ -250,11 +251,47 @@ select
 from raw.deals d
 where d.is_archived = false;
 
--- Permisos: service_role (todo) y anon (solo lectura, para la app)
+-- ------------------------------------------------------------
+-- Permisos / seguridad (estado de producción)
+--   - raw.deals está protegida por RLS; la app NUNCA la consulta directo:
+--     lee a través de analytics.deals.
+--   - analytics.deals usa security_invoker = true: la consulta corre con los
+--     permisos del usuario que llama (no del dueño de la vista), así respeta
+--     el RLS de raw.deals.
+--   - Solo usuarios AUTENTICADOS llegan al dato subyacente. anon no tiene
+--     ningún acceso (ni a la vista ni a raw), y no hay default privileges
+--     que se lo vuelvan a dar a futuros objetos de analytics.
+-- ------------------------------------------------------------
+
+-- service_role: todo (lo usan los syncs)
 grant usage  on schema analytics to service_role;
 grant select on all tables in schema analytics to service_role;
 alter default privileges in schema analytics grant select on tables to service_role;
 
-grant usage  on schema analytics to anon;
-grant select on analytics.deals to anon;
-alter default privileges in schema analytics grant select on tables to anon;
+-- anon: SIN acceso. Revoca explícitamente por si una base vieja lo tenía.
+revoke select on all tables in schema analytics from anon;
+revoke usage  on schema analytics from anon;
+alter default privileges in schema analytics revoke select on tables from anon;
+
+-- authenticated: lectura de la vista
+grant usage  on schema analytics to authenticated;
+grant select on analytics.deals to authenticated;
+
+-- authenticated: acceso mínimo a raw.deals, solo las columnas que lee la vista
+grant usage on schema raw to authenticated;
+grant select (
+  notion_page_id, name, stage, outcome, deal_type, entity, owner,
+  probability, score, close_date, next_action, next_action_date,
+  days_stale, pipeline_status, transaction_value, commission_pct,
+  advisory_fee, tranche1_amount, tranche1_status, tranche2_amount,
+  tranche2_status, created_time, is_archived
+) on raw.deals to authenticated;
+
+drop policy if exists deals_read_authenticated on raw.deals;
+create policy deals_read_authenticated
+  on raw.deals
+  for select
+  to authenticated
+  using (true);
+
+alter view analytics.deals set (security_invoker = true);
