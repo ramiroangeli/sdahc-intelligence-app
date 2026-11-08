@@ -3,7 +3,7 @@
 import { HttpError } from './http.js';
 
 const COLS = `id, public_id, notion_page_id, label, status, content, notes, verification, base_facts, base_notion_edited_at,
-  version, created_by, created_at, updated_by, updated_at, photos`;
+  version, created_by, created_at, updated_by, updated_at, photos, photo_review`;
 
 const changedKeys = (a, b) => {
   const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
@@ -44,36 +44,66 @@ export async function createDraft(db, { publicId, notionPageId, label, content, 
   });
 }
 
+/** What a patch changes, and the row it produces. Pure. */
+function plan(cur, patch) {
+  const next = {
+    content: patch.content ?? cur.content,
+    notes: patch.notes ?? cur.notes,
+    verification: patch.verification ?? cur.verification,
+    base_facts: patch.baseFacts ?? cur.base_facts,
+    base_notion_edited_at: patch.baseEditedAt !== undefined ? patch.baseEditedAt : cur.base_notion_edited_at,
+    photos: patch.photos ?? cur.photos ?? [],
+    photo_review: patch.photoReview !== undefined ? patch.photoReview : (cur.photo_review ?? null),
+  };
+  const fields = [
+    ...changedKeys(cur.content, next.content),
+    ...(JSON.stringify(cur.photos ?? []) !== JSON.stringify(next.photos) ? ['photos'] : []),
+    ...(JSON.stringify(cur.photo_review ?? null) !== JSON.stringify(next.photo_review) ? ['photoReview'] : []),
+    ...(JSON.stringify(cur.notes) !== JSON.stringify(next.notes) ? ['notes'] : []),
+    ...(JSON.stringify(cur.verification) !== JSON.stringify(next.verification) ? ['verification'] : []),
+    ...(JSON.stringify(cur.base_facts) !== JSON.stringify(next.base_facts) ? ['notionBaseline'] : []),
+  ];
+  const params = [JSON.stringify(next.content), JSON.stringify(next.notes), JSON.stringify(next.verification), JSON.stringify(next.base_facts), next.base_notion_edited_at, JSON.stringify(next.photos), next.photo_review === null ? null : JSON.stringify(next.photo_review)];
+  return { fields, params };
+}
+
 /**
- * Compare-and-set update. `patch` may carry content, notes, verification, baseFacts, baseEditedAt. Fails with 409 if the
- * version moved (someone else saved) and 404 if the draft is gone. Writes one history row with the actor.
+ * Compare-and-set update. `patch` may carry content, notes, verification, baseFacts, baseEditedAt, photos, photoReview. Fails with
+ * 409 if the version moved (someone else saved) and 404 if the draft is gone. Writes one history row with the actor.
+ *
+ * Speed: when the caller already holds the row it read at `expectedVersion` (`current`), the update and its history row go in ONE
+ * statement (a data-modifying CTE, atomic like a transaction) guarded by `where version = expected`. That is one database round trip
+ * instead of five (BEGIN, SELECT FOR UPDATE, UPDATE, INSERT, COMMIT), which matters when the database is an ocean away.
+ * If the guard matches no row, the slow path below re-reads inside a transaction to say exactly why (404 or 409).
  */
-export async function updateDraft(db, { publicId, expectedVersion, action, patch, actor }) {
+export async function updateDraft(db, { publicId, expectedVersion, action, patch, actor, current }) {
+  if (current && current.version === expectedVersion && current.public_id === publicId) {
+    const { fields, params } = plan(current, patch);
+    if (fields.length === 0) return current; // nothing changed: no new version, no noise in the history
+    const rows = await db.unsafe(
+      `with upd as (
+         update listings.drafts set content=$2::text::jsonb, notes=$3::text::jsonb, verification=$4::text::jsonb, base_facts=$5::text::jsonb, base_notion_edited_at=$6,
+                photos=$7::text::jsonb, photo_review=$8::text::jsonb, version = version + 1, updated_by=$9, updated_by_auth_user=$10, updated_at=now()
+         where id=$1 and version=$11 and discarded_at is null returning ${COLS}),
+       hist as (
+         insert into listings.draft_history (draft_id, version, action, changed_fields, content, changed_by, changed_by_auth_user)
+         select id, version, $12, $13::text[], content, $9, $10 from upd)
+       select * from upd`,
+      [current.id, ...params.slice(0, 5), params[5], params[6], actor.email, actor.authUserId ?? null, expectedVersion, action, fields]);
+    if (rows[0]) return rows[0];
+    // fall through: find out whether the draft is gone or simply changed
+  }
   return db.begin(async (tx) => {
     const cur = (await tx.unsafe(`select ${COLS} from listings.drafts where public_id = $1 and discarded_at is null for update`, [publicId]))[0];
     if (!cur) throw new HttpError(404, 'draft_not_found');
     if (cur.version !== expectedVersion) throw new HttpError(409, 'draft_changed');
-    const next = {
-      content: patch.content ?? cur.content,
-      notes: patch.notes ?? cur.notes,
-      verification: patch.verification ?? cur.verification,
-      base_facts: patch.baseFacts ?? cur.base_facts,
-      base_notion_edited_at: patch.baseEditedAt !== undefined ? patch.baseEditedAt : cur.base_notion_edited_at,
-      photos: patch.photos ?? cur.photos ?? [],
-    };
-    const fields = [
-      ...changedKeys(cur.content, next.content),
-      ...(JSON.stringify(cur.photos ?? []) !== JSON.stringify(next.photos) ? ['photos'] : []),
-      ...(JSON.stringify(cur.notes) !== JSON.stringify(next.notes) ? ['notes'] : []),
-      ...(JSON.stringify(cur.verification) !== JSON.stringify(next.verification) ? ['verification'] : []),
-      ...(JSON.stringify(cur.base_facts) !== JSON.stringify(next.base_facts) ? ['notionBaseline'] : []),
-    ];
-    if (fields.length === 0) return cur; // nothing changed: no new version, no noise in the history
+    const { fields, params } = plan(cur, patch);
+    if (fields.length === 0) return cur;
     const rows = await tx.unsafe(
-      `update listings.drafts set content=$2::text::jsonb, notes=$3::text::jsonb, verification=$4::text::jsonb, base_facts=$5::text::jsonb, base_notion_edited_at=$6, photos=$9::text::jsonb,
-              version = version + 1, updated_by=$7, updated_by_auth_user=$8, updated_at=now()
+      `update listings.drafts set content=$2::text::jsonb, notes=$3::text::jsonb, verification=$4::text::jsonb, base_facts=$5::text::jsonb, base_notion_edited_at=$6,
+              photos=$7::text::jsonb, photo_review=$8::text::jsonb, version = version + 1, updated_by=$9, updated_by_auth_user=$10, updated_at=now()
        where id=$1 returning ${COLS}`,
-      [cur.id, JSON.stringify(next.content), JSON.stringify(next.notes), JSON.stringify(next.verification), JSON.stringify(next.base_facts), next.base_notion_edited_at, actor.email, actor.authUserId ?? null, JSON.stringify(next.photos)]);
+      [cur.id, ...params, actor.email, actor.authUserId ?? null]);
     const d = rows[0];
     await tx.unsafe(`insert into listings.draft_history (draft_id, version, action, changed_fields, content, changed_by, changed_by_auth_user) values ($1,$2,$3,$4,$5::text::jsonb,$6,$7)`,
       [d.id, d.version, action, fields, JSON.stringify(d.content), actor.email, actor.authUserId ?? null]);
