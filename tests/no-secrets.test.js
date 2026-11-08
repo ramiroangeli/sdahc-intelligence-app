@@ -20,3 +20,9 @@ test('no committed file contains a token-shaped secret', () => {
   walk('.');
   assert.deepEqual(hits, []);
 });
+
+test('nothing but the app shell is served as a static file: server code, tests, SQL and docs are excluded or under api/_', () => {
+  const ignore = readFileSync('.vercelignore', 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  for (const dir of ['tests', 'scripts', 'docs', 'sync', 'supabase', '.github', '00_context']) assert.ok(ignore.includes(dir), `${dir} must be in .vercelignore`);
+  assert.ok(!readdirSync('.').includes('vendor'), 'no top-level vendor folder (it would be served)');
+});

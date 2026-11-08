@@ -48,3 +48,39 @@ Put Notion variables in your shell first to see real data. It refuses to run on 
 
 ## Security finding
 See the separate security pull request (analytics.deals access for non-Microsoft accounts). It is not part of this change.
+
+---
+
+# Phase 2: draft editor (drafts are private, nothing is published)
+
+## What was added
+Add next listing (property picker from Notion Properties), a draft editor (Web title, description, public address, pricing mode,
+display price, featured), live validation, private preview of the card and detail page, saved drafts with history and the
+saving person's identity, Notion-change detection, and commercial verification items. No Notion writes. No photos. No publishing.
+
+- Drafts live in a NEW database schema `listings` (migration `supabase/migrations/listings_0001_drafts.sql`, **not applied yet**).
+- Validation uses the website's own rules, vendored from the website repo: `api/_lib/vendor/listings-core.mjs`
+  (rebuild with `node scripts/vendor-listings-core.mjs --from <clean website checkout>` when the website rules change).
+- Capabilities: Viewer reads. Editor (`listings.edit`) creates and saves drafts, adds verification notes.
+  Publisher (`listings.publish`) acknowledges commercial verification items. Editor and Publisher are independent.
+
+## One-time setup to enable drafts
+1. **Run the migration** in the Supabase SQL editor (`listings_0001_drafts.sql`). Reversible; see the file.
+2. **Set the role password** (a separate statement; never put it in a file): `alter role listings_app with password '<long random>';`
+3. **Check the schema is not exposed** (verification queries are at the bottom of the migration file).
+4. **Add to Vercel** (project `sdahc-intelligence-app`, Production and Preview, Sensitive):
+   `LISTINGS_DATABASE_URL` = `postgres://listings_app.<project-ref>:<password>@<pooler-host>:6543/postgres`
+   (same pooler host as the RFI system's `RFI_DATABASE_URL`).
+5. Redeploy.
+
+Until step 4, the dashboard works and shows "Drafts are not enabled yet"; the draft endpoints answer 503.
+
+## Notion change detection
+Each draft stores hashes of four groups of Notion facts (identity, classification, web fields, commercial fields). If a group
+changes, the editor says which group changed (never the values) and asks for confirmation on save. A refresh is recorded in the history.
+
+## Commercial verification
+System items come from the CRM (for example "CRM records 2 of 3 places occupied"). A Publisher can acknowledge one with a note;
+the acknowledgement stops counting if the CRM fact changes. Editors can add free-text notes (for example an advertised figure that
+differs from the CRM), and a Publisher resolves them. Open items block publication, never saving. Public wording that claims
+"fully leased" while the CRM says otherwise is an error.

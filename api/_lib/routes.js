@@ -1,20 +1,78 @@
 // The Listings endpoints, each built only through guardedRoute (authorisation first, always).
 import { loadDataConfig } from './config.js';
+import { draftsConfigured, getDb } from './db.js';
+import { createDraftFor, draftSummary, openDraft, pickerFor, saveDraftFor, verifyDraftFor } from './draft-service.js';
+import { listDrafts, discardDraft } from './drafts-repo.js';
+import { audit } from './audit.js';
 import { buildListings } from './listings-service.js';
 import { guardedRoute } from './guard.js';
-import { CAPABILITIES } from './permissions.js';
+import { HttpError, queryOf, readJson } from './http.js';
+import { CAPABILITIES as C, hasCapability } from './permissions.js';
+
+const dataCfg = (deps) => deps.dataConfig ?? loadDataConfig(deps.env ?? process.env);
+const f = (deps) => deps.fetch ?? fetch;
+const actorOf = (session) => ({ email: session.staff.email, authUserId: session.identity.authUserId });
+const capsOf = (session) => ({ caps: { canEdit: hasCapability(session.staff, C.EDIT), canPublish: hasCapability(session.staff, C.PUBLISH) } });
 
 export const listRoute = guardedRoute({
-  capability: CAPABILITIES.VIEW,
-  run: ({ deps }) => buildListings(deps.dataConfig ?? loadDataConfig(deps.env ?? process.env), { fetchImpl: deps.fetch ?? fetch }),
+  capability: C.VIEW,
+  run: async ({ deps }) => {
+    let drafts = null;
+    if (draftsConfigured(deps, deps.env ?? process.env)) {
+      try { drafts = { state: 'ok', items: (await listDrafts(getDb(deps, deps.env ?? process.env))).map(draftSummary) }; } catch { drafts = { state: 'error', items: [] }; }
+    }
+    return buildListings(dataCfg(deps), { fetchImpl: f(deps), drafts });
+  },
 });
 
 export const meRoute = guardedRoute({
-  capability: CAPABILITIES.VIEW,
+  capability: C.VIEW,
   run: ({ session }) => ({
     email: session.staff.email,
     capabilities: session.staff.capabilities,
-    canEdit: session.staff.capabilities.includes(CAPABILITIES.EDIT),
-    canPublish: session.staff.capabilities.includes(CAPABILITIES.PUBLISH),
+    canEdit: hasCapability(session.staff, C.EDIT),
+    canPublish: hasCapability(session.staff, C.PUBLISH),
   }),
+});
+
+/** Property picker: Notion Properties that can start a draft. Editors only. */
+export const propertiesRoute = guardedRoute({
+  capability: C.EDIT,
+  run: async ({ req, deps }) => ({ properties: await pickerFor({ cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), q: queryOf(req).q }) }),
+});
+
+/** One draft. Read: any staff. Create, save, discard: Editors. */
+export const draftRoute = guardedRoute({
+  capability: { GET: C.VIEW, POST: C.EDIT, PUT: C.EDIT, DELETE: C.EDIT },
+  run: async ({ req, session, deps }) => {
+    const base = { cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), ...capsOf(session) };
+    const actor = actorOf(session);
+    if (req.method === 'GET') return openDraft({ ...base, id: queryOf(req).id });
+    const body = await readJson(req);
+    if (req.method === 'POST') {
+      const out = await createDraftFor({ ...base, propertyId: body?.propertyId, actor });
+      audit({ action: 'listings.draft.create', outcome: 'ok', actor, detail: { id: out.draft.id } });
+      return out;
+    }
+    if (req.method === 'PUT') {
+      const out = await saveDraftFor({ ...base, body, actor });
+      if (body?.dryRun !== true) audit({ action: 'listings.draft.save', outcome: 'ok', actor, detail: { id: out.draft.id, version: out.draft.version } });
+      return out;
+    }
+    // DELETE: discard (kept in history, never removed)
+    if (!Number.isInteger(body?.expectedVersion)) throw new HttpError(400, 'expected_version_required');
+    await discardDraft(base.db, { publicId: body?.id, expectedVersion: body.expectedVersion, actor });
+    audit({ action: 'listings.draft.discard', outcome: 'ok', actor, detail: { id: body.id } });
+    return { discarded: true };
+  },
+});
+
+/** Publisher-only: acknowledge a commercial verification item or resolve a note. */
+export const draftVerifyRoute = guardedRoute({
+  capability: { POST: C.PUBLISH },
+  run: async ({ req, session, deps }) => {
+    const out = await verifyDraftFor({ cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), body: await readJson(req), actor: actorOf(session), ...capsOf(session) });
+    audit({ action: 'listings.draft.verify', outcome: 'ok', actor: actorOf(session), detail: { id: out.draft.id } });
+    return out;
+  },
 });

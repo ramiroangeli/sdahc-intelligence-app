@@ -4,21 +4,34 @@
 // To keep production code free of any bypass, this server does two things production never does:
 //   1. injects a fake `authorise` into the route factories (the real auth path is covered by the tests), and
 //   2. swaps the Supabase CDN script for a stub session so the login gate opens.
+// Drafts are stored in a local PGlite database (.dev-data), never in production.
 // It refuses to start when VERCEL or NODE_ENV=production is set. Real Notion and website reads still happen if
 // NOTION_LISTINGS_TOKEN and NOTION_PROPERTIES_DATA_SOURCE_ID are in the environment.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listRoute, meRoute } from '../api/_lib/routes.js';
+import { readFileSync } from 'node:fs';
+import { PGlite } from '@electric-sql/pglite';
+import { draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
 
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') { console.error('dev-server refuses to run in production'); process.exit(1); }
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PORT = Number(process.env.PORT || 8787);
 const caps = (process.env.DEV_CAPS || 'listings.view,listings.edit,listings.publish').split(',');
-const fakeAuth = async () => ({ staff: { email: 'dev-preview@local', capabilities: caps }, identity: { email: 'dev-preview@local' } });
-const routes = { '/api/listings': listRoute({ authorise: fakeAuth }), '/api/listings/me': meRoute({ authorise: fakeAuth }) };
+const who = process.env.DEV_EMAIL || 'dev-preview@local';
+const fakeAuth = async () => ({ staff: { email: who, capabilities: caps }, identity: { email: who, authUserId: '00000000-0000-4000-8000-000000000001' } });
+// Drafts use a real Postgres (PGlite) running the real migration, stored under .dev-data so drafts survive a restart.
+const pg = new PGlite(process.env.DEV_DB || './.dev-data');
+const hasSchema = (await pg.query("select 1 from pg_namespace where nspname='listings'")).rows.length > 0;
+if (!hasSchema) {
+  await pg.exec('create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;');
+  await pg.exec(readFileSync(new URL('../supabase/migrations/listings_0001_drafts.sql', import.meta.url), 'utf8'));
+}
+const db = { unsafe: async (q, p) => (await pg.query(q, p)).rows, begin: (fn) => pg.transaction((tx) => fn({ unsafe: async (q, p) => (await tx.query(q, p)).rows })) };
+const deps = { authorise: fakeAuth, db };
+const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps) };
 
 const STUB = `<script>(function(){var s={access_token:'dev-preview-token-not-real-0000',user:{email:'dev-preview@local'}};
 var chain=function(){var p=new Proxy(function(){},{get:function(_,k){if(k==='then')return function(r){return Promise.resolve({data:[],error:null}).then(r)};return p},apply:function(){return p}});return p};

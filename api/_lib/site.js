@@ -71,13 +71,31 @@ export async function checkLive(cfg, slug, { fetchImpl = fetch } = {}) {
   const url = listingUrl(cfg, slug);
   const checkedAt = new Date().toISOString();
   if (!url) return { state: 'unknown', httpStatus: null, checkedAt };
-  try {
-    const res = await fetchImpl(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'sdahc-listings-manager' } });
-    const state = res.status === 200 ? 'live' : res.status === 404 || res.status === 410 ? 'not_live' : 'unknown';
-    return { state, httpStatus: res.status, checkedAt };
-  } catch {
-    return { state: 'unknown', httpStatus: null, checkedAt };
+  // one retry: a single network blip or 5xx must not turn a live page into "Unconfirmed"
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const res = await fetchImpl(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'sdahc-listings-manager' } });
+      if (res.status >= 500 && attempt === 0) continue;
+      const state = res.status === 200 ? 'live' : res.status === 404 || res.status === 410 ? 'not_live' : 'unknown';
+      return { state, httpStatus: res.status, checkedAt };
+    } catch { /* retry once */ }
   }
+  return { state: 'unknown', httpStatus: null, checkedAt };
 }
 
 export const fingerprint = (s) => createHash('sha256').update(String(s)).digest('hex').slice(0, 8);
+
+let complianceCache = null;
+/** compliance.json from the website repo (public). Returns { value, unavailable }. Default deny when unreadable. */
+export async function loadCompliance(cfg, { fetchImpl = fetch, now = Date.now, ttlMs = 60_000 } = {}) {
+  if (complianceCache && complianceCache.key === `${cfg.repo}@${cfg.ref}` && now() - complianceCache.at < ttlMs) return complianceCache.value;
+  let value;
+  try {
+    const res = await fetchImpl(`https://raw.githubusercontent.com/${cfg.repo}/${encodeURIComponent(cfg.ref)}/src/data/listings/compliance.json`, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'sdahc-listings-manager' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    value = { compliance: await res.json(), unavailable: false };
+  } catch { value = { compliance: undefined, unavailable: true }; }
+  complianceCache = { key: `${cfg.repo}@${cfg.ref}`, at: now(), value };
+  return value;
+}
+export const clearComplianceCache = () => { complianceCache = null; };

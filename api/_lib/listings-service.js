@@ -41,8 +41,19 @@ export function combine({ notion, snapshot, withdrawn, live, url }) {
   };
 }
 
-export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Date() } = {}) {
-  const sources = { notion: { state: 'ok' }, website: { state: 'ok' } };
+/** Attach saved drafts to their rows, or add a draft-only row. A draft never changes the website/deployment columns. */
+export function attachDrafts(listings, drafts) {
+  const byId = new Map(listings.map((l) => [l.id, l]));
+  for (const d of drafts) {
+    const row = byId.get(d.id);
+    if (row) { row.draft = d; continue; }
+    listings.push({ id: d.id, name: d.label, state: null, designCategories: [], buildType: null, notion: null, website: null, deployment: { state: 'not_published' }, inSync: true, notes: [], draft: d });
+  }
+  return listings.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Date(), drafts = null } = {}) {
+  const sources = { notion: { state: 'ok' }, website: { state: 'ok' }, drafts: drafts ? { state: drafts.state } : { state: 'not_configured' } };
 
   let properties = [];
   if (!cfg.notion) sources.notion = { state: 'not_configured' };
@@ -69,6 +80,6 @@ export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Da
     const live = snapshot && !withdrawn && sources.website.state !== 'error' ? await checkLive(cfg, snapshot.slug, { fetchImpl }) : null;
     return combine({ notion, snapshot: sources.website.state === 'error' ? null : snapshot, withdrawn, live, url });
   }));
-  const listings = rows.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const listings = attachDrafts(rows.filter(Boolean), drafts?.items ?? []);
   return { generatedAt: now().toISOString(), sources, listings };
 }
