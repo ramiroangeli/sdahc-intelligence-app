@@ -59,7 +59,7 @@ display price, featured), live validation, private preview of the card and detai
 saving person's identity, Notion-change detection, and commercial verification items. No Notion writes. No photos. No publishing.
 
 - Drafts live in a NEW database schema `listings` (migration `supabase/migrations/listings_0001_drafts.sql`, **not applied yet**).
-- Validation uses the website's own rules, vendored from the website repo: `vendor/listings-core.mjs`
+- Validation uses the website's own rules, vendored from the website repo: `api/_lib/vendor/listings-core.mjs`
   (rebuild with `node scripts/vendor-listings-core.mjs --from <clean website checkout>` when the website rules change).
 - Capabilities: Viewer reads. Editor (`listings.edit`) creates and saves drafts, adds verification notes.
   Publisher (`listings.publish`) acknowledges commercial verification items. Editor and Publisher are independent.

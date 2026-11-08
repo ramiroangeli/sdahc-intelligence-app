@@ -1,7 +1,7 @@
 // Validation of a draft. The rules are the website's own (vendor/listings-core.mjs is built from the website repo), so a
 // draft that passes here passes the same address, price, safety, Victorian-compliance and Basic checks the publication
 // pipeline applies. Saving is never blocked by these results: an unfinished draft is allowed. They tell staff what is missing.
-import * as core from '../../vendor/listings-core.mjs';
+import * as core from './vendor/listings-core.mjs';
 
 export const CONTENT_LIMITS = { title: 200, description: 20000, publicAddress: 200, displayPrice: 40 };
 const PRICING_KEYS = { asking_price: 'asking_price', price_guide: 'price_guide', eoi: 'eoi', contact_agent: 'contact_agent' };
