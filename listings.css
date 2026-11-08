@@ -1,0 +1,24 @@
+/* Website > Listings. Uses the app's existing tokens (styles.css :root). */
+.ls-actions { display: flex; gap: 10px; align-items: center; }
+.ls-state { padding: 40px 24px; text-align: center; color: var(--ink-mute); }
+.ls-state h2 { font-family: var(--font-display); color: var(--ink); margin: 0 0 8px; font-size: 18px; }
+.ls-table-wrap { margin-top: 18px; }
+.ls-table tbody tr { cursor: default; }
+.ls-table tbody tr.ls-note-row:hover { background: transparent; }
+.ls-name { font-weight: 600; color: var(--ink); }
+.ls-sub { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; }
+.ls-link { color: var(--blue); text-decoration: none; font-family: var(--font-mono); font-size: 12px; }
+.ls-link:hover { text-decoration: underline; }
+.ls-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid transparent; }
+.ls-badge-notion { background: #EAF2FD; color: #0B4F94; border-color: #C9DDF5; }
+.ls-badge-live { background: #DEF5E6; color: #146C43; border-color: #A7DFBB; }
+.ls-badge-warn { background: #FFF4DB; color: #8A5A00; border-color: #F2D894; }
+.ls-badge-bad { background: #FBE5E4; color: #A12622; border-color: #F0B8B6; }
+.ls-badge-muted { background: var(--bg-inset); color: var(--ink-mute); border-color: var(--panel-border); }
+.ls-note-row td { padding: 0 24px 12px; border-bottom: 1px solid var(--panel-border-soft); }
+.ls-notes { margin: 0; padding: 8px 12px 8px 28px; background: #FFF9EA; border: 1px solid #F2E2B0; border-radius: var(--radius-sm); font-size: 12.5px; color: #6B4E00; }
+.ls-banner { margin: 0 24px 16px; padding: 10px 14px; background: #FFF9EA; border: 1px solid #F2E2B0; border-radius: var(--radius-sm); font-size: 12.5px; color: #6B4E00; }
+.ls-add-panel { margin: 0 24px 16px; padding: 14px 16px; background: var(--bg-inset); border: 1px dashed var(--panel-border); border-radius: var(--radius-sm); font-size: 13px; color: var(--ink-soft); }
+.ls-add-panel p { margin: 6px 0 0; }
+.ls-foot { padding: 14px 24px; font-size: 11.5px; color: var(--ink-faint); }
+.ls-table td .ls-sub { white-space: nowrap; }

@@ -213,6 +213,7 @@ const PAGE_META = {
   'sda-report':  { eyebrow: 'Growth',                   title: 'SDA Report' },
   marketing:     { eyebrow: 'Growth',                   title: 'Marketing' },
   'market-intel':{ eyebrow: 'Growth',                   title: 'Market Intelligence' },
+  listings:      { eyebrow: 'Website',                  title: 'Listings' },
   playbook:      { eyebrow: 'Reference',                title: 'SDAHC Playbook' },
   settings:      { eyebrow: 'System',                   title: 'Settings' },
 };
@@ -237,7 +238,7 @@ const PAGE_META = {
 const LAZY_PAGE_RENDERERS = {
   overview: renderOverview, pipeline: renderPipelinePage, revenue: renderRevenuePage, delivery: renderDeliveryPage, funnel: renderFunnelPage,
   'sda-report': renderSdaReportPage, marketing: renderMarketingPage, 'market-intel': renderMarketIntelPage,
-  playbook: renderPlaybookPage, settings: renderSettingsPage,
+  playbook: renderPlaybookPage, settings: renderSettingsPage, listings: renderListingsPage,
 };
 const renderedViews = new Set();
 
@@ -249,9 +250,11 @@ const REAL_DATA_PAGES = new Set(['overview', 'pipeline', 'revenue']);
 
 function updateDataSourceBadge(view) {
   const badge = document.getElementById('assumptions-badge');
-  const isLive = REAL_DATA_PAGES.has(view);
+  const isLive = REAL_DATA_PAGES.has(view) || view === 'listings';
   badge.classList.toggle('live-badge', isLive);
-  badge.innerHTML = isLive ? '<span class="dot"></span>Live Data — Supabase' : '<span class="dot"></span>Prototype — Mock Data';
+  badge.innerHTML = view === 'listings'
+    ? '<span class="dot"></span>Live Data: Notion + Website'
+    : isLive ? '<span class="dot"></span>Live Data — Supabase' : '<span class="dot"></span>Prototype — Mock Data';
 }
 
 function initNav() {
