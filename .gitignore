@@ -4,3 +4,4 @@ node_modules/
 .env
 sync/node_modules
 sync/.env
+.dev-data

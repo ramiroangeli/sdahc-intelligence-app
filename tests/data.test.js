@@ -28,12 +28,12 @@ test('public id matches the website adapter derivation', () => {
   assert.equal(publicIdFor(PAGE_ID), `lst_${createHash('sha256').update(PAGE_ID).digest('hex').slice(0, 10)}`);
 });
 test('house and unit numbers are removed from the CRM name', () => {
-  assert.equal(maskStreetNumber('3/19 Rutherford Grove, Armstrong Creek VIC 3217'), 'Rutherford Grove, Armstrong Creek VIC 3217');
+  assert.equal(maskStreetNumber('5/50 Rutherford Grove, Armstrong Creek VIC 3217'), 'Rutherford Grove, Armstrong Creek VIC 3217');
   assert.equal(maskStreetNumber('Unit 2/45-47 Smith St, Town QLD 4000'), 'Smith St, Town QLD 4000');
   assert.equal(maskStreetNumber('12A Example Road'), 'Example Road');
   assert.equal(maskStreetNumber('Rutherford Grove'), 'Rutherford Grove');
-  const p = page(); p.properties.Name = { type: 'title', title: [{ plain_text: '3/19 Rutherford Grove, Armstrong Creek VIC 3217' }] };
-  assert.ok(!/\d+\/\d+|\b19\b/.test(mapPage(p).name));
+  const p = page(); p.properties.Name = { type: 'title', title: [{ plain_text: '5/50 Rutherford Grove, Armstrong Creek VIC 3217' }] };
+  assert.ok(!/\d+\/\d+|\b50\b/.test(mapPage(p).name));
 });
 test('mapPage returns only the allowlisted fields and no CRM data', () => {
   const out = JSON.stringify(mapPage(page()));
