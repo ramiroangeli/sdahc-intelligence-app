@@ -13,7 +13,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
-import { draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
+import { draftPhotoRoute, draftPhotosRoute, draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
 
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') { console.error('dev-server refuses to run in production'); process.exit(1); }
 
@@ -29,9 +29,15 @@ if (!hasSchema) {
   await pg.exec('create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;');
   await pg.exec(readFileSync(new URL('../supabase/migrations/listings_0001_drafts.sql', import.meta.url), 'utf8'));
 }
+if (!(await pg.query("select 1 from information_schema.columns where table_schema='listings' and table_name='drafts' and column_name='photos'")).rows.length) {
+  await pg.exec(readFileSync(new URL('../supabase/migrations/listings_0002_photos.sql', import.meta.url), 'utf8'));
+}
 const db = { unsafe: async (q, p) => (await pg.query(q, p)).rows, begin: (fn) => pg.transaction((tx) => fn({ unsafe: async (q, p) => (await tx.query(q, p)).rows })) };
-const deps = { authorise: fakeAuth, db };
-const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps) };
+// private staging store: in memory in the preview, never a real Blob store
+const mem = new Map();
+const blob = { put: async (p, b) => { mem.set(p, b); }, get: async (p) => mem.get(p) ?? null, del: async (ps) => { for (const p of ps) mem.delete(p); } };
+const deps = { authorise: fakeAuth, db, blob };
+const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-photos': draftPhotosRoute(deps), '/api/listings/draft-photo': draftPhotoRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps) };
 
 const STUB = `<script>(function(){var s={access_token:'dev-preview-token-not-real-0000',user:{email:'dev-preview@local'}};
 var chain=function(){var p=new Proxy(function(){},{get:function(_,k){if(k==='then')return function(r){return Promise.resolve({data:[],error:null}).then(r)};return p},apply:function(){return p}});return p};

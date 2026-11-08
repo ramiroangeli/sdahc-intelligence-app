@@ -52,7 +52,7 @@ window.addEventListener('hashchange', () => { if (lsActive()) lsRouteChanged(); 
 function renderListingsPage() { lsRouteChanged(); }
 
 async function lsRouteChanged() {
-  LS.flash = null; LS.notionConflict = null; LS.verifyOpen = null; LS.confirm = null;
+  LS.flash = null; LS.notionConflict = null; LS.verifyOpen = null; LS.confirm = null; LS.photoMsg = null; LS.removeAsk = null;
   const r = lsRoute();
   if (r.name === 'list') return lsLoadList();
   if (r.name === 'new') return lsLoadPicker();
@@ -92,7 +92,7 @@ function listingRow(l) {
     l.deployment.checkedAt ? lsEl('div', { class: 'ls-sub', text: 'Checked ' + new Date(l.deployment.checkedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }) }) : null);
   const draftCell = lsEl('td', null, l.draft
     ? lsEl('div', null, lsEl('a', { class: 'ls-link-strong', href: '#/listings/draft/' + l.id, text: 'Draft v' + l.draft.version }),
-        lsEl('div', { class: 'ls-sub', text: l.draft.fieldsFilled + ' of ' + l.draft.fieldsTotal + ' fields, saved by ' + l.draft.updatedBy.split('@')[0] + ' ' + when(l.draft.updatedAt) }),
+        lsEl('div', { class: 'ls-sub', text: l.draft.fieldsFilled + ' of ' + l.draft.fieldsTotal + ' fields, ' + (l.draft.photoCount || 0) + ' photos, saved by ' + l.draft.updatedBy.split('@')[0] + ' ' + when(l.draft.updatedAt) }),
         l.draft.openNotes ? lsEl('div', { class: 'ls-sub ls-warn-text', text: l.draft.openNotes + ' open verification note' + (l.draft.openNotes > 1 ? 's' : '') }) : null)
     : lsEl('span', { class: 'ls-sub', text: 'None' }));
   const tr = lsEl('tr', null,
@@ -262,6 +262,7 @@ function sideContent() {
   const items = [
     ['Required fields complete', v.complete],
     ['Photographs added', !v.blockers.some((b) => b.code === 'photos_required')],
+    ['Every image described and privacy-checked', LS.live.photos ? LS.live.photos.items.length > 0 && LS.live.photos.items.every((x) => x.issues.length === 0) : false],
     ['Commercial verification clear', ver.open === 0],
     ['Compliance cleared', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
   ];
@@ -317,22 +318,26 @@ function editForm() {
     field('Web public address', 'publicAddress', lsEl('input', { id: 'ls-f-publicAddress', class: 'ls-input', type: 'text', value: f.publicAddress, disabled: ro, placeholder: 'Street Name, Suburb VIC 3000', oninput: onEdit('publicAddress', (e) => e.target.value) }), FIELD_HELP.publicAddress),
     !ro && sugg && sugg !== f.publicAddress ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.form.publicAddress = sugg; LS.dirty = true; lsPaint(); lsLive(); }, text: 'Use suggested: ' + sugg }) : null,
     lsEl('div', { class: 'ls-row' }, field('Web pricing mode', 'pricingMode', sel), priceField),
-    lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-f-featured', checked: f.featured, disabled: ro, onchange: (e) => { LS.form.featured = e.target.checked; LS.dirty = true; lsMarkDirty(); } }), ' Web featured (shown first when published)'));
+    lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-f-featured', checked: f.featured, disabled: ro, onchange: (e) => { LS.form.featured = e.target.checked; LS.dirty = true; lsMarkDirty(); } }), ' Web featured (shown first when published)'),
+    photosSection());
 }
 
 function previewContent() {
   const pv = LS.live.preview;
-  const card = lsEl('div', { class: 'ls-pv-card' }, lsEl('div', { class: 'ls-pv-photo', text: 'No photograph yet' }),
+  const ph = LS.live.photos || LS.d.photos; const byId = new Map(ph.items.map((x) => [x.id, x])); const order = ph.publicOrder.map((id) => byId.get(id)).filter(Boolean);
+  const lead = order.find((x) => x.kind !== 'floorplan');
+  const card = lsEl('div', { class: 'ls-pv-card' }, lead ? lsEl('div', { class: 'ls-pv-photo ls-pv-img' }, lsPhotoImg(lead.id, 960, lead.alt)) : lsEl('div', { class: 'ls-pv-photo', text: 'No photograph yet' }),
     lsEl('div', { class: 'ls-pv-body' }, lsEl('div', { class: 'ls-pv-chips' }, badge(pv.status, 'ls-badge-live'), ...pv.design.map((d) => badge(d, 'ls-badge-notion')), pv.featured ? badge('Featured', 'ls-badge-draft') : null),
       lsEl('h4', { text: pv.title || '(no title yet)' }), lsEl('div', { class: 'ls-pv-addr', text: pv.addressLine || '(no address yet)' }), lsEl('div', { class: 'ls-pv-price', text: pv.pricing || '(no pricing mode yet)' }),
       lsEl('p', { text: pv.summary || '(no description yet)' })));
-  const detail = lsEl('div', { class: 'ls-pv-detail' }, lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg', text: 'Photo gallery: added in a later step' }),
+  const detail = lsEl('div', { class: 'ls-pv-detail' }, order.length ? lsEl('div', { class: 'ls-pv-gallery' }, lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg ls-pv-img' }, lsPhotoImg(order[0].id, 1600, order[0].alt)),
+      order.length > 1 ? lsEl('div', { class: 'ls-pv-thumbs' }, order.slice(1).map((x) => lsEl('div', { class: 'ls-pv-thumb' + (x.kind === 'floorplan' ? ' ls-pv-plan' : '') }, lsPhotoImg(x.id, 480, x.alt), x.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null))) : null) : lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg', text: 'No photographs yet' }),
     lsEl('h3', { text: pv.title || '(no title yet)' }), lsEl('div', { class: 'ls-pv-addr', text: pv.addressLine || '(no address yet)' }),
     lsEl('div', { class: 'ls-pv-price', text: pv.pricing || '(no pricing mode yet)' }),
     lsEl('div', { class: 'ls-pv-facts' }, pv.design.length ? lsEl('span', { text: 'Design category: ' + pv.design.join(', ') }) : null, pv.buildType ? lsEl('span', { text: 'Building: ' + pv.buildType }) : null),
     ...(pv.description.length ? pv.description.map((t) => lsEl('p', { text: t })) : [lsEl('p', { class: 'ls-sub', text: '(no description yet)' })]));
   return lsEl('div', null,
-    lsEl('div', { class: 'ls-banner' }, 'Private preview. This is how the card and detail page will read, built from your current text. It is not on the website, and photographs are added in a later step.'),
+    lsEl('div', { class: 'ls-banner' }, 'Private preview. This is how the card and detail page will read, built from your current text. It is not on the website. Photographs shown here are private staged copies.'),
     lsEl('div', { class: 'ls-pv-grid' }, lsEl('div', null, lsEl('h4', { class: 'ls-pv-h', text: 'Listing card' }), card), lsEl('div', null, lsEl('h4', { class: 'ls-pv-h', text: 'Detail page' }), detail)));
 }
 
@@ -360,6 +365,156 @@ function paintDraft(root) {
       lsEl('div', { class: 'ls-main' }, r.tab === 'edit' ? editForm() : lsEl('div', { id: 'ls-preview-host' }, previewContent())),
       lsEl('aside', { class: 'ls-side', id: 'ls-side' }, sideContent()))));
 }
+
+
+/* ------------------------------------------------------------------ photographs (private staging) */
+/* Images are fetched with the user's session and shown from short-lived object URLs: there is no public image URL, and no
+   storage credential in this file. Uploaded bytes go to this app's own /api, which checks the file and strips metadata. */
+const PHOTO_MAX_BYTES = 3600000;   /* the server accepts up to 4 MB: larger photos are shrunk in the browser first */
+const PHOTO_MAX_SIDE = 2800;
+const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const photoCache = new Map();
+LS.photoBusy = null; LS.photoMsg = null; LS.dragId = null; LS.removeAsk = null;
+
+async function lsFetchPhoto(photoId, w) {
+  const key = LS.d.draft.id + ':' + photoId + ':' + w;
+  if (photoCache.has(key)) return photoCache.get(key);
+  const { data } = await getCurrentSession();
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw new Error('unauthenticated');
+  const res = await fetch('/api/listings/draft-photo?id=' + LS.d.draft.id + '&photo=' + photoId + '&w=' + w, { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' });
+  if (!res.ok) throw new Error('photo_' + res.status);
+  const url = URL.createObjectURL(await res.blob());
+  photoCache.set(key, url);
+  return url;
+}
+/* An <img> that fills in once the authorised fetch completes. */
+function lsPhotoImg(photoId, w, alt, cls) {
+  const img = lsEl('img', { class: cls || '', alt: alt || '', loading: 'lazy', draggable: 'false' });
+  lsFetchPhoto(photoId, w).then((u) => { img.src = u; }, () => { img.alt = 'Image unavailable'; img.classList.add('ls-img-fail'); });
+  return img;
+}
+
+/* Shrinks a large photograph in the browser (re-encoding also drops its EXIF) so it fits the 4 MB upload limit. The server
+   still validates and strips every file again; this is only a convenience for large camera photos. */
+async function lsPrepareFile(file) {
+  if (!PHOTO_TYPES.includes(file.type)) throw Object.assign(new Error('type'), { friendly: file.name + ': only JPG, PNG and WebP images can be added.' });
+  if (file.size <= PHOTO_MAX_BYTES) return { blob: file, type: file.type };
+  const bmp = await createImageBitmap(file).catch(() => null);
+  if (!bmp) throw Object.assign(new Error('read'), { friendly: file.name + ': this image could not be read.' });
+  const k = Math.min(1, PHOTO_MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
+  if (!blob || blob.size > PHOTO_MAX_BYTES + 400000) throw Object.assign(new Error('big'), { friendly: file.name + ': still too large after shrinking. Use a smaller export.' });
+  return { blob, type: 'image/jpeg' };
+}
+
+const PHOTO_ERR = {
+  unsupported_image_type: 'Only JPG, PNG and WebP images can be added.', image_type_mismatch: 'The file is not the type it claims to be.', image_too_small: 'The image is too small. Use one at least 960 pixels wide.',
+  unreadable_image: 'This image could not be read. It may be damaged.', animated_image: 'Animated images are not supported.', duplicate_image: 'That image is already in the gallery.',
+  too_many_photos: 'The gallery is full (24 images).', image_too_large: 'The image is too large.', draft_changed: 'Someone else saved this draft first. Reload to see their version.',
+  photos_not_configured: 'Photo storage is not set up yet. An administrator needs to finish the setup.', not_configured: 'Photo storage is not set up yet.',
+};
+const photoErrText = (e) => (e.friendly || PHOTO_ERR[e.message] || (e.status === 403 ? 'You need the Editor capability.' : 'The photo change could not be saved (' + e.message + ').'));
+
+function lsAdopt(d) { /* take the saved draft from the server but keep any unsaved text the person is typing */
+  LS.d = d; LS.live = d; if (LS.dirty) lsLive();
+}
+
+async function lsUploadFiles(files, opts) {
+  opts = opts || {};
+  if (LS.photoBusy) return;
+  const list = [...files]; if (!list.length) return;
+  LS.photoMsg = null;
+  for (const [i, file] of list.entries()) {
+    LS.photoBusy = 'Adding ' + (i + 1) + ' of ' + list.length + '...'; lsRefreshPhotos();
+    try {
+      const { blob, type } = await lsPrepareFile(file);
+      const { data } = await getCurrentSession();
+      const token = data && data.session && data.session.access_token;
+      if (!token) throw Object.assign(new Error('unauthenticated'), { status: 401 });
+      const q = '?id=' + LS.d.draft.id + '&expectedVersion=' + LS.d.draft.version + (opts.replace ? '&replace=' + opts.replace : '') + (opts.floorplan ? '&kind=floorplan' : '');
+      const res = await fetch('/api/listings/draft-photos' + q, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream', 'X-Image-Type': type }, body: blob, cache: 'no-store' });
+      let json = null; try { json = await res.json(); } catch (e) { /* not JSON */ }
+      if (!res.ok) throw Object.assign(new Error((json && json.error) || 'upload_failed'), { status: res.status });
+      lsAdopt(json); LS.photoMsg = { ok: opts.replace ? 'Image replaced. Please review it again for privacy.' : 'Added. Describe it and confirm the privacy review.' };
+    } catch (e) { LS.photoMsg = { bad: (e.friendly || (file.name + ': ' + photoErrText(e))) }; if (e.message === 'draft_changed') break; }
+  }
+  LS.photoBusy = null; lsPaint();
+}
+
+/* Saves order, cover, floorplan, alt text, privacy review and removals in one versioned call. */
+async function lsGallerySave(mutate, okText) {
+  if (LS.photoBusy) return;
+  const items = LS.d.photos.items.map((p) => ({ id: p.id, alt: p.alt, kind: p.kind, privacyReviewed: p.privacyReviewed }));
+  let cover = LS.d.photos.coverId; const next = mutate(items.map((x) => ({ ...x })), cover);
+  LS.photoBusy = 'Saving...'; lsRefreshPhotos();
+  try {
+    const d = await lsApi('PUT', '/api/listings/draft-photos', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, photos: next.items, coverId: next.coverId });
+    lsAdopt(d); LS.photoMsg = okText ? { ok: okText } : null;
+  } catch (e) { LS.photoMsg = { bad: photoErrText(e) }; }
+  LS.photoBusy = null; LS.removeAsk = null; lsPaint();
+}
+const lsSetCover = (id) => lsGallerySave((items) => ({ items, coverId: id }), 'Cover image set.');
+const lsMove = (id, delta) => lsGallerySave((items, cover) => { const i = items.findIndex((x) => x.id === id); const j = i + delta; if (i < 0 || j < 0 || j >= items.length) return { items, coverId: cover }; const [it] = items.splice(i, 1); items.splice(j, 0, it); return { items, coverId: cover }; }, 'Order saved.');
+const lsDropOn = (targetId) => { const from = LS.dragId; LS.dragId = null; if (!from || from === targetId) return; lsGallerySave((items, cover) => { const i = items.findIndex((x) => x.id === from); const [it] = items.splice(i, 1); const t = items.findIndex((x) => x.id === targetId); items.splice(t, 0, it); return { items, coverId: cover }; }, 'Order saved.'); };
+const lsSetKind = (id, floor) => lsGallerySave((items, cover) => ({ items: items.map((x) => (x.id === id ? { ...x, kind: floor ? 'floorplan' : 'photo' } : x)), coverId: cover === id && floor ? null : cover }), floor ? 'Marked as a floorplan: it shows last in the gallery.' : 'Marked as a photograph.');
+const lsSetAlt = (id, alt) => lsGallerySave((items, cover) => ({ items: items.map((x) => (x.id === id ? { ...x, alt } : x)), coverId: cover }), 'Description saved.');
+const lsSetReview = (id, on) => lsGallerySave((items, cover) => ({ items: items.map((x) => (x.id === id ? { ...x, privacyReviewed: on } : x)), coverId: cover }), on ? 'Privacy review recorded.' : 'Privacy review cleared.');
+const lsRemovePhoto = (id) => lsGallerySave((items, cover) => ({ items: items.filter((x) => x.id !== id), coverId: cover === id ? null : cover }), 'Image removed.');
+
+function photoCard(p, idx, total, ro) {
+  const asking = LS.removeAsk === p.id; const busy = !!LS.photoBusy;
+  const cover = LS.d.photos.coverId === p.id;
+  const replaceInput = lsEl('input', { type: 'file', accept: PHOTO_TYPES.join(','), class: 'ls-hidden', onchange: (e) => { const f = e.target.files; e.target.value = ''; lsUploadFiles(f, { replace: p.id }); } });
+  const card = lsEl('li', { class: 'ls-ph' + (cover ? ' ls-ph-cover' : '') + (p.kind === 'floorplan' ? ' ls-ph-plan' : ''), 'data-photo': p.id, draggable: ro ? false : 'true',
+    ondragstart: (e) => { LS.dragId = p.id; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', p.id); } catch (x) { /* ignore */ } card.classList.add('ls-ph-drag'); },
+    ondragend: () => { card.classList.remove('ls-ph-drag'); },
+    ondragover: (e) => { if (LS.dragId) { e.preventDefault(); card.classList.add('ls-ph-over'); } },
+    ondragleave: () => card.classList.remove('ls-ph-over'),
+    ondrop: (e) => { e.preventDefault(); card.classList.remove('ls-ph-over'); lsDropOn(p.id); } },
+    lsEl('div', { class: 'ls-ph-img' }, lsPhotoImg(p.id, 480, p.alt || 'Staged image'),
+      cover ? lsEl('span', { class: 'ls-ph-flag', text: 'Cover' }) : p.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null),
+    lsEl('div', { class: 'ls-ph-body' },
+      lsEl('label', { class: 'ls-label', for: 'ls-alt-' + p.id, text: 'Description (alt text)' }),
+      lsEl('input', { id: 'ls-alt-' + p.id, class: 'ls-input', type: 'text', maxlength: '200', value: p.alt, disabled: ro || busy, placeholder: 'What the image shows, e.g. Front of the house with a ramp',
+        onchange: (e) => { if (e.target.value.trim() !== (p.alt || '').trim()) lsSetAlt(p.id, e.target.value); } }),
+      lsEl('label', { class: 'ls-check-row ls-ph-row' }, lsEl('input', { type: 'checkbox', checked: p.kind === 'floorplan', disabled: ro || busy, onchange: (e) => lsSetKind(p.id, e.target.checked) }), ' This is a floorplan (shown last)'),
+      lsEl('label', { class: 'ls-check-row ls-ph-row ls-ph-review' }, lsEl('input', { type: 'checkbox', id: 'ls-rev-' + p.id, checked: p.privacyReviewed, disabled: ro || busy, onchange: (e) => lsSetReview(p.id, e.target.checked) }),
+        ' I checked this image: no house or unit number, letterbox, sign, number plate or identifiable person'),
+      p.privacyReviewed && p.reviewedBy ? lsEl('div', { class: 'ls-sub', text: 'Reviewed by ' + p.reviewedBy.split('@')[0] + ' ' + when(p.reviewedAt) }) : null,
+      p.issues.length ? lsEl('ul', { class: 'ls-ferr ls-ph-issues' }, p.issues.map((i) => lsEl('li', { text: i.message }))) : lsEl('div', { class: 'ls-ph-ok', text: 'Ready' }),
+      ro ? null : lsEl('div', { class: 'ls-ph-actions' },
+        cover || p.kind === 'floorplan' ? null : lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy, onclick: () => lsSetCover(p.id), text: 'Make cover' }),
+        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy || idx === 0, title: 'Move earlier', 'aria-label': 'Move earlier', onclick: () => lsMove(p.id, -1), text: '←' }),
+        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy || idx === total - 1, title: 'Move later', 'aria-label': 'Move later', onclick: () => lsMove(p.id, 1), text: '→' }),
+        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy, onclick: () => replaceInput.click(), text: 'Replace' }), replaceInput,
+        asking ? lsEl('span', { class: 'ls-ph-confirm' }, 'Remove this image? ',
+          lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => lsRemovePhoto(p.id), text: 'Yes, remove' }),
+          lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.removeAsk = null; lsPaint(); }, text: 'Keep' }))
+          : lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy, onclick: () => { LS.removeAsk = p.id; lsPaint(); }, text: 'Remove' }))));
+  return card;
+}
+
+function photosSection() {
+  const ro = readOnly(); const ph = LS.d.photos;
+  const picker = lsEl('input', { type: 'file', id: 'ls-photo-input', accept: PHOTO_TYPES.join(','), multiple: true, class: 'ls-hidden', onchange: (e) => { const f = e.target.files; e.target.value = ''; lsUploadFiles(f); } });
+  const zone = ro ? null : lsEl('div', { class: 'ls-drop', id: 'ls-photo-drop', tabindex: '0', role: 'button', 'aria-label': 'Add photographs',
+    onclick: () => picker.click(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); } },
+    ondragover: (e) => { if (!LS.dragId) { e.preventDefault(); zone.classList.add('over'); } }, ondragleave: () => zone.classList.remove('over'),
+    ondrop: (e) => { if (LS.dragId) return; e.preventDefault(); zone.classList.remove('over'); lsUploadFiles(e.dataTransfer.files); } },
+    lsEl('strong', { text: LS.photoBusy || 'Add photographs' }), lsEl('span', { text: 'Drag images here or click to choose. JPG, PNG or WebP, at least 960 pixels wide.' }));
+  return lsEl('div', { class: 'ls-photos', id: 'ls-photos' },
+    lsEl('h3', { class: 'ls-ph-h', text: 'Photographs' }),
+    lsEl('div', { class: 'ls-help', text: 'Private: only signed-in staff can see these. Nothing here is published. Location data is removed from every image. Originals are not kept.' }),
+    LS.photoMsg ? lsEl('div', { class: 'ls-banner ' + (LS.photoMsg.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.photoMsg.bad ? 'alert' : 'status', text: LS.photoMsg.bad || LS.photoMsg.ok }) : null,
+    ph.readiness.gallery.length ? lsEl('ul', { class: 'ls-ferr ls-ph-gal' }, ph.readiness.gallery.map((g) => lsEl('li', { text: g.message }))) : null,
+    zone, picker,
+    ph.items.length ? lsEl('ul', { class: 'ls-ph-grid' }, ph.items.map((p, i) => photoCard(p, i, ph.items.length, ro))) : lsEl('div', { class: 'ls-sub', text: 'No images yet.' }),
+    ph.items.length ? lsEl('div', { class: 'ls-help', text: 'Drag a card to reorder, or use the arrows. The cover shows on the listing card; floorplans always show last.' }) : null);
+}
+function lsRefreshPhotos() { const el = document.getElementById('ls-photos'); if (el) el.replaceWith(photosSection()); }
 
 /* ------------------------------------------------------------------ paint */
 function lsPaint() {

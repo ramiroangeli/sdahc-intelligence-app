@@ -10,6 +10,17 @@ export class HttpError extends Error {
   }
 }
 
+/** A non-JSON response (an image). Returned from a guarded route's `run`, so authorisation has already happened. */
+export class RawResponse {
+  constructor(status, headers, body) { this.status = status; this.headers = headers; this.body = body; }
+}
+
+export function sendRaw(res, raw) {
+  res.statusCode = raw.status;
+  for (const [k, v] of Object.entries({ 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', ...raw.headers })) res.setHeader(k, v);
+  res.end(raw.body);
+}
+
 export function sendJson(res, status, body) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -42,6 +53,15 @@ export async function readJson(req) {
   for await (const c of req) { size += c.length; if (size > 65536) throw new HttpError(413, 'too_large'); chunks.push(c); }
   if (!size) throw new HttpError(400, 'invalid_json');
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'invalid_json'); }
+}
+
+/** Raw request body (an image), at most `limit` bytes. Vercel pre-reads octet-stream bodies into a Buffer; plain node streams are read here. */
+export async function readBuffer(req, limit) {
+  if (Buffer.isBuffer(req.body)) { if (req.body.length > limit) throw new HttpError(413, 'image_too_large'); return req.body; }
+  if (req.body !== undefined && req.body !== null && typeof req.body !== 'object') throw new HttpError(400, 'invalid_body');
+  const chunks = []; let size = 0;
+  for await (const c of req) { size += c.length; if (size > limit) throw new HttpError(413, 'image_too_large'); chunks.push(c); }
+  return Buffer.concat(chunks);
 }
 
 export const PUBLIC_ID_RE = /^lst_[a-f0-9]{10}$/;

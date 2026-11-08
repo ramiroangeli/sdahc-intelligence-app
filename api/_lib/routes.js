@@ -6,7 +6,9 @@ import { listDrafts, discardDraft } from './drafts-repo.js';
 import { audit } from './audit.js';
 import { buildListings } from './listings-service.js';
 import { guardedRoute } from './guard.js';
-import { HttpError, queryOf, readJson } from './http.js';
+import { HttpError, queryOf, readBuffer, readJson } from './http.js';
+import { MAX_BYTES } from './photo-process.js';
+import { addPhoto, readPhoto, saveGallery } from './photos.js';
 import { CAPABILITIES as C, hasCapability } from './permissions.js';
 
 const dataCfg = (deps) => deps.dataConfig ?? loadDataConfig(deps.env ?? process.env);
@@ -74,5 +76,38 @@ export const draftVerifyRoute = guardedRoute({
     const out = await verifyDraftFor({ cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), body: await readJson(req), actor: actorOf(session), ...capsOf(session) });
     audit({ action: 'listings.draft.verify', outcome: 'ok', actor: actorOf(session), detail: { id: out.draft.id } });
     return out;
+  },
+});
+
+/** Draft photographs. Upload (raw image bytes) and gallery edits are Editor-only; every change is a versioned draft save. */
+export const draftPhotosRoute = guardedRoute({
+  capability: { POST: C.EDIT, PUT: C.EDIT },
+  run: async ({ req, session, deps }) => {
+    const env = deps.env ?? process.env;
+    const base = { cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), ...capsOf(session) };
+    const actor = actorOf(session);
+    const q = queryOf(req);
+    let id;
+    if (req.method === 'POST') {
+      id = q.id;
+      const body = await readBuffer(req, MAX_BYTES);
+      const saved = await addPhoto({ db: base.db, deps, env, id, body, declaredType: req.headers?.['x-image-type'], expectedVersion: Number(q.expectedVersion), replaceId: q.replace || undefined, kind: q.kind, actor });
+      audit({ action: q.replace ? 'listings.photo.replace' : 'listings.photo.add', outcome: 'ok', actor, detail: { id, version: saved.version } });
+    } else {
+      const body = await readJson(req);
+      id = body?.id;
+      const { saved, removed } = await saveGallery({ db: base.db, deps, env, id, expectedVersion: body?.expectedVersion, items: body?.photos, coverId: body?.coverId, actor });
+      audit({ action: 'listings.photo.save', outcome: 'ok', actor, detail: { id, version: saved.version, removed } });
+    }
+    return openDraft({ ...base, id });
+  },
+});
+
+/** One staged image. Read-only staff can view; the bytes are fetched with the user's session, never from a public URL. */
+export const draftPhotoRoute = guardedRoute({
+  capability: C.VIEW,
+  run: async ({ req, deps }) => {
+    const q = queryOf(req);
+    return readPhoto({ db: getDb(deps), deps, env: deps.env ?? process.env, id: q.id, photoId: q.photo, w: q.w });
   },
 });

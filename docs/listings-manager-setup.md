@@ -84,3 +84,34 @@ System items come from the CRM (for example "CRM records 2 of 3 places occupied"
 the acknowledgement stops counting if the CRM fact changes. Editors can add free-text notes (for example an advertised figure that
 differs from the CRM), and a Publisher resolves them. Open items block publication, never saving. Public wording that claims
 "fully leased" while the CRM says otherwise is an error.
+
+---
+
+# Phase 3: photographs (private staging; nothing is published)
+
+## What was added
+A Photographs section in the draft editor: upload JPG, PNG or WebP, thumbnails, drag-and-drop (or arrow) reordering, cover image,
+floorplan flag (floorplans always show last), alt text, a per-image privacy review, replace and remove. The private preview shows the
+real gallery. Every change is a versioned draft save with a history row. Nothing is published, nothing is written to Notion, GitHub or
+the public Blob store.
+
+## How images are handled
+- The browser sends image bytes only (never the file name) to `POST /api/listings/draft-photos`. Photos over about 3.6 MB are shrunk in the
+  browser first because Vercel rejects request bodies over 4.5 MB; the server limit is 4 MB.
+- The server checks the file signature, declared type, size (4 MB), width (at least 960 px), dimensions and pixel count; refuses animated or corrupt files.
+- It applies EXIF orientation, drops ALL metadata (EXIF, GPS, XMP, ICC) and writes WebP at 480, 960 and 1600 px named
+  `<content hash>-<width>.webp`, the same scheme as the website's `prepare-listing-photos.mjs`. Originals are not kept.
+- Files are stored in a PRIVATE Vercel Blob store under `listings-staging/<public id>/`. They are read only through
+  `GET /api/listings/draft-photo`, which authorises the user, looks the file up from the draft row (the client never supplies a path)
+  and returns it with `Cache-Control: private, no-store`. The browser fetches each image with its session token and shows it from an object URL.
+- A new or replaced image always starts with the privacy review unconfirmed. Alt text is also checked for a house number next to the street name, prices and contact details.
+- Capabilities: Viewer can look at images; Editor uploads and edits. The privacy review records who confirmed it and when.
+
+## One-time setup (in this order)
+1. **Supabase**: run `supabase/migrations/listings_0002_photos.sql` in the SQL editor BEFORE the release is deployed (the app now reads a `photos` column).
+   Verify with the queries at the bottom of the file. Rollback: `listings_0002_photos_rollback.sql` (separate file).
+2. **Vercel > Storage > Create Database > Blob**: create a NEW store named e.g. `sdahc-listings-staging` with access set to **Private**. Do not reuse the public
+   website store. Connect it to project `sdahc-intelligence-app` (Production and Preview). This adds `BLOB_STORE_ID`. The app authenticates with
+   Vercel OIDC (`VERCEL_OIDC_TOKEN`, issued per deployment and refreshed by the SDK), so no storage secret is needed in the code or in Vercel env vars.
+   Check Project Settings > Security that OIDC federation is enabled. If the connection also adds `BLOB_READ_WRITE_TOKEN`, the app does not need it.
+3. **Redeploy** production. Until `BLOB_STORE_ID` exists the photo endpoints answer 503 and the editor shows "Photo storage is not set up yet".
