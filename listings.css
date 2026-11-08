@@ -140,3 +140,23 @@ textarea.ls-input { resize: vertical; line-height: 1.5; }
 .ls-modal-foot .ls-sub { margin-right: auto; }
 @media (max-width: 640px) { .ls-ph { grid-template-columns: 1fr; } .ls-modal { padding: 0; } .ls-modal-card { border-radius: 0; min-height: 100%; } .ls-ph-actions .btn { min-height: 40px; } }
 @media (max-width: 1100px) { .ls-editor, .ls-pv-grid { grid-template-columns: 1fr; } .ls-row { grid-template-columns: 1fr; } }
+
+.ls-offscreen { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
+
+/* History: collapsed by default, dark navy card. Contrast: --on-navy #E7EDF7 and --on-navy-mute #90A2BF on --navy #0A1E36 measure 14.3:1 and 6.5:1 (white 16.8:1), above WCAG AA 4.5:1. */
+.ls-card-history { background: var(--navy); border-color: var(--navy-soft); color: var(--on-navy); padding: 0; overflow: hidden; }
+.ls-card-history h3.ls-hist-h { margin: 0; color: var(--on-navy); }
+.ls-hist-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; background: transparent; border: 0; color: #fff; font: inherit; font-family: var(--font-display); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
+.ls-hist-toggle:hover { background: var(--navy-soft); }
+.ls-hist-toggle:focus-visible { outline: 2px solid #8FC2FF; outline-offset: -3px; }
+.ls-hist-count { margin-left: auto; min-width: 22px; padding: 1px 8px; border-radius: 999px; background: var(--navy-soft); color: var(--on-navy); font-family: var(--font-body); font-size: 11.5px; font-weight: 600; text-align: center; }
+.ls-hist-chev { width: 8px; height: 8px; border-right: 2px solid var(--on-navy); border-bottom: 2px solid var(--on-navy); transform: rotate(45deg); transition: transform .15s ease; margin: -3px 2px 0 0; }
+.ls-card-history.open .ls-hist-chev { transform: rotate(-135deg); margin-top: 3px; }
+.ls-hist-panel { padding: 2px 16px 14px; border-top: 1px solid var(--navy-soft); color: var(--on-navy); }
+.ls-hist-panel[hidden] { display: none; }
+.ls-card-history .ls-hist li { border-bottom-color: rgba(231, 237, 247, .14); }
+.ls-card-history .ls-hist li:last-child { border-bottom: 0; }
+.ls-card-history .ls-sub { color: var(--on-navy-mute); }
+.ls-card-history strong { color: #fff; }
+.ls-ph-fallback { font-style: italic; }
+@media (prefers-reduced-motion: reduce) { .ls-hist-chev { transition: none; } }

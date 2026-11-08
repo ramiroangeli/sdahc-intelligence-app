@@ -126,3 +126,10 @@ the public Blob store.
 3. Optional, separate decision: run the functions in Tokyo (see `docs/photo-ux-performance.md`).
 
 Timings after deployment: browser console `photo upload timings`, and the function log line `{"type":"timing",...}`.
+
+## Polish release: file picker, optional photo descriptions, collapsed History
+- **File picker**: "Add photographs" and "Replace" use one persistent off-screen file input. The old handler read the input's live file list after resetting it (needed to allow choosing the same file again), which emptied it, so button selection started nothing while drag and drop worked. The list is now copied first.
+- **Photo descriptions are optional** (empty, "Kitchen", "Bedroom"... all accepted; at most 200 characters). The automatic checks still run on anything typed: a house or unit number beside the street name, prices or income, contact details or links, and a file name used as a description. An empty description is shown (and later published) as a neutral fallback that states only what is certain: `Photograph 2 of 5 of the property`, `Floorplan of the property`. The main listing description is still required.
+  The website needs the matching change (its schema, manifest reader and photo gate required 8 characters): website PR **#54**. Merge it before publishing anything with short or empty descriptions. `api/_lib/vendor/listings-core.mjs` was rebuilt from that change; rebuild it again from the website's `main` after the merge (`node scripts/vendor-listings-core.mjs --from <clean website checkout>`).
+- **History** is collapsed when a listing opens, on a navy card (text contrast 14.3:1 and 6.5:1), with the heading as a button (`aria-expanded`). Content is unchanged.
+- No new tables, columns, infrastructure or permissions.
