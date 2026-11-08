@@ -1,16 +1,20 @@
 -- PROPOSED, NOT APPLIED. Review, then run by hand in the Supabase SQL editor. Do not run from code.
 --
--- Problem: raw.deals grants SELECT to the `authenticated` role with policy USING (true), and analytics.deals reads
--- through it. `authenticated` means "holds any valid Supabase session", and the project has the Email provider
--- enabled with open sign-up, so a person who is not SDAHC staff can register with email/password and, after confirming
--- their own address, read every deal (names, values, fees, tranches).
+-- Problem (confirmed from the production catalog, read only, 8 Nov 2026): `authenticated` has SELECT on
+-- analytics.deals and on 23 columns of raw.deals (including transaction_value, commission_pct, advisory_fee and the
+-- tranche amounts), and the only policy on raw.deals is `deals_read_authenticated ... USING (true)`.
+-- "authenticated" means any valid Supabase session. The Email provider is enabled with open sign-up, so a person who
+-- is not SDAHC staff can register with email/password, confirm their own address and read every deal.
 --
--- Fix (defence in depth, keeps the existing app working because staff sign in with Microsoft):
--- only sessions created by the Microsoft (azure) provider may read deals. app_metadata is written by Supabase Auth
--- on the server and cannot be edited by the user.
+-- Fix: replace the policy so only sessions created by the Microsoft (azure) provider can read rows. app_metadata is
+-- written by Supabase Auth on the server and cannot be edited by the user. Staff sign in with Microsoft, so they keep
+-- access. Email sessions then see zero rows (analytics.deals is a security_invoker view, so it inherits the policy).
+-- Nothing else changes: no grant, no table, no view, no function, no other schema (RFI connects as rfi_app, which has
+-- no access to raw/analytics, and sync/ uses service_role, which bypasses RLS).
 --
--- Preferred additional step, in the dashboard: Authentication > Sign In / Providers > disable "Email".
--- (Do NOT turn off "Allow new users to sign up": the first Microsoft sign-in of a new colleague is a sign-up.)
+-- BEFORE running: confirm staff really are azure-provider users (counts only, no emails):
+--   select raw_app_meta_data->>'provider' as provider, count(*) from auth.users group by 1 order by 2 desc;
+-- Every staff member must appear under 'azure'. Any 'email' users: find out who they are first (see docs).
 
 begin;
 
@@ -19,14 +23,15 @@ create policy deals_read_authenticated
   on raw.deals
   for select
   to authenticated
-  using ( (auth.jwt() -> 'app_metadata' ->> 'provider') = 'azure' );
+  using ( (select auth.jwt() -> 'app_metadata' ->> 'provider') = 'azure' );
 
 commit;
 
--- Verify as a Microsoft-signed-in staff member in the app: Overview, Pipeline and Revenue still load.
--- Verify with an email/password test account: `select count(*) from analytics.deals` returns 0 rows.
+-- VERIFY (in the app): sign in with Microsoft, open Overview, Pipeline and Revenue. They must still load deals.
+-- VERIFY (policy text):
+--   select policyname, roles, qual from pg_policies where schemaname='raw' and tablename='deals';
 
--- ROLLBACK (restores the previous behaviour):
+-- ROLLBACK (restores exactly the previous behaviour; takes effect immediately, no data is touched):
 -- begin;
 -- drop policy if exists deals_read_authenticated on raw.deals;
 -- create policy deals_read_authenticated on raw.deals for select to authenticated using (true);
