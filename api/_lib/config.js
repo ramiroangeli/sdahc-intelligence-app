@@ -20,7 +20,9 @@ export function parseStaff(raw) {
     const caps = row.capabilities;
     if (!Array.isArray(caps) || caps.some((c) => !ALL_CAPABILITIES.includes(c))) throw new ConfigError(`LISTINGS_STAFF_JSON entry ${i} has unknown capabilities`);
     if (row.authUserId !== undefined && !GUID_RE.test(String(row.authUserId))) throw new ConfigError(`LISTINGS_STAFF_JSON entry ${i} has an invalid authUserId`);
-    return { email, capabilities: [...new Set(caps)], active: row.active !== false, authUserId: row.authUserId ? String(row.authUserId).toLowerCase() : null };
+    if (row.notionUserId !== undefined && !GUID_RE.test(String(row.notionUserId))) throw new ConfigError(`LISTINGS_STAFF_JSON entry ${i} has an invalid notionUserId`);
+    // notionUserId: this person's Notion user id. It becomes "Web Approved By" and must also be on the website's approvers list.
+    return { email, capabilities: [...new Set(caps)], active: row.active !== false, authUserId: row.authUserId ? String(row.authUserId).toLowerCase() : null, notionUserId: row.notionUserId ? String(row.notionUserId).toLowerCase() : null };
   });
 }
 
@@ -58,4 +60,17 @@ export function loadDataConfig(env = process.env) {
     // optional, read-only; only raises GitHub's anonymous rate limit
     githubReadToken: val(env, 'LISTINGS_GITHUB_READ_TOKEN') || null,
   };
+}
+
+/** What publication jobs need. Both are server-side secrets. Missing or weak means publishing answers 503 and does nothing. */
+export function loadPublishConfig(env = process.env) {
+  const githubToken = val(env, 'LISTINGS_GITHUB_DISPATCH_TOKEN');
+  const callbackSecret = val(env, 'LISTINGS_CALLBACK_SECRET');
+  const missing = [];
+  if (!githubToken) missing.push('LISTINGS_GITHUB_DISPATCH_TOKEN');
+  if (callbackSecret.length < 32) missing.push('LISTINGS_CALLBACK_SECRET (at least 32 characters)');
+  if (missing.length) throw new ConfigError(`missing configuration: ${missing.join(', ')}`);
+  const workflow = val(env, 'LISTINGS_PUBLISH_WORKFLOW') || 'publish-listing.yml';
+  if (!/^[\w.-]+\.ya?ml$/.test(workflow)) throw new ConfigError('LISTINGS_PUBLISH_WORKFLOW must be a workflow file name');
+  return { githubToken, callbackSecret, workflow };
 }

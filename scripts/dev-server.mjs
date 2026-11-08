@@ -13,7 +13,8 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
-import { draftGalleryReviewRoute, draftPhotoRoute, draftPhotosRoute, draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
+import { spawn } from 'node:child_process';
+import { draftPublishRoute, publishCallbackRoute, publishPayloadRoute, draftGalleryReviewRoute, draftPhotoRoute, draftPhotosRoute, draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
 
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') { console.error('dev-server refuses to run in production'); process.exit(1); }
 
@@ -21,7 +22,7 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PORT = Number(process.env.PORT || 8787);
 const caps = (process.env.DEV_CAPS || 'listings.view,listings.edit,listings.publish').split(',');
 const who = process.env.DEV_EMAIL || 'dev-preview@local';
-const fakeAuth = async () => ({ staff: { email: who, capabilities: caps }, identity: { email: who, authUserId: '00000000-0000-4000-8000-000000000001' } });
+const fakeAuth = async () => ({ staff: { email: who, capabilities: caps, notionUserId: process.env.DEV_NOTION_USER_ID || null }, identity: { email: who, authUserId: '00000000-0000-4000-8000-000000000001' } });
 // Drafts use a real Postgres (PGlite) running the real migration, stored under .dev-data so drafts survive a restart.
 const pg = new PGlite(process.env.DEV_DB || './.dev-data');
 const hasSchema = (await pg.query("select 1 from pg_namespace where nspname='listings'")).rows.length > 0;
@@ -35,12 +36,33 @@ if (!(await pg.query("select 1 from information_schema.columns where table_schem
 if (!(await pg.query("select 1 from information_schema.columns where table_schema='listings' and table_name='drafts' and column_name='photo_review'")).rows.length) {
   await pg.exec(readFileSync(new URL('../supabase/migrations/listings_0003_photo_review.sql', import.meta.url), 'utf8'));
 }
+if (!(await pg.query("select 1 from information_schema.tables where table_schema='listings' and table_name='publish_jobs'")).rows.length) {
+  await pg.exec(readFileSync(new URL('../supabase/migrations/listings_0004_publish_jobs.sql', import.meta.url), 'utf8'));
+}
 const db = { unsafe: async (q, p) => (await pg.query(q, p)).rows, begin: (fn) => pg.transaction((tx) => fn({ unsafe: async (q, p) => (await tx.query(q, p)).rows })) };
 // private staging store: in memory in the preview, never a real Blob store
 const mem = new Map();
 const blob = { put: async (p, b) => { mem.set(p, b); }, get: async (p) => mem.get(p) ?? null, del: async (ps) => { for (const p of ps) mem.delete(p); } };
-const deps = { authorise: fakeAuth, db, blob };
-const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-photos': draftPhotosRoute(deps), '/api/listings/draft-photo': draftPhotoRoute(deps), '/api/listings/draft-gallery-review': draftGalleryReviewRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps) };
+// LOCAL REHEARSAL of publication jobs: DEV_WEBSITE_REPO points at a checkout of the website repo. "Dispatching the workflow" then runs the
+// website's real job script as a local process (the real engine, tests and build), reporting back to THIS server by signed request.
+// Nothing is sent to GitHub. The secret exists only for this process.
+const callbackSecret = 'dev-' + [...Array(40)].map(() => Math.random().toString(36)[2]).join('');
+const websiteRepo = process.env.DEV_WEBSITE_REPO || null;
+const devFetch = async (url, opts = {}) => {
+  const u = String(url);
+  if (websiteRepo && /api\.github\.com\/repos\/.+\/dispatches/.test(u)) {
+    const b = JSON.parse(opts.body).inputs;
+    const child = spawn('node', ['scripts/listings-publish-job.mjs', '--job', b.job_id, '--public-id', b.public_id, '--mode', b.mode], { cwd: websiteRepo, stdio: 'inherit',
+      env: { ...process.env, LISTINGS_APP_URL: `http://127.0.0.1:${PORT}`, LISTINGS_CALLBACK_SECRET: callbackSecret, NOTION_TOKEN: process.env.NOTION_LISTINGS_TOKEN, NOTION_PROPERTIES_DATA_SOURCE_ID: process.env.NOTION_PROPERTIES_DATA_SOURCE_ID } });
+    child.on('exit', (code) => console.log(`[rehearsal] job script exited ${code}`));
+    return { status: 204, ok: true };
+  }
+  if (/actions\/workflows\/.+\/runs/.test(u)) return { ok: true, status: 200, json: async () => ({ workflow_runs: [] }) };
+  return fetch(url, opts);
+};
+const publishEnv = { ...process.env, LISTINGS_GITHUB_DISPATCH_TOKEN: 'dev-not-a-real-token', LISTINGS_CALLBACK_SECRET: callbackSecret };
+const deps = { authorise: fakeAuth, db, blob, fetch: devFetch, env: publishEnv };
+const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-photos': draftPhotosRoute(deps), '/api/listings/draft-photo': draftPhotoRoute(deps), '/api/listings/draft-gallery-review': draftGalleryReviewRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps), '/api/listings/draft-publish': draftPublishRoute(deps), '/api/listings/publish-callback': publishCallbackRoute(deps), '/api/listings/publish-payload': publishPayloadRoute(deps) };
 
 const STUB = `<script>(function(){var s={access_token:'dev-preview-token-not-real-0000',user:{email:'dev-preview@local'}};
 var chain=function(){var p=new Proxy(function(){},{get:function(_,k){if(k==='then')return function(r){return Promise.resolve({data:[],error:null}).then(r)};return p},apply:function(){return p}});return p};

@@ -65,3 +65,13 @@ export async function readBuffer(req, limit) {
 }
 
 export const PUBLIC_ID_RE = /^lst_[a-f0-9]{10}$/;
+
+/** The body exactly as sent (a string), for signature checks. Vercel pre-parses JSON, so signed requests are sent as text/plain. */
+export async function readRawText(req, max = 65536) {
+  if (typeof req.body === 'string') { if (req.body.length > max) throw new HttpError(413, 'too_large'); return req.body; }
+  if (Buffer.isBuffer(req.body)) { if (req.body.length > max) throw new HttpError(413, 'too_large'); return req.body.toString('utf8'); }
+  if (req.body !== undefined && req.body !== null) throw new HttpError(400, 'raw_body_required');
+  const chunks = []; let size = 0;
+  for await (const c of req) { size += c.length; if (size > max) throw new HttpError(413, 'too_large'); chunks.push(c); }
+  return Buffer.concat(chunks).toString('utf8');
+}

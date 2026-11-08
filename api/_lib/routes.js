@@ -6,6 +6,10 @@ import { listDrafts, discardDraft } from './drafts-repo.js';
 import { audit } from './audit.js';
 import { buildListings } from './listings-service.js';
 import { guardedRoute } from './guard.js';
+import { signedRoute } from './signed.js';
+import * as jobsRepo from './jobs-repo.js';
+import { isJobId, sanitiseEvent } from './publication.js';
+import { jobsFor, startPublication } from './publish-service.js';
 import { HttpError, queryOf, readBuffer, readJson } from './http.js';
 import { MAX_BYTES } from './photo-process.js';
 import { addPhoto, photoLight, readPhoto, reviewGallery, saveGallery } from './photos.js';
@@ -118,5 +122,46 @@ export const draftPhotoRoute = guardedRoute({
   run: async ({ req, deps }) => {
     const q = queryOf(req);
     return readPhoto({ db: getDb(deps), deps, env: deps.env ?? process.env, id: q.id, photoId: q.photo, w: q.w });
+  },
+});
+
+/** Publication jobs for one draft. Read: any staff. Start: Publishers. Increment 1 enables the dry run only; the job itself runs on GitHub. */
+export const draftPublishRoute = guardedRoute({
+  capability: { GET: C.VIEW, POST: C.PUBLISH },
+  run: async ({ req, session, deps }) => {
+    const cfg = dataCfg(deps); const db = getDb(deps); const env = deps.env ?? process.env;
+    if (req.method === 'GET') return jobsFor({ cfg, db, id: queryOf(req).id, fetchImpl: f(deps), env });
+    const body = await readJson(req);
+    const out = await startPublication({ cfg, db, id: body?.id, expectedVersion: body?.expectedVersion, kind: body?.mode, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, ...capsOf(session) });
+    return out;
+  },
+});
+
+/** Called by the website's publication job (signed). Progress events; a finished job ignores late or repeated events. */
+export const publishCallbackRoute = signedRoute({
+  methods: ['POST'],
+  run: async ({ raw, deps }) => {
+    let body; try { body = JSON.parse(raw); } catch { throw new HttpError(400, 'invalid_json'); }
+    const ev = sanitiseEvent(body);
+    const db = getDb(deps);
+    const job = await jobsRepo.getJob(db, ev.jobId);
+    if (!job) throw new HttpError(404, 'job_not_found');
+    const applied = await jobsRepo.applyEvent(db, ev.jobId, ev);
+    audit({ action: 'listings.publish.event', outcome: applied ? 'ok' : 'ignored', detail: { jobId: ev.jobId, step: ev.step, status: ev.status } });
+    return { ok: true, ignored: !applied };
+  },
+});
+
+/** Called by the job (signed): the frozen approved public content for ONE active job. Never available after the job has finished. */
+export const publishPayloadRoute = signedRoute({
+  methods: ['GET'],
+  run: async ({ req, deps }) => {
+    const id = queryOf(req).job;
+    if (!isJobId(id)) throw new HttpError(400, 'invalid_job');
+    const job = await jobsRepo.getJob(getDb(deps), id, { withPayload: true });
+    if (!job) throw new HttpError(404, 'job_not_found');
+    if (!jobsRepo.isActive(job)) throw new HttpError(410, 'job_finished');
+    audit({ action: 'listings.publish.payload', outcome: 'ok', detail: { jobId: id } });
+    return job.payload;
   },
 });
