@@ -7,6 +7,7 @@ import { HttpError, PUBLIC_ID_RE } from './http.js';
 import { changedGroups, getProperty, listAllProperties } from './property.js';
 import { loadCompliance, loadSnapshots } from './site.js';
 import { systemItems, verificationState } from './verification.js';
+import { photoReadiness, photoView, photosForRules } from './photos.js';
 
 const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
 
@@ -26,7 +27,9 @@ async function context(cfg, prop, { fetchImpl }) {
 
 function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const content = draft.content;
-  const validation = validateDraft(content, ctx);
+  const photos = Array.isArray(draft.photos) ? draft.photos : [];
+  const validation = validateDraft(content, { ...ctx, photos: photosForRules(photos) });
+  const pr = photoReadiness(photos, { internalAddress: ctx.internal?.address });
   const ver = verificationState({ occupancy: prop.facts.occupancy, content, verification: draft.verification, notes: draft.notes });
   const systemErrors = ver.system.filter((i) => i.severity === 'error' && i.status === 'open');
   const blockers = [
@@ -37,11 +40,15 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const fieldErrors = { ...validation.fieldErrors };
   for (const e of systemErrors) (fieldErrors.description ??= []).push(e.text);
   const complete = validation.complete && systemErrors.length === 0;
+  // photograph rules: the website rules ran with only reviewed photos; staff-facing detail comes from photoReadiness
+  const photoBlockers = [...pr.gallery, ...pr.items.flatMap((i) => i.issues.map((x) => ({ code: x.code, message: x.message })))].map((b) => ({ code: b.code.startsWith('photos_') ? 'photos_required' : 'photo_review', message: b.message }));
+  const blockersAll = [...blockers.filter((b) => b.code !== 'photos_required'), ...(pr.ready ? [] : photoBlockers)];
   return {
     draft: { id: draft.public_id, label: draft.label, version: draft.version, status: draft.status, content, createdBy: draft.created_by, createdAt: draft.created_at, updatedBy: draft.updated_by, updatedAt: draft.updated_at },
     property: { fullName: prop.facts.fullName, state: prop.facts.state, designCategories: prop.facts.designCategories, buildType: prop.facts.buildType, buildClass: prop.facts.buildClass, features: prop.facts.features, occupancy: prop.facts.occupancy, notionStatus: prop.facts.webStatus.label, editedAt: prop.facts.editedAt, suggestedPublicAddress: prop.suggestedPublicAddress },
     notion: { changed: changedGroups(draft.base_facts, prop.hashes), baseEditedAt: draft.base_notion_edited_at, currentEditedAt: prop.facts.editedAt },
-    validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, blockers, slug: validation.slug, complete, publishable: complete && blockers.length === 0 },
+    photos: photoView(photos, { internalAddress: ctx.internal?.address }),
+    validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, blockers: blockersAll, slug: validation.slug, complete, publishable: complete && blockersAll.length === 0 && pr.ready },
     verification: { system: ver.system, notes: ver.staff, open: ver.blocking },
     preview: validation.preview,
     history: (history ?? []).map((h) => ({ version: h.version, action: h.action, fields: h.changed_fields, by: h.changed_by, at: h.changed_at })),
@@ -158,5 +165,5 @@ export async function pickerFor({ cfg, db, fetchImpl, q }) {
 export function draftSummary(d) {
   const c = d.content ?? {};
   const filled = ['title', 'description', 'publicAddress', 'pricingMode'].filter((k) => c[k]).length;
-  return { id: d.public_id, label: d.label, version: d.version, updatedBy: d.updated_by, updatedAt: d.updated_at, createdBy: d.created_by, fieldsFilled: filled, fieldsTotal: 4, openNotes: (d.notes ?? []).filter((n) => n.status === 'open').length };
+  return { id: d.public_id, label: d.label, version: d.version, updatedBy: d.updated_by, updatedAt: d.updated_at, createdBy: d.created_by, fieldsFilled: filled, fieldsTotal: 4, openNotes: (d.notes ?? []).filter((n) => n.status === 'open').length, photoCount: Array.isArray(d.photos) ? d.photos.length : 0 };
 }

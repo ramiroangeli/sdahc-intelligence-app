@@ -2,7 +2,7 @@
 // `run`. A test (tests/route-guard.test.js) fails if any file under api/ serves a route without using it.
 import { authorise as realAuthorise } from './auth.js';
 import { ConfigError } from './config.js';
-import { HttpError, sendJson } from './http.js';
+import { HttpError, RawResponse, sendJson, sendRaw } from './http.js';
 
 /** `capability` is one string, or an object mapping each allowed method to the capability it needs. */
 export function guardedRoute({ capability, methods, run }) {
@@ -17,7 +17,8 @@ export function guardedRoute({ capability, methods, run }) {
           throw new HttpError(405, 'method_not_allowed');
         }
         const session = await authorise(req, needed, deps);
-        sendJson(res, 200, await run({ req, session, deps }));
+        const out = await run({ req, session, deps });
+        if (out instanceof RawResponse) sendRaw(res, out); else sendJson(res, 200, out);
       } catch (e) {
         if (e instanceof HttpError) return sendJson(res, e.status, { error: e.code, ...(e.extra ?? {}) });
         if (e instanceof ConfigError) return sendJson(res, 503, { error: 'not_configured' });

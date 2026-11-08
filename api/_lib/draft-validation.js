@@ -86,7 +86,7 @@ export function validateDraft(content, ctx, now = new Date()) {
       description: paras, address,
       pricing: { mode: content.pricingMode, ...(display ? { display } : {}) },
       sda: { ...(ctx.designCategories?.length ? { designCategories: ctx.designCategories } : {}), ...(ctx.buildType ? { buildingType: ctx.buildType } : {}) },
-      photos: [],
+      photos: ctx.photos ?? [],
     };
     // Run the website's own publication rules. Approval fields are placeholders: this is a readiness check, not an approval.
     const rec = {

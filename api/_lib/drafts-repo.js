@@ -3,7 +3,7 @@
 import { HttpError } from './http.js';
 
 const COLS = `id, public_id, notion_page_id, label, status, content, notes, verification, base_facts, base_notion_edited_at,
-  version, created_by, created_at, updated_by, updated_at`;
+  version, created_by, created_at, updated_by, updated_at, photos`;
 
 const changedKeys = (a, b) => {
   const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
@@ -59,19 +59,21 @@ export async function updateDraft(db, { publicId, expectedVersion, action, patch
       verification: patch.verification ?? cur.verification,
       base_facts: patch.baseFacts ?? cur.base_facts,
       base_notion_edited_at: patch.baseEditedAt !== undefined ? patch.baseEditedAt : cur.base_notion_edited_at,
+      photos: patch.photos ?? cur.photos ?? [],
     };
     const fields = [
       ...changedKeys(cur.content, next.content),
+      ...(JSON.stringify(cur.photos ?? []) !== JSON.stringify(next.photos) ? ['photos'] : []),
       ...(JSON.stringify(cur.notes) !== JSON.stringify(next.notes) ? ['notes'] : []),
       ...(JSON.stringify(cur.verification) !== JSON.stringify(next.verification) ? ['verification'] : []),
       ...(JSON.stringify(cur.base_facts) !== JSON.stringify(next.base_facts) ? ['notionBaseline'] : []),
     ];
     if (fields.length === 0) return cur; // nothing changed: no new version, no noise in the history
     const rows = await tx.unsafe(
-      `update listings.drafts set content=$2::text::jsonb, notes=$3::text::jsonb, verification=$4::text::jsonb, base_facts=$5::text::jsonb, base_notion_edited_at=$6,
+      `update listings.drafts set content=$2::text::jsonb, notes=$3::text::jsonb, verification=$4::text::jsonb, base_facts=$5::text::jsonb, base_notion_edited_at=$6, photos=$9::text::jsonb,
               version = version + 1, updated_by=$7, updated_by_auth_user=$8, updated_at=now()
        where id=$1 returning ${COLS}`,
-      [cur.id, JSON.stringify(next.content), JSON.stringify(next.notes), JSON.stringify(next.verification), JSON.stringify(next.base_facts), next.base_notion_edited_at, actor.email, actor.authUserId ?? null]);
+      [cur.id, JSON.stringify(next.content), JSON.stringify(next.notes), JSON.stringify(next.verification), JSON.stringify(next.base_facts), next.base_notion_edited_at, actor.email, actor.authUserId ?? null, JSON.stringify(next.photos)]);
     const d = rows[0];
     await tx.unsafe(`insert into listings.draft_history (draft_id, version, action, changed_fields, content, changed_by, changed_by_auth_user) values ($1,$2,$3,$4,$5::text::jsonb,$6,$7)`,
       [d.id, d.version, action, fields, JSON.stringify(d.content), actor.email, actor.authUserId ?? null]);

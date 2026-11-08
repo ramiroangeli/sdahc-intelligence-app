@@ -42,6 +42,8 @@ export const COMPLIANCE = { victoria: { reviewedBy: null, reviewedAt: null, advi
 /** Fake world. `state.pages` can be mutated by tests to simulate a Notion edit. `calls` records everything. */
 export function world() {
   const calls = [];
+  const mem = new Map();
+  const blob = { put: async (p, b) => { mem.set(p, b); }, get: async (p) => mem.get(p) ?? null, del: async (ps) => { for (const p of ps) mem.delete(p); }, mem };
   const state = { page7B: page7B(), snapshots: [RG_SNAPSHOT], withdrawn: [], liveStatus: 200, notionDown: false };
   const fetch = async (url, opts = {}) => {
     const u = String(url); const method = opts.method ?? 'GET';
@@ -63,13 +65,14 @@ export function world() {
     if (u.includes('/opportunities/')) return { ok: true, status: state.liveStatus };
     throw new Error('unexpected fetch ' + u);
   };
-  return { fetch, calls, state };
+  return { fetch, calls, state, blob };
 }
 
 export async function database() {
   const db = new PGlite();
   await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;`);
   await db.exec(readFileSync('supabase/migrations/listings_0001_drafts.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/listings_0002_photos.sql', 'utf8'));
   const adapter = {
     raw: db,
     unsafe: async (q, p) => (await db.query(q, p)).rows,
@@ -87,12 +90,14 @@ export const VIEWER = staff('viewer@sdahomechoices.com.au', ['listings.view']);
 export const userFor = (s) => azureUser({ email: s.email, id: '22222222-2222-4222-8222-' + String(s.email.length).padStart(12, '0'), identities: [{ provider: 'azure', identity_data: { email: s.email, iss: `https://login.microsoftonline.com/${TENANT}/v2.0` } }] });
 
 /** Call a route as a person. Returns { status, json }. */
-export async function call(route, w, db, person, { method = 'GET', url = '/', body } = {}) {
+export async function call(route, w, db, person, { method = 'GET', url = '/', body, headers } = {}) {
   w.state.user = userFor(person);
   clearSnapshotCache(); clearComplianceCache();
   const r = makeRes();
-  const rq = { ...baseReq({ method }), url, body };
-  await route({ authConfig: authConfig([person]), fetch: w.fetch, db, dataConfig: { notion: { token: 'tok', dataSourceId: 'ds', version: 'v' }, repo: 'o/r', ref: 'main', siteBase: 'https://sdahomechoices.com.au', githubReadToken: null } })(rq, r);
-  return { status: r.statusCode, json: r.body ? JSON.parse(r.body) : null, raw: r.body };
+  const base = baseReq({ method });
+  const rq = { ...base, headers: { ...base.headers, ...(headers ?? {}) }, url, body };
+  await route({ authConfig: authConfig([person]), fetch: w.fetch, db, blob: w.blob, dataConfig: { notion: { token: 'tok', dataSourceId: 'ds', version: 'v' }, repo: 'o/r', ref: 'main', siteBase: 'https://sdahomechoices.com.au', githubReadToken: null } })(rq, r);
+  const bin = Buffer.isBuffer(r.body);
+  return { status: r.statusCode, json: r.body && !bin ? JSON.parse(r.body) : null, raw: r.body, headers: r.headers };
 }
 export const resetCaches = () => { clearPropertyCache(); clearSnapshotCache(); clearComplianceCache(); };
