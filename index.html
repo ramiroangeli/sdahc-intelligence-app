@@ -9,6 +9,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="listings.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
@@ -95,6 +96,14 @@
         <button class="nav-item" data-view="market-intel">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <span class="nav-label">Market Intelligence</span>
+        </button>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Website</div>
+        <button class="nav-item" data-view="listings">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h14V10M10 20v-6h4v6"/></svg>
+          <span class="nav-label">Listings</span>
         </button>
       </div>
 
@@ -189,6 +198,9 @@
       <!-- ============================ MARKET INTELLIGENCE ================== -->
       <section class="view" id="view-market-intel"></section>
 
+      <!-- ============================ WEBSITE LISTINGS ===================== -->
+      <section class="view" id="view-listings"></section>
+
       <!-- ============================ PLAYBOOK ============================= -->
       <section class="view" id="view-playbook"></section>
 
@@ -271,6 +283,7 @@
 
 <script src="data.js"></script>
 <script src="supabase-data.js"></script>
+<script src="listings.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

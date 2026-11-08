@@ -1,0 +1,21 @@
+# Runs the API and security tests on every pull request. No secrets, no deploy, read-only.
+# Make "test" a required status check in the branch protection rules for main.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test

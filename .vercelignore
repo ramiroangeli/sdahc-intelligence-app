@@ -1,0 +1,7 @@
+# Not part of the deployed app. The static site and /api functions are all Vercel needs.
+tests
+scripts
+docs
+sync
+00_context
+.github

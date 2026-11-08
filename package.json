@@ -1,0 +1,11 @@
+{
+  "name": "sdahc-intelligence-app",
+  "private": true,
+  "type": "module",
+  "description": "SDAHC Intelligence App: static SPA plus private serverless API functions under /api",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "dev:local": "node scripts/dev-server.mjs"
+  }
+}
