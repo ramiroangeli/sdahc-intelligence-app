@@ -26,7 +26,7 @@ test('probe flags anon read access and a non-SDAHC tenant', async () => {
 test('proposed SQL restricts the policy to the azure provider, is transactional and has a rollback', () => {
   const sql = readFileSync('supabase/proposed/001_analytics_microsoft_only.sql', 'utf8');
   const active = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
-  assert.match(active, /using \(\s*\(auth\.jwt\(\) -> 'app_metadata' ->> 'provider'\) = 'azure'\s*\)/);
+  assert.match(active, /using \(\s*\(select auth\.jwt\(\) -> 'app_metadata' ->> 'provider'\) = 'azure'\s*\)/);
   assert.match(active, /^begin;/m);
   assert.match(active, /^commit;/m);
   assert.ok(!/using \(true\)/i.test(active), 'the active statements must not reopen the policy');

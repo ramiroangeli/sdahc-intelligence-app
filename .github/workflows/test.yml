@@ -1,4 +1,4 @@
-# Runs the API and security tests on every pull request. No secrets, no deploy, read-only.
+# Runs the tests on every pull request. No secrets, no deploy, read-only.
 # Make "test" a required status check in the branch protection rules for main.
 name: test
 
@@ -18,4 +18,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+      - run: npm ci
       - run: npm test
