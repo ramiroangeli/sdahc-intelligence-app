@@ -29,7 +29,7 @@ export function verificationState({ occupancy, content, verification, notes }) {
   const system = systemItems({ occupancy, content }).map((i) => {
     const ack = verification?.[i.code];
     const acknowledged = i.severity === 'verify' && ack && ack.basis === i.basis;
-    return { ...i, status: acknowledged ? 'verified' : 'open', verifiedBy: acknowledged ? ack.by : null, verifiedAt: acknowledged ? ack.at : null, note: acknowledged ? ack.note : null };
+    return { ...i, status: acknowledged ? 'verified' : 'open', verifiedBy: acknowledged ? ack.by : null, verifiedAt: acknowledged ? ack.at : null, note: acknowledged ? ack.note : null, source: acknowledged ? (ack.source ?? null) : null };
   });
   const staff = (notes ?? []).map((n) => ({ code: `note:${n.id}`, id: n.id, severity: 'verify', text: n.text, by: n.by, at: n.at, status: n.status, resolvedBy: n.resolvedBy ?? null, resolvedAt: n.resolvedAt ?? null }));
   const open = [...system, ...staff].filter((i) => i.status === 'open');

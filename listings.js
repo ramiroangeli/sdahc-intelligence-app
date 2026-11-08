@@ -8,7 +8,7 @@
    ============================================================================ */
 
 const LS = { me: null, list: null, listError: null, listLoading: false, picker: null, pickerQ: '', pickerError: null, confirm: null,
-  d: null, historyOpen: false, dErr: null, dirty: false, saving: false, form: null, live: null, flash: null, notionConflict: null, verifyOpen: null };
+  d: null, jobs: null, jobErr: null, jobBusy: false, jobFlash: null, historyOpen: false, dErr: null, dirty: false, saving: false, form: null, live: null, flash: null, notionConflict: null, verifyOpen: null };
 let lsTimer = null;
 
 function lsEl(tag, props, ...kids) {
@@ -38,8 +38,8 @@ async function lsApi(method, path, body) {
 
 const lsRoute = () => {
   const h = location.hash || '';
-  let m = /^#\/listings\/draft\/(lst_[a-f0-9]{10})(\/preview)?$/.exec(h);
-  if (m) return { name: 'draft', id: m[1], tab: m[2] ? 'preview' : 'edit' };
+  let m = /^#\/listings\/draft\/(lst_[a-f0-9]{10})(\/preview|\/review)?$/.exec(h);
+  if (m) return { name: 'draft', id: m[1], tab: m[2] === '/preview' ? 'preview' : m[2] === '/review' ? 'review' : 'edit' };
   if (h === '#/listings/new') return { name: 'new' };
   return { name: 'list' };
 };
@@ -52,6 +52,7 @@ window.addEventListener('hashchange', () => { if (lsActive()) lsRouteChanged(); 
 function renderListingsPage() { lsRouteChanged(); }
 
 async function lsRouteChanged() {
+  lsStopPolling(); LS.jobFlash = null;
   LS.flash = null; LS.notionConflict = null; LS.verifyOpen = null; LS.confirm = null; LS.photoMsg = null; LS.removeAsk = null;
   const r = lsRoute();
   if (r.name === 'list') return lsLoadList();
@@ -185,7 +186,7 @@ async function lsCreate(propertyId) {
 /* ------------------------------------------------------------------ draft editor */
 async function lsLoadDraft(id) {
   LS.dErr = null; if (!LS.d || LS.d.draft.id !== id) LS.historyOpen = false; LS.d = LS.d && LS.d.draft.id === id ? LS.d : null; LS.dirty = false; lsPaint();
-  try { if (!LS.me) LS.me = await lsApi('GET', '/api/listings/me'); LS.d = await lsApi('GET', '/api/listings/draft?id=' + id); LS.form = { ...LS.d.draft.content }; LS.live = LS.d; }
+  try { if (!LS.me) LS.me = await lsApi('GET', '/api/listings/me'); LS.d = await lsApi('GET', '/api/listings/draft?id=' + id); LS.form = { ...LS.d.draft.content }; LS.live = LS.d; if (lsRoute().tab === 'review') await lsLoadJobs(); }
   catch (e) { LS.dErr = e.status || 0; }
   lsPaint();
 }
@@ -251,7 +252,7 @@ async function lsAddNote() {
 async function lsVerify(item) {
   const ta = document.getElementById('ls-verify-text'); const note = ta && ta.value.trim();
   if (!note || note.length < 5) { LS.flash = { bad: 'Write what was checked (at least 5 characters).' }; lsPaint(); return; }
-  try { const body = { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, note, ...(item.id ? { noteId: item.id } : { code: item.code }) }; LS.d = await lsApi('POST', '/api/listings/draft-verify', body); LS.live = LS.d; LS.verifyOpen = null; LS.flash = { ok: 'Recorded.' }; }
+  try { const srcEl = document.getElementById('ls-verify-source'); const source = srcEl && srcEl.value.trim(); const body = { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, note, ...(source && !item.id ? { source } : {}), ...(item.id ? { noteId: item.id } : { code: item.code }) }; LS.d = await lsApi('POST', '/api/listings/draft-verify', body); LS.live = LS.d; LS.verifyOpen = null; LS.flash = { ok: 'Recorded.' }; }
   catch (e) { LS.flash = { bad: 'Could not record it (' + e.message + ').' }; }
   lsPaint();
 }
@@ -312,9 +313,10 @@ function verifyItem(i) {
   const asking = LS.verifyOpen === i.code;
   return lsEl('li', { class: 'ls-ver-item ' + (open ? (i.severity === 'error' ? 'bad' : 'open') : 'done') },
     lsEl('div', null, badge(open ? (i.severity === 'error' ? 'Fix' : 'Open') : (i.status === 'resolved' ? 'Resolved' : 'Verified'), open ? (i.severity === 'error' ? 'ls-badge-bad' : 'ls-badge-warn') : 'ls-badge-live'), ' ', i.text),
-    !open && (i.verifiedBy || i.resolvedBy) ? lsEl('div', { class: 'ls-sub', text: (i.verifiedBy || i.resolvedBy).split('@')[0] + ' ' + when(i.verifiedAt || i.resolvedAt) + (i.note ? ': ' + i.note : '') }) : null,
+    !open && (i.verifiedBy || i.resolvedBy) ? lsEl('div', { class: 'ls-sub' }, (i.verifiedBy || i.resolvedBy).split('@')[0] + ' ' + when(i.verifiedAt || i.resolvedAt) + (i.note ? ': ' + i.note : ''), i.source && /^https:\/\//.test(i.source) ? [' Source: ', lsEl('a', { href: i.source, target: '_blank', rel: 'noopener noreferrer', class: 'ls-link', text: 'link' })] : null) : null,
     canVerify && !asking ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.verifyOpen = i.code; lsPaint(); }, text: i.id ? 'Mark resolved' : 'Mark verified' }) : null,
-    canVerify && asking ? lsEl('div', { class: 'ls-note-add' }, lsEl('textarea', { id: 'ls-verify-text', class: 'ls-input', rows: '2', maxlength: '500', placeholder: 'What was checked, and with whom?' }),
+    canVerify && asking ? lsEl('div', { class: 'ls-note-add' }, lsEl('textarea', { id: 'ls-verify-text', class: 'ls-input', rows: '2', maxlength: '500', placeholder: 'What was accepted, and on what basis?' }),
+      i.id ? null : lsEl('input', { id: 'ls-verify-source', class: 'ls-input', type: 'url', maxlength: '300', placeholder: 'Source link (optional), e.g. the approved advertisement' }),
       lsEl('div', { class: 'ls-actions' }, lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => lsVerify(i), text: 'Record' }), lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.verifyOpen = null; lsPaint(); }, text: 'Cancel' }))) : null);
 }
 
@@ -372,11 +374,12 @@ function paintDraft(root) {
         ro ? null : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-save-btn', disabled: LS.saving, onclick: () => lsSave(false), text: LS.saving ? 'Saving...' : 'Save draft' }))),
     lsEl('div', { class: 'ls-tabs', role: 'tablist' },
       lsEl('a', { class: 'ls-tab' + (r.tab === 'edit' ? ' active' : ''), role: 'tab', href: '#/listings/draft/' + d.id, text: 'Edit' }),
-      lsEl('a', { class: 'ls-tab' + (r.tab === 'preview' ? ' active' : ''), role: 'tab', href: '#/listings/draft/' + d.id + '/preview', text: 'Private preview' })),
+      lsEl('a', { class: 'ls-tab' + (r.tab === 'preview' ? ' active' : ''), role: 'tab', href: '#/listings/draft/' + d.id + '/preview', text: 'Private preview' }),
+      lsEl('a', { class: 'ls-tab' + (r.tab === 'review' ? ' active' : ''), role: 'tab', id: 'ls-tab-review', href: '#/listings/draft/' + d.id + '/review', text: 'Review & publish' })),
     flash, conflict, pendingChange,
     ro ? lsEl('div', { class: 'ls-banner', text: 'You have read-only access. Editors can change this draft.' }) : null,
     lsEl('div', { class: 'ls-editor' },
-      lsEl('div', { class: 'ls-main' }, r.tab === 'edit' ? editForm() : lsEl('div', { id: 'ls-preview-host' }, previewContent())),
+      lsEl('div', { class: 'ls-main' }, r.tab === 'edit' ? editForm() : r.tab === 'review' ? reviewContent() : lsEl('div', { id: 'ls-preview-host' }, previewContent())),
       lsEl('aside', { class: 'ls-side', id: 'ls-side' }, sideContent()))));
 }
 
@@ -685,8 +688,132 @@ function lsRefreshPhotos() { const el = document.getElementById('ls-photos'); if
 /* ------------------------------------------------------------------ paint */
 function lsPaint() {
   const root = lsRoot(); if (!root) return;
+  setTimeout(lsSchedulePoll, 0);
   root.replaceChildren();
   const r = lsRoute();
   if (r.name === 'list') paintList(root); else if (r.name === 'new') paintPicker(root); else paintDraft(root);
 }
 function lsPaintKeepFocus() { lsPaint(); const s = document.getElementById('ls-search'); if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); } }
+
+
+/* ------------------------------------------------------------------ Review & publish */
+const JOB_STEPS = [
+  ['requested', 'Requested'], ['dispatched', 'Handed to GitHub'], ['started', 'Job started'], ['payload', 'Approved content received'],
+  ['engine', 'Publication engine accepts the content'], ['tests', 'Website test suite'], ['build', 'Production build and privacy scan'], ['finished', 'Finished'],
+];
+let lsPollTimer = null;
+function lsStopPolling() { if (lsPollTimer) { clearTimeout(lsPollTimer); lsPollTimer = null; } }
+async function lsLoadJobs() {
+  try { LS.jobs = await lsApi('GET', '/api/listings/draft-publish?id=' + LS.d.draft.id); LS.jobErr = null; } catch (e) { LS.jobErr = e.status || 0; }
+}
+/* Polling only READS progress. The job itself runs on GitHub's servers and continues if this page is closed. */
+function lsSchedulePoll() {
+  lsStopPolling();
+  if (lsRoute().tab !== 'review' || !LS.jobs || !LS.jobs.active) return;
+  lsPollTimer = setTimeout(async () => { await lsLoadJobs(); if (lsRoute().tab === 'review') { lsRefreshReview(); lsSchedulePoll(); } }, 5000);
+}
+function lsRefreshReview() { const h = document.getElementById('ls-review-host'); if (h) h.replaceWith(reviewContent()); }
+
+async function lsStartDryRun() {
+  if (LS.jobBusy) return;
+  LS.jobBusy = true; LS.jobFlash = null; lsRefreshReview();
+  try {
+    const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: 'dry_run' });
+    LS.jobFlash = { ok: out.existing ? 'A dry run for this version already exists.' : 'Dry run started. It runs on the server: you can close this page.' };
+    await lsLoadJobs();
+  } catch (e) {
+    const b = e.body || {};
+    LS.jobFlash = { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
+      : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
+      : e.status === 409 && b.error === 'job_active' ? 'A publication job is already running for this listing.'
+      : e.status === 503 ? 'Publishing is not configured yet. An administrator needs to add the GitHub access token and the shared secret.'
+      : e.status === 502 ? 'GitHub could not be asked to start the job: ' + (b.reason || 'unknown reason') : e.status === 403 ? 'Only a Publisher can run this.' : 'Could not start the dry run (' + e.message + ').' };
+    await lsLoadJobs().catch(() => {});
+  }
+  LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
+}
+
+function reviewContent() {
+  const d = LS.d; const v = d.validation; const pv = d.preview; const c = d.draft.content; const ph = d.photos; const ro = !d.permissions.canPublish;
+  const dirty = LS.dirty;
+  const pf = [];
+  if (!v.complete) pf.push('Complete the required fields.');
+  if (!ph.items.some((p) => p.kind !== 'floorplan')) pf.push('Add at least one photograph.');
+  if (!ph.readiness.ready) pf.push('Fix the flagged photo descriptions.');
+  if (ph.items.length && !ph.review.reviewed) pf.push('Review the whole gallery (Photographs section, Review gallery).');
+  if (d.notion.changed.length) pf.push('The Notion record changed: review it and save the draft.');
+  if (dirty) pf.push('Save your changes: this review shows the saved draft.');
+  const startable = pf.length === 0;
+  const stops = v.blockers.filter((b) => !['photo_review', 'photos_required', 'photo_alt'].includes(b.code));
+  const jobs = LS.jobs; const active = jobs && jobs.active; const latest = jobs && jobs.jobs && jobs.jobs[0];
+
+  const checklist = [
+    ['Required fields are complete', v.complete], ['Photographs added and described', ph.items.some((p) => p.kind !== 'floorplan') && ph.readiness.ready],
+    ['Gallery reviewed (' + (ph.review.reviewed ? ph.review.by.split('@')[0] + ', ' + when(ph.review.at) : 'not yet') + ')', ph.review.reviewed],
+    ['Commercial verification accepted', d.verification.open === 0], ['Compliance cleared for this listing', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
+  ];
+  const finalCard = lsEl('div', { class: 'ls-rv-box' },
+    lsEl('h3', { text: 'Final public content' }),
+    lsEl('div', { class: 'ls-sub', text: 'Exactly what visitors will read, from the saved draft. Internal address, prices and income are never part of it.' }),
+    lsEl('h4', { class: 'ls-rv-title', text: pv.title || '(no title)' }), pv.titleIsDefault ? lsEl('div', { class: 'ls-sub', text: 'Default title: no title was written.' }) : null,
+    lsEl('dl', { class: 'ls-facts' }, [['Public address', pv.addressLine || 'Not set'], ['Pricing', pv.pricing || 'Not set'], ['Design category', pv.design.join(', ') || 'Not set'], ['Building', pv.buildType || 'Not set'],
+      ['Featured', c.featured ? 'Yes' : 'No'], ['Page', v.slug ? '/opportunities/' + v.slug + '/' : 'Not available yet']].map(([k, val]) => [lsEl('dt', { text: k }), lsEl('dd', { text: val })])),
+    ...(pv.description.length ? pv.description.map((t) => lsEl('p', { text: t })) : [lsEl('p', { class: 'ls-sub', text: '(no description yet)' })]));
+  const photoCard = lsEl('div', { class: 'ls-rv-box' },
+    lsEl('h3', { text: 'Photographs, in publication order' }),
+    ph.items.length ? lsEl('ol', { class: 'ls-rv-photos' }, ph.items.map((p, i) => lsEl('li', null, lsEl('div', { class: 'ls-rv-ph' }, lsPhotoImg(p.id, 480, p.altText), lsEl('span', { class: 'ls-ph-pos', text: String(i + 1) }), p.cover ? lsEl('span', { class: 'ls-ph-flag', text: 'Cover' }) : p.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null),
+      lsEl('div', { class: 'ls-sub', text: p.altText + (p.altFallback ? ' (neutral text)' : '') })))) : lsEl('div', { class: 'ls-sub', text: 'No images yet.' }),
+    lsEl('div', { class: 'ls-sub', text: ph.review.reviewed ? 'Gallery reviewed by ' + ph.review.by.split('@')[0] + ' ' + when(ph.review.at) + '.' : 'The gallery has not been reviewed for these images.' }));
+  const openItems = [...d.verification.system, ...d.verification.notes].filter((i) => i.status === 'open' || i.verifiedBy || i.resolvedBy);
+  const verifyCard = lsEl('div', { class: 'ls-rv-box' },
+    lsEl('h3', { text: 'Commercial verification and compliance' }),
+    openItems.length ? lsEl('ul', { class: 'ls-ver' }, openItems.map((i) => verifyItem(i))) : lsEl('div', { class: 'ls-sub', text: 'Nothing flagged.' }),
+    stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').length ? lsEl('div', { class: 'ls-blocks' }, lsEl('strong', { text: 'Needs a decision outside this screen' }), lsEl('ul', null, stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').map((b) => lsEl('li', { text: b.code === 'victoria_compliance' ? b.message + ' A determination for this listing is recorded in the website repository by its code owner.' : b.message })))) : null);
+  const dryCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-dry' },
+    lsEl('h3', { text: 'Dry run' }),
+    lsEl('p', { class: 'ls-sub', text: 'Runs the website\'s own publication checks on this exact content: the engine, the test suite, a production build and the privacy scan. Nothing is published, Notion is not changed and no image becomes public.' }),
+    !startable ? lsEl('ul', { class: 'ls-ferr', id: 'ls-dry-reasons' }, pf.map((m) => lsEl('li', { text: m }))) : null,
+    LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
+    LS.jobErr ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: 'The job history could not be read right now.' }) : null,
+    jobs && !jobs.configured ? lsEl('div', { class: 'ls-banner', text: 'Publishing is not configured yet: an administrator needs to add the GitHub access token and the shared secret.' }) : null,
+    ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can run a dry run.' }) : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-dry-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: lsStartDryRun, text: LS.jobBusy ? 'Starting...' : active ? 'A job is running...' : 'Run dry run' }),
+    active ? lsEl('div', { class: 'ls-sub', text: 'This keeps running on the server if you close the page.' }) : null,
+    latest ? jobTimeline(latest) : null,
+    jobs && jobs.jobs.length > 1 ? lsEl('details', { class: 'ls-jobs-older' }, lsEl('summary', { text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: j.kind.replace('_', ' ') + ' v' + j.draftVersion + ' attempt ' + j.attempt + ': ' + j.status + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null);
+  const publishCard = lsEl('div', { class: 'ls-rv-box' },
+    lsEl('h3', { text: 'Approve and publish' }),
+    lsEl('p', { class: 'ls-sub', text: 'Publishing for real (Notion fields, public images, snapshot, deployment, live check) arrives in the next release. Run the dry run first.' }),
+    lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-publish-btn', disabled: true, title: 'Not enabled in this release', text: 'Approve and publish (next release)' }));
+  return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' },
+    lsEl('div', { class: 'ls-banner' }, 'Review the final listing, then run the dry run. This screen shows the saved draft.'),
+    lsEl('ul', { class: 'ls-check ls-rv-check' }, checklist.map(([t, ok]) => lsEl('li', { class: ok ? 'ok' : 'no' }, lsEl('span', { 'aria-hidden': 'true', text: ok ? '✓' : '○' }), ' ', t))),
+    finalCard, photoCard, verifyCard, dryCard, publishCard);
+}
+
+function jobTimeline(j) {
+  const done = new Map(j.steps.map((s) => [s.step, s]));
+  const failedStep = j.steps.find((s) => s.status === 'failed');
+  const rows = JOB_STEPS.map(([key, label]) => {
+    const s = done.get(key);
+    const state = s ? (s.status === 'failed' ? 'bad' : (key === 'finished' && j.status !== 'succeeded' ? 'bad' : 'ok')) : (j.active ? 'wait' : 'skip');
+    return lsEl('li', { class: 'ls-tl ' + state }, lsEl('span', { class: 'ls-tl-dot', 'aria-hidden': 'true', text: state === 'ok' ? '✓' : state === 'bad' ? '✗' : state === 'wait' ? '…' : '–' }), ' ', label, s ? lsEl('span', { class: 'ls-sub', text: ' ' + when(s.at) }) : null);
+  });
+  const res = j.result; const issues = (failedStep && failedStep.detail && failedStep.detail.issues) || [];
+  const checks = (res && res.checks) || (failedStep && failedStep.detail && failedStep.detail.checks) || [];
+  return lsEl('div', { class: 'ls-job', id: 'ls-job', 'data-status': j.status },
+    lsEl('div', null, badge(j.status === 'succeeded' ? 'Dry run passed' : j.status === 'failed' ? 'Failed' : j.status === 'cancelled' ? 'Cancelled' : 'Running', j.status === 'succeeded' ? 'ls-badge-live' : j.status === 'failed' ? 'ls-badge-bad' : 'ls-badge-warn'),
+      ' ', lsEl('span', { class: 'ls-sub', text: 'v' + j.draftVersion + ', attempt ' + j.attempt + ', started by ' + j.requestedBy.split('@')[0] + ' ' + when(j.createdAt) }),
+      j.runUrl && /^https:\/\/github\.com\//.test(j.runUrl) ? [' ', lsEl('a', { class: 'ls-link', href: j.runUrl, target: '_blank', rel: 'noopener noreferrer', text: 'GitHub run' })] : null),
+    lsEl('ol', { class: 'ls-tl-list' }, rows),
+    j.status === 'succeeded' ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
+    j.error ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, errText(j.error)) : null,
+    issues.length ? lsEl('ul', { class: 'ls-ferr ls-job-issues' }, issues.map((m) => lsEl('li', { text: m }))) : null,
+    checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : 'Would stop: ') + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,
+    res && res.wouldBlock && res.wouldBlock.length ? lsEl('div', { class: 'ls-banner' }, 'A real publication would currently stop on: ' + res.wouldBlock.map((x) => x.replace(/_/g, ' ')).join(', ') + '.') : null);
+}
+const ERR_TEXT = {
+  dispatch_failed: 'GitHub could not start the job.', workflow_ended: 'The GitHub run ended without reporting a result.', no_report: 'The job finished but its result never reached the app.', timed_out: 'The job did not finish in time.',
+  engine_refused: 'The website publication engine would not publish this content.', parity_failed: 'The proposed page differs from what was approved.', tests_failed: 'The website test suite failed.', build_failed: 'The build or the privacy scan failed.',
+  not_configured: 'The job is missing configuration.', manifest_invalid: 'The photograph list is not valid.', property_not_found: 'The property was not found in Notion.', mode_not_enabled: 'This mode is not enabled.', payload_mismatch: 'The job did not match the request.',
+};
+const errText = (e) => (ERR_TEXT[e.code] || 'The job failed.') + (e.message ? ' ' + e.message : '');

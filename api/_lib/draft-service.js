@@ -134,13 +134,16 @@ export async function verifyDraftFor({ cfg, db, body, actor, fetchImpl, caps }) 
   if (!prop) throw new HttpError(409, 'property_unavailable');
   const patch = {};
   const at = new Date().toISOString();
+  // optional: where the accepted position comes from (for example the approved marketing advertisement). A plain https link only.
+  const source = typeof body.source === 'string' && body.source.trim() ? body.source.trim() : null;
+  if (source && (source.length > 300 || !/^https:\/\/[^\s<>"']+$/.test(source))) throw new HttpError(400, 'invalid_source');
   if (typeof body.noteId === 'string') {
     if (!draft.notes.some((n) => n.id === body.noteId && n.status === 'open')) throw new HttpError(404, 'note_not_found');
     patch.notes = draft.notes.map((n) => (n.id === body.noteId ? { ...n, status: 'resolved', resolvedBy: actor.email, resolvedAt: at, resolution: note } : n));
   } else {
     const item = systemItems({ occupancy: prop.facts.occupancy, content: draft.content }).find((i) => i.code === body.code);
     if (!item || item.severity !== 'verify') throw new HttpError(400, 'not_verifiable');
-    patch.verification = { ...draft.verification, [item.code]: { basis: item.basis, by: actor.email, at, note } };
+    patch.verification = { ...draft.verification, [item.code]: { basis: item.basis, by: actor.email, at, note, ...(source ? { source } : {}) } };
   }
   const saved = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: 'verify', patch, actor, current: draft });
   const [ctx, history] = await Promise.all([context(cfg, prop, { fetchImpl }), repo.getHistory(db, saved.id)]);

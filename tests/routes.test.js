@@ -60,9 +60,11 @@ test('ROUTE GUARD: every function under api/ is built with guardedRoute and none
     const src = readFileSync(f, 'utf8');
     const m = /import \{ (\w+) \} from '\.\.\/_lib\/routes\.js'/.exec(src);
     assert.ok(m, `${f} must export a handler built in api/_lib/routes.js`);
-    assert.match(routes, new RegExp(`export const ${m[1]} = guardedRoute\\(`), `${f}: ${m[1]} must use guardedRoute`);
+    assert.match(routes, new RegExp(`export const ${m[1]} = (guardedRoute|signedRoute)\\(`), `${f}: ${m[1]} must use guardedRoute or signedRoute`);
   }
   // and guardedRoute really calls authorise before run
+  const signed = readFileSync('api/_lib/signed.js', 'utf8');
+  assert.ok(signed.indexOf('verifySignature(') > -1 && signed.indexOf('verifySignature(') < signed.indexOf('await run('), 'signedRoute verifies the signature before running');
   const guard = readFileSync('api/_lib/guard.js', 'utf8');
   assert.ok(guard.indexOf('await authorise(') > -1 && guard.indexOf('await authorise(') < guard.indexOf('await run('));
 });

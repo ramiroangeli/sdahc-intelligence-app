@@ -74,6 +74,7 @@ export async function database() {
   await db.exec(readFileSync('supabase/migrations/listings_0001_drafts.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/listings_0002_photos.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/listings_0003_photo_review.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/listings_0004_publish_jobs.sql', 'utf8'));
   const adapter = {
     raw: db,
     unsafe: async (q, p) => (await db.query(q, p)).rows,
@@ -82,7 +83,7 @@ export async function database() {
   return adapter;
 }
 
-export const staff = (email, caps) => ({ email, capabilities: caps, active: true, authUserId: null });
+export const staff = (email, caps, notionUserId = null) => ({ email, capabilities: caps, active: true, authUserId: null, notionUserId });
 export const EDITOR = staff('ali@sdahomechoices.com.au', ['listings.view', 'listings.edit']);
 export const PUBLISHER = staff('steve@sdahomechoices.com.au', ['listings.view', 'listings.publish']);
 export const ALI = staff('ali@sdahomechoices.com.au', ['listings.view', 'listings.edit', 'listings.publish']);
@@ -91,14 +92,40 @@ export const VIEWER = staff('viewer@sdahomechoices.com.au', ['listings.view']);
 export const userFor = (s) => azureUser({ email: s.email, id: '22222222-2222-4222-8222-' + String(s.email.length).padStart(12, '0'), identities: [{ provider: 'azure', identity_data: { email: s.email, iss: `https://login.microsoftonline.com/${TENANT}/v2.0` } }] });
 
 /** Call a route as a person. Returns { status, json }. */
-export async function call(route, w, db, person, { method = 'GET', url = '/', body, headers } = {}) {
+export async function call(route, w, db, person, { method = 'GET', url = '/', body, headers, fetch: fetchOverride, env } = {}) {
   w.state.user = userFor(person);
   clearSnapshotCache(); clearComplianceCache();
   const r = makeRes();
   const base = baseReq({ method });
   const rq = { ...base, headers: { ...base.headers, ...(headers ?? {}) }, url, body };
-  await route({ authConfig: authConfig([person]), fetch: w.fetch, db, blob: w.blob, dataConfig: { notion: { token: 'tok', dataSourceId: 'ds', version: 'v' }, repo: 'o/r', ref: 'main', siteBase: 'https://sdahomechoices.com.au', githubReadToken: null } })(rq, r);
+  await route({ authConfig: authConfig([person]), fetch: fetchOverride ?? w.fetch, env, db, blob: w.blob, dataConfig: { notion: { token: 'tok', dataSourceId: 'ds', version: 'v' }, repo: 'o/r', ref: 'main', siteBase: 'https://sdahomechoices.com.au', githubReadToken: null } })(rq, r);
   const bin = Buffer.isBuffer(r.body);
   return { status: r.statusCode, json: r.body && !bin ? JSON.parse(r.body) : null, raw: r.body, headers: r.headers };
 }
 export const resetCaches = () => { clearPropertyCache(); clearSnapshotCache(); clearComplianceCache(); };
+
+/** Signed call to a route the website job uses (no person, no session). */
+export async function callSigned(route, db, { method = 'GET', url, body, secret, now = Date.now(), serverNow, headers, env, tamper } = {}) {
+  const { signedHeaders } = await import('../api/_lib/signing.js');
+  const raw = method === 'GET' ? `GET:${url}` : body;
+  const h = secret ? signedHeaders(secret, raw, now) : {};
+  const r = makeRes();
+  await route({ db, env: env ?? { LISTINGS_CALLBACK_SECRET: SECRET }, now: () => (serverNow ?? Date.now()) })({ method, url, headers: { ...h, ...(headers ?? {}) }, ...(method === 'POST' ? { body: tamper ?? body } : {}) }, r);
+  return { status: r.statusCode, json: r.body ? JSON.parse(r.body) : null, raw: r.body };
+}
+export const SECRET = 'callback-secret-for-tests-0123456789abcdef';
+export const GH_TOKEN = 'ghp_TESTTOKEN_0123456789abcdefghijklmnopqrstuv';
+export const PUBLISH_ENV = { LISTINGS_GITHUB_DISPATCH_TOKEN: GH_TOKEN, LISTINGS_CALLBACK_SECRET: SECRET };
+
+/** GitHub as the app sees it: records workflow dispatches, answers run lookups. */
+export function github(w) {
+  const gh = { dispatches: [], status: 204, runs: [], lookups: 0 };
+  gh.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes('api.github.com/repos/') && u.includes('/dispatches')) { gh.dispatches.push({ url: u, headers: opts.headers, body: JSON.parse(opts.body) }); if (gh.status === 'throw') throw new Error('network'); return { status: gh.status, ok: gh.status < 300, json: async () => ({}) }; }
+    if (u.includes('/actions/workflows/') && u.includes('/runs')) { gh.lookups += 1; return { ok: true, status: 200, json: async () => ({ workflow_runs: gh.runs }) }; }
+    return w.fetch(url, opts);
+  };
+  return gh;
+}
+export const ALI_N = staff('ali@sdahomechoices.com.au', ['listings.view', 'listings.edit', 'listings.publish'], '2e1d872b-594c-8122-be15-00028acc4f13');
