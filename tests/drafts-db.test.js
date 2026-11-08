@@ -44,3 +44,9 @@ test('the migration is idempotent for the role and does not touch other schemas'
   assert.ok(!/password/i.test(active), 'no password in the file');
   assert.ok(!/grant[^;]*to[^;]*(anon|authenticated|service_role)/i.test(active), 'nothing granted to API roles');
 });
+
+test('jsonb parameters are cast through text so postgres.js cannot double-encode them', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../api/_lib/drafts-repo.js', import.meta.url), 'utf8');
+  assert.deepEqual(src.match(/\$\d+::jsonb/g) ?? [], [], 'bind jsonb values as $n::text::jsonb');
+});
