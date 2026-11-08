@@ -88,3 +88,40 @@ test('0002 rollback removes only the photos column; drafts, notes and history su
   await db.raw.exec(readFileSync(new URL('../supabase/migrations/listings_0002_photos.sql', import.meta.url), 'utf8'));
   assert.equal((await db.raw.query(`select photos from listings.drafts where id='${id}'`)).rows[0].photos.length, 0);
 });
+
+// ---- listings_0003_photo_review.sql: one additive nullable column, same privileges, separate rollback
+test('0003 photo review migration: only the listings schema is touched, and the rollback is a separate file', async () => {
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync(new URL('../supabase/migrations/listings_0003_photo_review.sql', import.meta.url), 'utf8').replace(/^\s*--.*$/gm, '');
+  const down = readFileSync(new URL('../supabase/migrations/listings_0003_photo_review_rollback.sql', import.meta.url), 'utf8').replace(/^\s*--.*$/gm, '');
+  for (const sql of [up, down]) {
+    assert.ok(!/\b(raw|history|analytics|public|rfi)\s*\./i.test(sql), 'no other schema is referenced');
+    assert.ok(!/\bgrant\b|\bcreate role\b|\bdrop (table|schema|role)\b/i.test(sql), 'no grant, role or table is created or dropped');
+  }
+  assert.match(up, /alter table listings\.drafts add column if not exists photo_review jsonb;/i);
+  assert.match(down, /drop column if exists photo_review/i);
+  assert.ok(!/drop column/i.test(up), 'the forward migration never drops anything');
+});
+test('0003: nobody but listings_app can reach photo_review, and the constraint keeps it an object or NULL', async () => {
+  const db = await database();
+  for (const role of ['anon', 'authenticated', 'service_role']) assert.match((await asRole(db, role, 'select photo_review from listings.drafts')).denied ?? 'ALLOWED', /permission denied/, role);
+  const ins = await asRole(db, 'listings_app', INSERT);
+  const id = ins.rows[0].id;
+  assert.ok((await asRole(db, 'listings_app', `update listings.drafts set photo_review = '{"by":"a@b","ids":[]}'::jsonb where id='${id}'`)).rows);
+  assert.ok((await asRole(db, 'listings_app', `update listings.drafts set photo_review = NULL where id='${id}'`)).rows);
+  assert.match((await asRole(db, 'listings_app', `update listings.drafts set photo_review = '[1]'::jsonb where id='${id}'`)).denied ?? 'ALLOWED', /drafts_photo_review_is_object/);
+  assert.match((await asRole(db, 'listings_app', `delete from listings.drafts where id='${id}'`)).denied ?? 'ALLOWED', /permission denied/);
+});
+test('0003 rollback removes only photo_review; photos and drafts survive; re-applying works', async () => {
+  const { readFileSync } = await import('node:fs');
+  const db = await database();
+  const ins = await asRole(db, 'listings_app', INSERT);
+  const id = ins.rows[0].id;
+  await db.raw.exec(`update listings.drafts set photos = '[{"id":"aaaaaaaaaaaa"}]'::jsonb where id='${id}'`);
+  await db.raw.exec(readFileSync(new URL('../supabase/migrations/listings_0003_photo_review_rollback.sql', import.meta.url), 'utf8'));
+  const cols = (await db.raw.query("select column_name from information_schema.columns where table_schema='listings' and table_name='drafts'")).rows.map((r) => r.column_name);
+  assert.ok(!cols.includes('photo_review') && cols.includes('photos') && cols.includes('content'));
+  assert.equal((await db.raw.query(`select jsonb_array_length(photos) n from listings.drafts where id='${id}'`)).rows[0].n, 1);
+  await db.raw.exec(readFileSync(new URL('../supabase/migrations/listings_0003_photo_review.sql', import.meta.url), 'utf8'));
+  assert.equal((await db.raw.query(`select photo_review from listings.drafts where id='${id}'`)).rows[0].photo_review, null);
+});

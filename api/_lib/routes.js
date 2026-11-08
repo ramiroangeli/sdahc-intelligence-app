@@ -8,7 +8,7 @@ import { buildListings } from './listings-service.js';
 import { guardedRoute } from './guard.js';
 import { HttpError, queryOf, readBuffer, readJson } from './http.js';
 import { MAX_BYTES } from './photo-process.js';
-import { addPhoto, readPhoto, saveGallery } from './photos.js';
+import { addPhoto, photoLight, readPhoto, reviewGallery, saveGallery } from './photos.js';
 import { CAPABILITIES as C, hasCapability } from './permissions.js';
 
 const dataCfg = (deps) => deps.dataConfig ?? loadDataConfig(deps.env ?? process.env);
@@ -79,27 +79,36 @@ export const draftVerifyRoute = guardedRoute({
   },
 });
 
-/** Draft photographs. Upload (raw image bytes) and gallery edits are Editor-only; every change is a versioned draft save. */
+/** Draft photographs. Upload (raw image bytes) and gallery edits are Editor-only. Responses are small: no Notion or GitHub round trip. */
 export const draftPhotosRoute = guardedRoute({
   capability: { POST: C.EDIT, PUT: C.EDIT },
   run: async ({ req, session, deps }) => {
     const env = deps.env ?? process.env;
-    const base = { cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), ...capsOf(session) };
+    const db = getDb(deps);
     const actor = actorOf(session);
     const q = queryOf(req);
-    let id;
     if (req.method === 'POST') {
-      id = q.id;
       const body = await readBuffer(req, MAX_BYTES);
-      const saved = await addPhoto({ db: base.db, deps, env, id, body, declaredType: req.headers?.['x-image-type'], expectedVersion: Number(q.expectedVersion), replaceId: q.replace || undefined, kind: q.kind, actor });
-      audit({ action: q.replace ? 'listings.photo.replace' : 'listings.photo.add', outcome: 'ok', actor, detail: { id, version: saved.version } });
-    } else {
-      const body = await readJson(req);
-      id = body?.id;
-      const { saved, removed } = await saveGallery({ db: base.db, deps, env, id, expectedVersion: body?.expectedVersion, items: body?.photos, coverId: body?.coverId, actor });
-      audit({ action: 'listings.photo.save', outcome: 'ok', actor, detail: { id, version: saved.version, removed } });
+      const out = await addPhoto({ db, deps, env, id: q.id, body, declaredType: req.headers?.['x-image-type'], replaceId: q.replace || undefined, kind: q.kind, actor });
+      audit({ action: q.replace ? 'listings.photo.replace' : 'listings.photo.add', outcome: 'ok', actor, detail: { id: q.id, version: out.draft.version } });
+      return out;
     }
-    return openDraft({ ...base, id });
+    const body = await readJson(req);
+    const { saved, removed } = await saveGallery({ db, deps, env, id: body?.id, expectedVersion: body?.expectedVersion, items: body?.photos, coverId: body?.coverId, actor });
+    audit({ action: 'listings.photo.save', outcome: 'ok', actor, detail: { id: body.id, version: saved.version, removed } });
+    return photoLight(saved, {});
+  },
+});
+
+/** The single gallery review. Publisher only: the reviewer's identity and the time are recorded server-side. */
+export const draftGalleryReviewRoute = guardedRoute({
+  capability: { POST: C.PUBLISH },
+  run: async ({ req, session, deps }) => {
+    const actor = actorOf(session);
+    const body = await readJson(req);
+    const out = await reviewGallery({ db: getDb(deps), id: body?.id, ids: body?.ids, expectedVersion: body?.expectedVersion, actor });
+    audit({ action: 'listings.photo.review', outcome: 'ok', actor, detail: { id: body.id, version: out.draft.version } });
+    return out;
   },
 });
 

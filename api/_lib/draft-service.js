@@ -7,7 +7,7 @@ import { HttpError, PUBLIC_ID_RE } from './http.js';
 import { changedGroups, getProperty, listAllProperties } from './property.js';
 import { loadCompliance, loadSnapshots } from './site.js';
 import { systemItems, verificationState } from './verification.js';
-import { photoReadiness, photoView, photosForRules } from './photos.js';
+import { photoReadiness, photoView, photosForRules, reviewState, streetOf } from './photos.js';
 
 const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
 
@@ -28,8 +28,9 @@ async function context(cfg, prop, { fetchImpl }) {
 function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const content = draft.content;
   const photos = Array.isArray(draft.photos) ? draft.photos : [];
-  const validation = validateDraft(content, { ...ctx, photos: photosForRules(photos) });
-  const pr = photoReadiness(photos, { internalAddress: ctx.internal?.address });
+  const rv = reviewState(draft);
+  const validation = validateDraft(content, { ...ctx, photos: photosForRules(photos, rv.reviewed) });
+  const pr = photoReadiness(photos, { street: streetOf(draft.label) });
   const ver = verificationState({ occupancy: prop.facts.occupancy, content, verification: draft.verification, notes: draft.notes });
   const systemErrors = ver.system.filter((i) => i.severity === 'error' && i.status === 'open');
   const blockers = [
@@ -40,15 +41,19 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const fieldErrors = { ...validation.fieldErrors };
   for (const e of systemErrors) (fieldErrors.description ??= []).push(e.text);
   const complete = validation.complete && systemErrors.length === 0;
-  // photograph rules: the website rules ran with only reviewed photos; staff-facing detail comes from photoReadiness
-  const photoBlockers = [...pr.gallery, ...pr.items.flatMap((i) => i.issues.map((x) => ({ code: x.code, message: x.message })))].map((b) => ({ code: b.code.startsWith('photos_') ? 'photos_required' : 'photo_review', message: b.message }));
-  const blockersAll = [...blockers.filter((b) => b.code !== 'photos_required'), ...(pr.ready ? [] : photoBlockers)];
+  // photograph rules: automated alt-text checks plus ONE gallery-level review by a Publisher (no per-image checkboxes)
+  const photoBlockers = [
+    ...pr.gallery.map((g) => ({ code: 'photos_required', message: g.message })),
+    ...pr.items.flatMap((i) => i.issues.map((x) => ({ code: 'photo_alt', message: x.message }))),
+    ...(photos.length && !rv.reviewed ? [{ code: 'photo_review', message: rv.state === 'stale' ? 'The gallery changed since it was reviewed. A Publisher reviews all images again at final approval.' : 'The gallery has not been reviewed. A Publisher reviews all images once, at final approval.' }] : []),
+  ];
+  const blockersAll = [...blockers.filter((b) => b.code !== 'photos_required'), ...photoBlockers];
   return {
     draft: { id: draft.public_id, label: draft.label, version: draft.version, status: draft.status, content, createdBy: draft.created_by, createdAt: draft.created_at, updatedBy: draft.updated_by, updatedAt: draft.updated_at },
     property: { fullName: prop.facts.fullName, state: prop.facts.state, designCategories: prop.facts.designCategories, buildType: prop.facts.buildType, buildClass: prop.facts.buildClass, features: prop.facts.features, occupancy: prop.facts.occupancy, notionStatus: prop.facts.webStatus.label, editedAt: prop.facts.editedAt, suggestedPublicAddress: prop.suggestedPublicAddress },
     notion: { changed: changedGroups(draft.base_facts, prop.hashes), baseEditedAt: draft.base_notion_edited_at, currentEditedAt: prop.facts.editedAt },
-    photos: photoView(photos, { internalAddress: ctx.internal?.address }),
-    validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, blockers: blockersAll, slug: validation.slug, complete, publishable: complete && blockersAll.length === 0 && pr.ready },
+    photos: photoView(draft),
+    validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, blockers: blockersAll, slug: validation.slug, complete, publishable: complete && blockersAll.length === 0 },
     verification: { system: ver.system, notes: ver.staff, open: ver.blocking },
     preview: validation.preview,
     history: (history ?? []).map((h) => ({ version: h.version, action: h.action, fields: h.changed_fields, by: h.changed_by, at: h.changed_at })),
@@ -112,7 +117,7 @@ export async function saveDraftFor({ cfg, db, body, actor, fetchImpl, caps }) {
     action = 'note';
   }
   if (acknowledge && changed.length) { patch.baseFacts = prop.hashes; patch.baseEditedAt = prop.facts.editedAt; action = 'refresh_base'; }
-  const saved = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: action === 'note' && !sameContent(content, draft.content) ? 'update' : action, patch, actor });
+  const saved = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: action === 'note' && !sameContent(content, draft.content) ? 'update' : action, patch, actor, current: draft });
   const history = await repo.getHistory(db, saved.id);
   return view({ draft: saved, prop, ctx, history, ...caps });
 }
@@ -137,7 +142,7 @@ export async function verifyDraftFor({ cfg, db, body, actor, fetchImpl, caps }) 
     if (!item || item.severity !== 'verify') throw new HttpError(400, 'not_verifiable');
     patch.verification = { ...draft.verification, [item.code]: { basis: item.basis, by: actor.email, at, note } };
   }
-  const saved = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: 'verify', patch, actor });
+  const saved = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: 'verify', patch, actor, current: draft });
   const [ctx, history] = await Promise.all([context(cfg, prop, { fetchImpl }), repo.getHistory(db, saved.id)]);
   return view({ draft: saved, prop, ctx, history, ...caps });
 }

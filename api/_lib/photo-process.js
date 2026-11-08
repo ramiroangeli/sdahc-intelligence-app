@@ -1,7 +1,11 @@
 // Validation and processing of ONE uploaded image for a draft gallery. Mirrors the website's
-// scripts/prepare-listing-photos.mjs (same widths, WebP quality, content-hash id, <id>-<width>.webp names, brand-accent
-// snapping, no metadata) so a staged photo can later be promoted to the public store unchanged.
+// scripts/prepare-listing-photos.mjs (same widths, WebP quality, <id>-<width>.webp names, brand-accent snapping, no metadata)
+// so a staged photo can later be promoted to the public store unchanged.
 // Original file names are never read: the browser sends bytes only.
+//
+// Speed: the image is decoded once per output size straight from the upload (libjpeg shrink-on-load for JPEG), the three
+// sizes are produced in parallel, the id is the hash of the uploaded bytes (so a duplicate is detected BEFORE any pixel work),
+// and the accent is sampled from the 480 px result instead of a separate decode.
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
 import { HttpError } from './http.js';
@@ -30,34 +34,43 @@ export const snapToAccent = ({ r, g, b }) => {
   return best;
 };
 
-/** @returns {{id, width, height, accent, variants:[{w,file,buffer}]}}  Throws HttpError for anything not acceptable. */
-export async function processImage(buf, declaredType) {
+/** Cheap checks only (signature, type, size, hash). Throws HttpError. Returns the content id used for duplicate detection. */
+export function inspectUpload(buf, declaredType) {
   if (!Buffer.isBuffer(buf) || buf.length === 0) throw new HttpError(400, 'empty_image');
   if (buf.length > MAX_BYTES) throw new HttpError(413, 'image_too_large');
   const kind = sniff(buf);
   if (!kind) throw new HttpError(415, 'unsupported_image_type');
   if (declaredType && TYPES[String(declaredType).toLowerCase()] !== kind) throw new HttpError(415, 'image_type_mismatch');
+  return { kind, id: createHash('sha256').update(buf).digest('hex').slice(0, 12) };
+}
+
+/** @returns {{id, width, height, accent, variants:[{w,file,buffer}], ms:{inspect,variants,total}}}  Throws HttpError for anything not acceptable. */
+export async function processImage(buf, declaredType, pre) {
+  const t0 = performance.now();
+  const { kind, id } = pre ?? inspectUpload(buf, declaredType);
   const opts = { limitInputPixels: MAX_PIXELS, failOn: 'error' };
   let meta;
   try { meta = await sharp(buf, opts).metadata(); } catch { throw new HttpError(422, 'unreadable_image'); }
   if (meta.format !== kind) throw new HttpError(415, 'image_type_mismatch');
   if ((meta.pages ?? 1) > 1) throw new HttpError(422, 'animated_image');
-  let data; let info;
+  const swap = (meta.orientation ?? 1) >= 5; // EXIF orientation 5-8 swaps width and height once rotated
+  const width = swap ? meta.height : meta.width; const height = swap ? meta.width : meta.height;
+  if (!width || !height) throw new HttpError(422, 'unreadable_image');
+  if (width < MIN_WIDTH) throw new HttpError(422, 'image_too_small', { minWidth: MIN_WIDTH });
+  if (width > MAX_SIDE || height > MAX_SIDE) throw new HttpError(422, 'image_too_large_dimensions');
+  const t1 = performance.now();
+  const widths = WIDTHS.filter((w) => w <= width || w === WIDTHS[0]);
+  if (width > Math.max(...widths) && width < WIDTHS[WIDTHS.length - 1]) widths.push(width);
+  widths.sort((a, b) => a - b);
+  let variants;
   try {
     // rotate() applies the EXIF orientation; no withMetadata(), so EXIF, GPS, XMP and ICC are all dropped
-    ({ data, info } = await sharp(buf, opts).rotate().toBuffer({ resolveWithObject: true }));
+    variants = await Promise.all(widths.map(async (w) => ({
+      w, file: `${id}-${w}.webp`,
+      buffer: await sharp(buf, opts).rotate().resize({ width: Math.min(w, width), withoutEnlargement: true }).webp({ quality: 78 }).toBuffer(),
+    })));
   } catch { throw new HttpError(422, 'unreadable_image'); }
-  if (info.width < MIN_WIDTH) throw new HttpError(422, 'image_too_small', { minWidth: MIN_WIDTH });
-  if (info.width > MAX_SIDE || info.height > MAX_SIDE) throw new HttpError(422, 'image_too_large_dimensions');
-  const id = createHash('sha256').update(data).digest('hex').slice(0, 12);
-  const { dominant } = await sharp(data).resize(128, 128, { fit: 'inside' }).stats();
-  const widths = WIDTHS.filter((w) => w <= info.width || w === WIDTHS[0]);
-  if (info.width > Math.max(...widths) && info.width < WIDTHS[WIDTHS.length - 1]) widths.push(info.width);
-  widths.sort((a, b) => a - b);
-  const variants = [];
-  for (const w of widths) {
-    const buffer = await sharp(data).resize({ width: Math.min(w, info.width), withoutEnlargement: true }).webp({ quality: 78 }).toBuffer();
-    variants.push({ w, file: `${id}-${w}.webp`, buffer });
-  }
-  return { id, width: info.width, height: info.height, accent: snapToAccent(dominant), variants };
+  const { dominant } = await sharp(variants[0].buffer).resize(128, 128, { fit: 'inside' }).stats();
+  const t2 = performance.now();
+  return { id, width, height, accent: snapToAccent(dominant), variants, ms: { inspect: Math.round(t1 - t0), variants: Math.round(t2 - t1), total: Math.round(t2 - t0) } };
 }

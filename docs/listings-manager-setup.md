@@ -104,7 +104,8 @@ the public Blob store.
 - Files are stored in a PRIVATE Vercel Blob store under `listings-staging/<public id>/`. They are read only through
   `GET /api/listings/draft-photo`, which authorises the user, looks the file up from the draft row (the client never supplies a path)
   and returns it with `Cache-Control: private, no-store`. The browser fetches each image with its session token and shows it from an object URL.
-- A new or replaced image always starts with the privacy review unconfirmed. Alt text is also checked for a house number next to the street name, prices and contact details.
+- Photo UX release: there is no per-photo privacy checkbox. Owner authorisation is obtained before upload; the automated alt-text privacy checks and the website publication guards are unchanged. A single gallery review (a Publisher confirms they inspected every image) is recorded with who and when, and is cleared when an image is added, replaced or removed. The first photograph is always the cover and floorplans are always last (one ordered array, no separate cover flag).
+- Alt text is also checked for a house number next to the street name, prices and contact details.
 - Capabilities: Viewer can look at images; Editor uploads and edits. The privacy review records who confirmed it and when.
 
 ## One-time setup (in this order)
@@ -115,3 +116,13 @@ the public Blob store.
    Vercel OIDC (`VERCEL_OIDC_TOKEN`, issued per deployment and refreshed by the SDK), so no storage secret is needed in the code or in Vercel env vars.
    Check Project Settings > Security that OIDC federation is enabled. If the connection also adds `BLOB_READ_WRITE_TOKEN`, the app does not need it.
 3. **Redeploy** production. Until `BLOB_STORE_ID` exists the photo endpoints answer 503 and the editor shows "Photo storage is not set up yet".
+
+
+## Photo UX release (listings_0003_photo_review.sql): run BEFORE deploying
+1. **Supabase**: run `supabase/migrations/listings_0003_photo_review.sql` in the SQL editor first. It adds one nullable column (`photo_review`) to `listings.drafts`; nothing else
+   changes and no grant is added. The new code reads that column, so deploying without it makes draft reads fail. Rollback: `listings_0003_photo_review_rollback.sql`.
+   Old code ignores the column, so running the migration early is safe.
+2. Merge and deploy. Existing photos keep working: the old per-photo flags are dropped on the next save and a legacy cover flag is honoured once.
+3. Optional, separate decision: run the functions in Tokyo (see `docs/photo-ux-performance.md`).
+
+Timings after deployment: browser console `photo upload timings`, and the function log line `{"type":"timing",...}`.

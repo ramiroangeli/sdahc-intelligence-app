@@ -73,6 +73,7 @@ export async function database() {
   await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;`);
   await db.exec(readFileSync('supabase/migrations/listings_0001_drafts.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/listings_0002_photos.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/listings_0003_photo_review.sql', 'utf8'));
   const adapter = {
     raw: db,
     unsafe: async (q, p) => (await db.query(q, p)).rows,
