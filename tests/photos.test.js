@@ -252,12 +252,13 @@ test('GALLERY REVIEW: one Publisher action records who and when; adding, replaci
   assert.equal(rm.json.photos.review.reviewed, false);
 });
 
-test('the gallery review cannot be used to skip checks: needs a photograph, and alt text must pass the automated checks first', async () => {
+test('the gallery review cannot be used to skip checks: needs a photograph, and typed alt text must pass the automated privacy checks', async () => {
   const { w, db } = await setup();
   assert.equal((await review(w, db, ALI, ID_7B, [])).json.error, 'no_photographs');
   const r = await fill(w, db, 1);
-  assert.equal((await review(w, db, ALI, ID_7B, ids(r))).json.error, 'photos_not_ready', 'blank alt text');
-  const leak = await gallery(w, db, ALI, ID_7B, r.json.draft.version, [{ id: ids(r)[0], alt: 'The house at 7B Wattle Street from the road', kind: 'photo' }]);
+  const rv = await review(w, db, ALI, ID_7B, ids(r));
+  assert.equal(rv.status, 200, 'an empty description is allowed and does not block the review');
+  const leak = await gallery(w, db, ALI, ID_7B, rv.json.draft.version, [{ id: ids(r)[0], alt: 'The house at 7B Wattle Street from the road', kind: 'photo' }]);
   assert.equal(leak.status, 200, 'saving is never blocked');
   assert.ok(leak.json.photos.items[0].issues.some((i) => i.code === 'alt_private'));
   assert.equal((await review(w, db, ALI, ID_7B, ids(leak))).json.error, 'photos_not_ready');
@@ -266,11 +267,11 @@ test('the gallery review cannot be used to skip checks: needs a photograph, and 
   assert.ok(full.json.validation.blockers.some((b) => b.code === 'photo_alt' && /house or unit number/.test(b.message)));
 });
 
-test('alt text rules: file names, short text, a house number next to the street name, prices and contact details are flagged', () => {
+test('alt text rules: file names, a house number next to the street name, prices and contact details are flagged', () => {
   const r = photoReadiness([{ id: 'aaaaaaaaaaaa', alt: 'IMG_2231.jpg', files: [] }, { id: 'bbbbbbbbbbbb', alt: 'short', files: [] }], { street: 'Wattle Street' });
   assert.ok(r.items[0].issues.some((i) => i.code === 'alt_filename'));
-  assert.ok(r.items[1].issues.some((i) => i.code === 'alt_missing'));
-  assert.equal(r.ready, false);
+  assert.deepEqual(r.items[1].issues, [], 'a short description is fine');
+  assert.equal(r.ready, false, 'the file name still blocks');
   assert.equal(altPrivacyIssues('The house at 7B Wattle Street from the road', 'Wattle Street').length, 1);
   assert.equal(altPrivacyIssues('Wattle Street frontage with ramp', 'Wattle Street').length, 0);
   assert.equal(altPrivacyIssues('Call 0412 345 678 or a@b.com', 'Wattle Street').length, 1);

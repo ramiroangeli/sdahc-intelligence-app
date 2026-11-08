@@ -8,7 +8,7 @@
    ============================================================================ */
 
 const LS = { me: null, list: null, listError: null, listLoading: false, picker: null, pickerQ: '', pickerError: null, confirm: null,
-  d: null, dErr: null, dirty: false, saving: false, form: null, live: null, flash: null, notionConflict: null, verifyOpen: null };
+  d: null, historyOpen: false, dErr: null, dirty: false, saving: false, form: null, live: null, flash: null, notionConflict: null, verifyOpen: null };
 let lsTimer = null;
 
 function lsEl(tag, props, ...kids) {
@@ -184,7 +184,7 @@ async function lsCreate(propertyId) {
 
 /* ------------------------------------------------------------------ draft editor */
 async function lsLoadDraft(id) {
-  LS.dErr = null; LS.d = LS.d && LS.d.draft.id === id ? LS.d : null; LS.dirty = false; lsPaint();
+  LS.dErr = null; if (!LS.d || LS.d.draft.id !== id) LS.historyOpen = false; LS.d = LS.d && LS.d.draft.id === id ? LS.d : null; LS.dirty = false; lsPaint();
   try { if (!LS.me) LS.me = await lsApi('GET', '/api/listings/me'); LS.d = await lsApi('GET', '/api/listings/draft?id=' + id); LS.form = { ...LS.d.draft.content }; LS.live = LS.d; }
   catch (e) { LS.dErr = e.status || 0; }
   lsPaint();
@@ -262,7 +262,7 @@ function sideContent() {
   const items = [
     ['Required fields complete', v.complete],
     ['Photographs added', !v.blockers.some((b) => b.code === 'photos_required')],
-    ['Every image described', LS.live.photos ? LS.live.photos.items.length > 0 && LS.live.photos.items.every((x) => x.issues.length === 0) : false],
+    ['Photographs added, descriptions pass the checks', LS.live.photos ? LS.live.photos.items.length > 0 && LS.live.photos.items.every((x) => x.issues.length === 0) : false],
     ['Gallery reviewed by a Publisher', !!(LS.live.photos && LS.live.photos.review && LS.live.photos.review.reviewed)],
     ['Commercial verification clear', ver.open === 0],
     ['Compliance cleared', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
@@ -288,9 +288,22 @@ function sideContent() {
     ].map(([k, val]) => [lsEl('dt', { text: k }), lsEl('dd', { text: val })])),
     lsEl('div', { class: 'ls-sub', text: 'Prices, income and other financial fields are not shown or editable here.' })));
   // history
-  nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'History' }),
-    lsEl('ul', { class: 'ls-hist' }, LS.d.history.map((h) => lsEl('li', null, lsEl('strong', { text: 'v' + h.version + ' ' + h.action }), ' ', h.by.split('@')[0], ' ', when(h.at), h.fields.length ? lsEl('div', { class: 'ls-sub', text: h.fields.join(', ') }) : null)))));
+  // History: collapsed by default, one click to open or close. The heading (a real button) stays visible. Content is unchanged.
+  const hOpen = !!LS.historyOpen;
+  nodes.push(lsEl('section', { class: 'ls-card ls-card-history' + (hOpen ? ' open' : ''), id: 'ls-history' },
+    lsEl('h3', { class: 'ls-hist-h' }, lsEl('button', { type: 'button', class: 'ls-hist-toggle', id: 'ls-hist-toggle', 'aria-expanded': hOpen ? 'true' : 'false', 'aria-controls': 'ls-hist-panel', onclick: lsToggleHistory },
+      lsEl('span', { text: 'History' }), lsEl('span', { class: 'ls-hist-count', text: String(LS.d.history.length) }), lsEl('span', { class: 'ls-hist-chev', 'aria-hidden': 'true' }))),
+    lsEl('div', { id: 'ls-hist-panel', class: 'ls-hist-panel', role: 'region', 'aria-labelledby': 'ls-hist-toggle', hidden: !hOpen },
+      lsEl('ul', { class: 'ls-hist' }, LS.d.history.map((h) => lsEl('li', null, lsEl('strong', { text: 'v' + h.version + ' ' + h.action }), ' ', h.by.split('@')[0], ' ', when(h.at), h.fields.length ? lsEl('div', { class: 'ls-sub', text: h.fields.join(', ') }) : null))))));
   return nodes;
+}
+
+function lsToggleHistory() {
+  LS.historyOpen = !LS.historyOpen;
+  const card = document.getElementById('ls-history'); const btn = document.getElementById('ls-hist-toggle'); const panel = document.getElementById('ls-hist-panel');
+  if (card) card.classList.toggle('open', LS.historyOpen);
+  if (btn) btn.setAttribute('aria-expanded', LS.historyOpen ? 'true' : 'false');
+  if (panel) panel.hidden = !LS.historyOpen;
 }
 
 function verifyItem(i) {
@@ -327,12 +340,12 @@ function previewContent() {
   const pv = LS.live.preview;
   const ph = LS.live.photos || LS.d.photos; const order = ph.items; /* the stored array order IS the public order */
   const lead = order.length && order[0].kind !== 'floorplan' ? order[0] : null;
-  const card = lsEl('div', { class: 'ls-pv-card' }, lead ? lsEl('div', { class: 'ls-pv-photo ls-pv-img' }, lsPhotoImg(lead.id, 960, lead.alt)) : lsEl('div', { class: 'ls-pv-photo', text: 'No photograph yet' }),
+  const card = lsEl('div', { class: 'ls-pv-card' }, lead ? lsEl('div', { class: 'ls-pv-photo ls-pv-img' }, lsPhotoImg(lead.id, 960, lead.altText)) : lsEl('div', { class: 'ls-pv-photo', text: 'No photograph yet' }),
     lsEl('div', { class: 'ls-pv-body' }, lsEl('div', { class: 'ls-pv-chips' }, badge(pv.status, 'ls-badge-live'), ...pv.design.map((d) => badge(d, 'ls-badge-notion')), pv.featured ? badge('Featured', 'ls-badge-draft') : null),
       lsEl('h4', { text: pv.title || '(no title yet)' }), lsEl('div', { class: 'ls-pv-addr', text: pv.addressLine || '(no address yet)' }), lsEl('div', { class: 'ls-pv-price', text: pv.pricing || '(no pricing mode yet)' }),
       lsEl('p', { text: pv.summary || '(no description yet)' })));
-  const detail = lsEl('div', { class: 'ls-pv-detail' }, order.length ? lsEl('div', { class: 'ls-pv-gallery' }, lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg ls-pv-img' }, lsPhotoImg(order[0].id, 1600, order[0].alt)),
-      order.length > 1 ? lsEl('div', { class: 'ls-pv-thumbs' }, order.slice(1).map((x) => lsEl('div', { class: 'ls-pv-thumb' + (x.kind === 'floorplan' ? ' ls-pv-plan' : '') }, lsPhotoImg(x.id, 480, x.alt), x.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null))) : null) : lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg', text: 'No photographs yet' }),
+  const detail = lsEl('div', { class: 'ls-pv-detail' }, order.length ? lsEl('div', { class: 'ls-pv-gallery' }, lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg ls-pv-img' }, lsPhotoImg(order[0].id, 1600, order[0].altText)),
+      order.length > 1 ? lsEl('div', { class: 'ls-pv-thumbs' }, order.slice(1).map((x) => lsEl('div', { class: 'ls-pv-thumb' + (x.kind === 'floorplan' ? ' ls-pv-plan' : '') }, lsPhotoImg(x.id, 480, x.altText), x.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null))) : null) : lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg', text: 'No photographs yet' }),
     lsEl('h3', { text: pv.title || '(no title yet)' }), lsEl('div', { class: 'ls-pv-addr', text: pv.addressLine || '(no address yet)' }),
     lsEl('div', { class: 'ls-pv-price', text: pv.pricing || '(no pricing mode yet)' }),
     lsEl('div', { class: 'ls-pv-facts' }, pv.design.length ? lsEl('span', { text: 'Design category: ' + pv.design.join(', ') }) : null, pv.buildType ? lsEl('span', { text: 'Building: ' + pv.buildType }) : null),
@@ -398,7 +411,7 @@ async function lsFetchPhoto(photoId, w) {
 /* An <img> that fills in once the authorised fetch completes. */
 function lsPhotoImg(photoId, w, alt, cls) {
   const img = lsEl('img', { class: cls || '', alt: alt || '', loading: 'lazy', draggable: 'false' });
-  lsFetchPhoto(photoId, w).then((u) => { img.src = u; }, () => { img.alt = 'Image unavailable'; img.classList.add('ls-img-fail'); });
+  lsFetchPhoto(photoId, w).then((u) => { img.src = u; }, () => { img.alt = 'Image unavailable'; img.classList.add('ls-img-fail'); img.dispatchEvent(new Event('lsfail')); });
   return img;
 }
 
@@ -433,7 +446,7 @@ const PHOTO_ERR = {
   too_many_photos: 'The gallery is full (24 images).', image_too_large: 'The image is too large.', draft_changed: 'Someone else saved this draft first. Reload to see their version.',
   photos_not_configured: 'Photo storage is not set up yet. An administrator needs to finish the setup.', not_configured: 'Photo storage is not set up yet.',
   cover_must_stay_first: 'The cover stays first. Use "Make cover" on another photo to change it.', cover_is_floorplan: 'A floorplan cannot be the cover.',
-  gallery_changed: 'The gallery changed while you were reviewing it. Open the review again.', photos_not_ready: 'Fix the image descriptions first.', no_photographs: 'Add a photograph first.',
+  gallery_changed: 'The gallery changed while you were reviewing it. Open the review again.', photos_not_ready: 'Fix the flagged image descriptions first (or clear them).', no_photographs: 'Add a photograph first.',
 };
 const photoErrText = (e) => (e.friendly || PHOTO_ERR[e.message] || (e.status === 403 ? 'You do not have permission for that.' : 'The photo change could not be saved (' + e.message + ').'));
 
@@ -459,6 +472,18 @@ function lsScheduleRefresh() {
     } catch (e) { /* the gallery already shows the saved state */ }
   }, 700);
 }
+
+/* A file input's `files` is a LIVE list: setting value = '' (needed to allow choosing the same file again) empties it. Copy first,
+   then reset. Cancelling the dialog fires no change event, or an empty one: both are no-ops. */
+function lsPicked(input) { const files = input && input.files ? Array.from(input.files) : []; if (input) input.value = ''; return files; }
+function lsOnPick(e, opts) { const files = lsPicked(e && e.target); if (files.length) lsEnqueue(files, opts); }
+/* One persistent, off-screen file input, created once and not rebuilt on repaint, so a repaint while the dialog is open cannot orphan it. */
+function lsFileInput() {
+  let el = document.getElementById('ls-file-input');
+  if (!el) { el = document.createElement('input'); el.type = 'file'; el.id = 'ls-file-input'; el.className = 'ls-offscreen'; el.tabIndex = -1; el.setAttribute('aria-hidden', 'true'); el.accept = PHOTO_TYPES.join(','); document.body.append(el); }
+  return el;
+}
+function lsChoose(opts) { const el = lsFileInput(); el.multiple = !(opts && opts.replace); el.onchange = (e) => lsOnPick(e, opts); el.value = ''; el.click(); }
 
 /* ---- upload queue: local thumbnail at once, visible stages, up to three at a time ---- */
 function lsEnqueue(files, opts) {
@@ -507,7 +532,7 @@ async function lsRunItem(item) {
     lsAdoptPhotos(res.json);
     LS.queue = LS.queue.filter((q) => q !== item);
     if (item.localUrl) setTimeout(() => URL.revokeObjectURL(item.localUrl), 4000);
-    LS.photoMsg = { ok: item.replace ? 'Image replaced.' : 'Added. Add a description for each image.' };
+    LS.photoMsg = { ok: item.replace ? 'Image replaced.' : 'Added. A short description is optional.' };
   } catch (e) {
     item.state = 'failed'; item.msg = e.friendly || PHOTO_ERR[e.message] || 'Could not be added (' + e.message + ').'; lsQueueRefresh(item);
   }
@@ -563,7 +588,6 @@ const lsRemovePhoto = (id) => lsGallerySave((items) => ({ items: items.filter((x
 function photoCard(p, idx, items, ro) {
   const asking = LS.removeAsk === p.id; const busy = !!LS.photoBusy || LS.running > 0;
   const cover = p.cover; const plan = p.kind === 'floorplan';
-  const replaceInput = lsEl('input', { type: 'file', accept: PHOTO_TYPES.join(','), class: 'ls-hidden', 'aria-label': 'Choose a replacement image', onchange: (e) => { const f = e.target.files; e.target.value = ''; lsEnqueue(f, { replace: p.id }); } });
   const canDrag = !ro && !cover && !busy;
   const card = lsEl('li', { class: 'ls-ph' + (cover ? ' ls-ph-cover' : '') + (plan ? ' ls-ph-plan' : ''), 'data-photo': p.id, draggable: canDrag ? 'true' : false,
     ondragstart: (e) => { LS.dragId = p.id; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', p.id); } catch (x) { /* ignore */ } card.classList.add('ls-ph-drag'); },
@@ -571,21 +595,21 @@ function photoCard(p, idx, items, ro) {
     ondragover: (e) => { if (LS.dragId && lsDropAllowed(LS.d.photos.items, LS.dragId, p.id)) { e.preventDefault(); card.classList.add('ls-ph-over'); } },
     ondragleave: () => card.classList.remove('ls-ph-over'),
     ondrop: (e) => { e.preventDefault(); card.classList.remove('ls-ph-over'); lsDropOn(p.id); } },
-    lsEl('div', { class: 'ls-ph-img' }, lsPhotoImg(p.id, 480, p.alt || 'Staged image'),
+    lsEl('div', { class: 'ls-ph-img' }, lsPhotoImg(p.id, 480, p.altText || 'Staged image'),
       lsEl('span', { class: 'ls-ph-pos', text: String(idx + 1) }),
       cover ? lsEl('span', { class: 'ls-ph-flag', text: 'Cover' }) : plan ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null),
     lsEl('div', { class: 'ls-ph-body' },
-      lsEl('label', { class: 'ls-label', for: 'ls-alt-' + p.id, text: 'Description (alt text)' }),
-      lsEl('input', { id: 'ls-alt-' + p.id, class: 'ls-input', type: 'text', maxlength: '200', value: p.alt, disabled: ro || busy, placeholder: 'What the image shows, e.g. Front of the house with a ramp',
+      lsEl('label', { class: 'ls-label', for: 'ls-alt-' + p.id, text: 'Description (optional)' }),
+      lsEl('input', { id: 'ls-alt-' + p.id, class: 'ls-input', type: 'text', maxlength: '200', value: p.alt, disabled: ro || busy, placeholder: 'Optional, e.g. Kitchen',
         onchange: (e) => { if (e.target.value.trim() !== (p.alt || '').trim()) lsSetAlt(p.id, e.target.value); } }),
       lsEl('label', { class: 'ls-check-row ls-ph-row', title: cover ? 'The cover must be a photograph. Make another photo the cover first.' : '' },
         lsEl('input', { type: 'checkbox', checked: plan, disabled: ro || busy || cover, onchange: (e) => lsSetKind(p.id, e.target.checked) }), cover ? ' Floorplan (not available for the cover)' : ' This is a floorplan (always last)'),
-      p.issues.length ? lsEl('ul', { class: 'ls-ferr ls-ph-issues' }, p.issues.map((i) => lsEl('li', { text: i.message }))) : lsEl('div', { class: 'ls-ph-ok', text: 'Description OK' }),
+      p.issues.length ? lsEl('ul', { class: 'ls-ferr ls-ph-issues' }, p.issues.map((i) => lsEl('li', { text: i.message }))) : (p.alt ? lsEl('div', { class: 'ls-ph-ok', text: 'Description OK' }) : lsEl('div', { class: 'ls-sub ls-ph-fallback', text: 'No description. The website will say: "' + p.altText + '"' })),
       ro ? null : lsEl('div', { class: 'ls-ph-actions' },
         cover || plan ? null : lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy, onclick: () => lsSetCover(p.id), text: 'Make cover' }),
         cover ? null : lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy || !lsMoveAllowed(items, p.id, -1), title: 'Move earlier', 'aria-label': 'Move earlier', onclick: () => lsMove(p.id, -1), text: '←' }),
         cover ? null : lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy || !lsMoveAllowed(items, p.id, 1), title: 'Move later', 'aria-label': 'Move later', onclick: () => lsMove(p.id, 1), text: '→' }),
-        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy, onclick: () => replaceInput.click(), text: 'Replace' }), replaceInput,
+        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', disabled: busy, onclick: () => lsChoose({ replace: p.id }), text: 'Replace' }),
         asking ? lsEl('span', { class: 'ls-ph-confirm' }, 'Remove this image? ',
           lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => lsRemovePhoto(p.id), text: 'Yes, remove' }),
           lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.removeAsk = null; lsRefreshPhotos(); }, text: 'Keep' }))
@@ -601,7 +625,7 @@ function reviewBar(ph, ro) {
     : !ph.items.length ? 'No images yet.' : rv.state === 'stale' ? 'The gallery changed since it was reviewed. A Publisher reviews all images again at final approval.' : 'Gallery not reviewed yet. A Publisher reviews all images once, at final approval.';
   return lsEl('div', { class: 'ls-review ' + (rv.reviewed ? 'ok' : '') },
     lsEl('div', { class: 'ls-review-text', text }),
-    canReview ? lsEl('button', { class: 'btn ' + (rv.reviewed ? 'btn-secondary' : 'btn-primary') + ' btn-sm', type: 'button', id: 'ls-review-open', disabled: notReady, title: notReady ? 'Finish uploads and fix any image descriptions first' : '', onclick: lsOpenReview, text: rv.reviewed ? 'Review again' : 'Review gallery' }) : null);
+    canReview ? lsEl('button', { class: 'btn ' + (rv.reviewed ? 'btn-secondary' : 'btn-primary') + ' btn-sm', type: 'button', id: 'ls-review-open', disabled: notReady, title: notReady ? 'Finish uploads and fix any flagged image descriptions first' : '', onclick: lsOpenReview, text: rv.reviewed ? 'Review again' : 'Review gallery' }) : null);
 }
 function lsOpenReview() { LS.reviewOpen = { loaded: 0, saving: false, err: null }; lsPaintReview(); }
 function lsCloseReview() { LS.reviewOpen = null; const m = document.getElementById('ls-review-modal'); if (m) m.remove(); const b = document.getElementById('ls-review-open'); if (b) b.focus(); }
@@ -616,11 +640,13 @@ function lsPaintReview() {
   const R = LS.reviewOpen; const old = document.getElementById('ls-review-modal'); if (old) old.remove(); if (!R) return;
   const items = LS.d.photos.items; const all = R.loaded >= items.length;
   const list = lsEl('ol', { class: 'ls-rv-list' }, items.map((p, i) => {
-    const img = lsPhotoImg(p.id, 960, p.alt);
+    const img = lsPhotoImg(p.id, 960, p.altText);
     const done = () => { if (!img.dataset.counted) { img.dataset.counted = '1'; R.loaded += 1; const b = document.getElementById('ls-review-confirm'); if (b && R.loaded >= items.length && !R.saving) b.disabled = false; const c = document.getElementById('ls-rv-count'); if (c) c.textContent = R.loaded + ' of ' + items.length + ' loaded'; } };
     img.addEventListener('load', done); img.addEventListener('error', done);
+    // an image that cannot be shown cannot be inspected, so the review stays closed; say so instead of leaving a silent disabled button
+    img.addEventListener('lsfail', () => { R.failed = (R.failed || 0) + 1; const c = document.getElementById('ls-rv-count'); if (c) c.textContent = R.loaded + ' of ' + items.length + ' loaded. ' + R.failed + ' could not be loaded: close this window and open the review again.'; });
     return lsEl('li', { class: 'ls-rv-item' }, lsEl('div', { class: 'ls-rv-img' }, img),
-      lsEl('div', { class: 'ls-rv-cap' }, lsEl('strong', { text: (i + 1) + ' of ' + items.length + (p.cover ? ' · Cover' : p.kind === 'floorplan' ? ' · Floorplan' : '') }), lsEl('div', { text: p.alt })));
+      lsEl('div', { class: 'ls-rv-cap' }, lsEl('strong', { text: (i + 1) + ' of ' + items.length + (p.cover ? ' · Cover' : p.kind === 'floorplan' ? ' · Floorplan' : '') }), lsEl('div', { text: p.altText + (p.altFallback ? ' (neutral text: none written)' : '') })));
   }));
   const modal = lsEl('div', { class: 'ls-modal', id: 'ls-review-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-rv-title', tabindex: '-1',
     onkeydown: (e) => { if (e.key === 'Escape') lsCloseReview(); } },
@@ -638,9 +664,8 @@ function lsPaintReview() {
 
 function photosSection() {
   const ro = readOnly(); const ph = LS.d.photos; const items = ph.items;
-  const picker = lsEl('input', { type: 'file', id: 'ls-photo-input', accept: PHOTO_TYPES.join(','), multiple: true, class: 'ls-hidden', 'aria-label': 'Choose photographs', onchange: (e) => { const f = e.target.files; e.target.value = ''; lsEnqueue(f); } });
   const zone = ro ? null : lsEl('div', { class: 'ls-drop', id: 'ls-photo-drop', tabindex: '0', role: 'button', 'aria-label': 'Add photographs',
-    onclick: () => picker.click(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); } },
+    onclick: () => lsChoose(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); lsChoose(); } },
     ondragover: (e) => { if (!LS.dragId) { e.preventDefault(); zone.classList.add('over'); } }, ondragleave: () => zone.classList.remove('over'),
     ondrop: (e) => { if (LS.dragId) return; e.preventDefault(); zone.classList.remove('over'); lsEnqueue(e.dataTransfer.files); } },
     lsEl('strong', { text: LS.queue.some((q) => q.state !== 'failed') ? 'Uploading... you can keep working' : 'Add photographs' }), lsEl('span', { text: 'Drag images here or click to choose. JPG, PNG or WebP, at least 960 pixels wide.' }));
@@ -649,7 +674,7 @@ function photosSection() {
     lsEl('div', { class: 'ls-help', text: 'Private: only signed-in staff can see these. Nothing here is published. Location data is removed from every image. Originals are not kept. The first photograph is the cover; floorplans are always last.' }),
     LS.photoMsg ? lsEl('div', { class: 'ls-banner ' + (LS.photoMsg.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.photoMsg.bad ? 'alert' : 'status', text: LS.photoMsg.bad || LS.photoMsg.ok }) : null,
     ph.readiness.gallery.length ? lsEl('ul', { class: 'ls-ferr ls-ph-gal' }, ph.readiness.gallery.map((g) => lsEl('li', { text: g.message }))) : null,
-    zone, picker,
+    zone,
     LS.queue.length ? lsEl('ul', { class: 'ls-ph-grid ls-ph-queue-list', 'aria-label': 'Uploads in progress' }, LS.queue.map(qCard)) : null,
     items.length ? lsEl('ul', { class: 'ls-ph-grid' }, items.map((p, i) => photoCard(p, i, items, ro))) : (LS.queue.length ? null : lsEl('div', { class: 'ls-sub', text: 'No images yet.' })),
     items.length ? lsEl('div', { class: 'ls-help', text: 'Drag a card or use the arrows to reorder. "Make cover" moves a photo to the front. The cover and floorplans have no arrows: their place is fixed by the rules above.' }) : null,

@@ -43,15 +43,38 @@ export function altPrivacyIssues(alt, street) {
   return out;
 }
 
+/**
+ * Neutral accessibility text for an image whose description is empty. It says only what is certain (a photograph or a floorplan, and its
+ * place in the gallery): no invented visual detail, no address, nothing from the CRM. `n` is the 1-based place among photographs
+ * (or among floorplans), `count` the number of images of that kind.
+ */
+export const fallbackAlt = (kind, n, count) => (kind === 'floorplan'
+  ? (count > 1 ? `Floorplan ${n} of ${count} of the property` : 'Floorplan of the property')
+  : (count > 1 ? `Photograph ${n} of ${count} of the property` : 'Photograph of the property'));
+
+/** The description every consumer (preview, review, publication) uses: what staff typed, else the neutral fallback. */
+export function withEffectiveAlt(photos) {
+  const list = canonical(photos);
+  const counts = { photo: list.filter((p) => p.kind !== 'floorplan').length, floorplan: list.filter((p) => p.kind === 'floorplan').length };
+  const seen = { photo: 0, floorplan: 0 };
+  return list.map((p) => {
+    const kind = p.kind === 'floorplan' ? 'floorplan' : 'photo';
+    seen[kind] += 1;
+    const typed = (p.alt ?? '').trim();
+    return { ...p, altText: typed || fallbackAlt(kind, seen[kind], counts[kind]), altFallback: !typed };
+  });
+}
+
 /** Automated per-image checks (alt text) and gallery rules. Never blocks saving; it tells staff what is missing. */
 export function photoReadiness(photos, { street } = {}) {
   const list = canonical(photos);
   const items = list.map((p) => {
     const issues = [];
     const alt = (p.alt ?? '').trim();
-    if (alt.length < 8) issues.push({ code: 'alt_missing', message: 'Describe the image in at least 8 characters (alt text).' });
-    else if (alt.length > 200) issues.push({ code: 'alt_long', message: 'Alt text can be at most 200 characters.' });
-    else if (FILENAME_ALT.test(alt)) issues.push({ code: 'alt_filename', message: 'Alt text looks like a file name. Describe what the image shows.' });
+    // A description is optional: empty is fine and any length up to 200 is fine ("Kitchen" is enough). The privacy and file-name checks
+    // below only look at what was actually typed.
+    if (alt.length > 200) issues.push({ code: 'alt_long', message: 'Alt text can be at most 200 characters.' });
+    else if (alt && FILENAME_ALT.test(alt)) issues.push({ code: 'alt_filename', message: 'Alt text looks like a file name. Describe what the image shows or leave it empty.' });
     for (const m of altPrivacyIssues(alt, street)) issues.push({ code: 'alt_private', message: m });
     return { id: p.id, ready: issues.length === 0, issues };
   });
@@ -73,20 +96,20 @@ export function reviewState(draft) {
 
 /** Photos in the website's public shape, ONLY to run the website's own rules on a draft whose gallery a Publisher really reviewed.
  *  Never stored, never sent to the browser. Without a valid gallery review nothing is passed. */
-export const photosForRules = (photos, reviewed) => (!reviewed ? [] : canonical(photos)
-  .filter((p) => (p.alt ?? '').trim().length >= 8 && p.alt.trim().length <= 200)
-  .map((p) => ({ id: p.id, alt: p.alt.trim(), width: p.width, height: p.height, accent: p.accent, ...(p.kind === 'floorplan' ? { kind: 'floorplan' } : {}), privacyReviewed: true, variants: p.files.map((f) => ({ w: f.w, src: `/images/listings/${f.file}` })) })));
+export const photosForRules = (photos, reviewed) => (!reviewed ? [] : withEffectiveAlt(photos)
+  .filter((p) => p.altText.length <= 200)
+  .map((p) => ({ id: p.id, alt: p.altText, width: p.width, height: p.height, accent: p.accent, ...(p.kind === 'floorplan' ? { kind: 'floorplan' } : {}), privacyReviewed: true, variants: p.files.map((f) => ({ w: f.w, src: `/images/listings/${f.file}` })) })));
 
 /** What the browser is told about the gallery: no storage paths. `publicOrder` IS the array order. */
 export function photoView(draftOrPhotos, extra = {}) {
   const draft = Array.isArray(draftOrPhotos) ? { photos: draftOrPhotos, ...extra } : draftOrPhotos;
-  const list = canonical(draft.photos);
+  const list = withEffectiveAlt(draft.photos);
   const ready = photoReadiness(list, { street: streetOf(draft.label) });
   const cover = list.find((p) => p.kind !== 'floorplan');
   const review = reviewState({ photos: list, photo_review: draft.photo_review });
   return {
     items: list.map((p) => ({
-      id: p.id, alt: p.alt, width: p.width, height: p.height, kind: p.kind === 'floorplan' ? 'floorplan' : 'photo', cover: cover?.id === p.id,
+      id: p.id, alt: p.alt, altText: p.altText, altFallback: p.altFallback, width: p.width, height: p.height, kind: p.kind === 'floorplan' ? 'floorplan' : 'photo', cover: cover?.id === p.id,
       widths: p.files.map((f) => f.w), addedBy: p.addedBy, addedAt: p.addedAt, issues: ready.items.find((i) => i.id === p.id)?.issues ?? [],
     })),
     publicOrder: list.map((p) => p.id),
