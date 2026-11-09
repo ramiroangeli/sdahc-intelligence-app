@@ -119,10 +119,10 @@ export const PUBLISH_ENV = { LISTINGS_GITHUB_DISPATCH_TOKEN: GH_TOKEN, LISTINGS_
 
 /** GitHub as the app sees it: records workflow dispatches, answers run lookups. */
 export function github(w) {
-  const gh = { dispatches: [], status: 204, runs: [], lookups: 0 };
+  const gh = { dispatches: [], status: 204, runs: [], lookups: 0, body: {}, accepted: null };
   gh.fetch = async (url, opts = {}) => {
     const u = String(url);
-    if (u.includes('api.github.com/repos/') && u.includes('/dispatches')) { gh.dispatches.push({ url: u, headers: opts.headers, body: JSON.parse(opts.body) }); if (gh.status === 'throw') throw new Error('network'); return { status: gh.status, ok: gh.status < 300, json: async () => ({}) }; }
+    if (u.includes('api.github.com/repos/') && u.includes('/dispatches')) { gh.dispatches.push({ url: u, headers: opts.headers, body: JSON.parse(opts.body) }); if (gh.status === 'throw') throw new Error('network'); return { status: gh.status, ok: gh.status < 300, json: async () => gh.body, headers: { get: (k) => (k.toLowerCase() === 'x-accepted-github-permissions' ? gh.accepted : null) } }; }
     if (u.includes('/actions/workflows/') && u.includes('/runs')) { gh.lookups += 1; return { ok: true, status: 200, json: async () => ({ workflow_runs: gh.runs }) }; }
     return w.fetch(url, opts);
   };
