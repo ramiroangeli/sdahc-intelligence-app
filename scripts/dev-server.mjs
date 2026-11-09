@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { spawn } from 'node:child_process';
-import { draftPublishRoute, publishCallbackRoute, publishPayloadRoute, draftGalleryReviewRoute, draftPhotoRoute, draftPhotosRoute, draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
+import { draftPublishRoute, publishCallbackRoute, publishPayloadRoute, draftPhotoRoute, draftPhotosRoute, draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
 
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') { console.error('dev-server refuses to run in production'); process.exit(1); }
 
@@ -62,7 +62,7 @@ const devFetch = async (url, opts = {}) => {
 };
 const publishEnv = { ...process.env, LISTINGS_GITHUB_DISPATCH_TOKEN: 'dev-not-a-real-token', LISTINGS_CALLBACK_SECRET: callbackSecret };
 const deps = { authorise: fakeAuth, db, blob, fetch: devFetch, env: publishEnv };
-const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-photos': draftPhotosRoute(deps), '/api/listings/draft-photo': draftPhotoRoute(deps), '/api/listings/draft-gallery-review': draftGalleryReviewRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps), '/api/listings/draft-publish': draftPublishRoute(deps), '/api/listings/publish-callback': publishCallbackRoute(deps), '/api/listings/publish-payload': publishPayloadRoute(deps) };
+const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-photos': draftPhotosRoute(deps), '/api/listings/draft-photo': draftPhotoRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps), '/api/listings/draft-publish': draftPublishRoute(deps), '/api/listings/publish-callback': publishCallbackRoute(deps), '/api/listings/publish-payload': publishPayloadRoute(deps) };
 
 const STUB = `<script>(function(){var s={access_token:'dev-preview-token-not-real-0000',user:{email:'dev-preview@local'}};
 var chain=function(){var p=new Proxy(function(){},{get:function(_,k){if(k==='then')return function(r){return Promise.resolve({data:[],error:null}).then(r)};return p},apply:function(){return p}});return p};

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { loadPublishConfig } from './config.js';
 import { HttpError } from './http.js';
 import * as jobs from './jobs-repo.js';
-import { canonical, reviewState } from './photos.js';
+import { canonical } from './photos.js';
 import { signedHeaders } from './signing.js';
 
 export const ENABLED_KINDS = ['dry_run']; // 'publish', 'update', 'withdraw' arrive in later increments
@@ -20,17 +20,23 @@ const stable = (v) => JSON.stringify(sortKeys(v));
 const sortKeys = (v) => (Array.isArray(v) ? v.map(sortKeys) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v);
 const sha = (x) => createHash('sha256').update(stable(x)).digest('hex');
 
+/**
+ * Plain-language wording for the rules the website's engine applies, so staff never read internal references. The rules themselves are
+ * unchanged and still enforced by the engine; this only changes how they are said.
+ */
+export const plainBlocker = (b) => (b.code === 'victoria_compliance'
+  ? 'Advertising sign-off needed: SDA Home Choices management has not yet confirmed the advertising position for this listing, so it cannot go live yet. Nothing else is affected: keep preparing it.'
+  : b.code === 'basic_classification' ? 'Needs confirmation that this existing (legacy) SDA property is classified as Basic before it can be advertised.' : b.message);
+
 /** Why a dry run cannot start yet (cheap checks the engine cannot do), and what the engine will probably refuse (informational). */
-export function preflight(view, staff) {
+export function preflight(view) {
   const reasons = [];
   const v = view.validation;
   if (!v.complete) reasons.push('Complete the required fields first (see the checklist).');
   const items = view.photos?.items ?? [];
   if (!items.some((p) => p.kind !== 'floorplan')) reasons.push('Add at least one photograph.');
   if (!view.photos?.readiness?.ready) reasons.push('Fix the flagged photo descriptions first.');
-  if (items.length && !view.photos?.review?.reviewed) reasons.push('A Publisher reviews the whole gallery first (it covers exactly the current images).');
-  const wouldBlock = v.blockers.filter((b) => !['photo_review', 'photos_required', 'photo_alt'].includes(b.code)).map((b) => b.message);
-  if (!staff.notionUserId) wouldBlock.push('Your Notion user id is not set in the staff list, so a real publication would not have a named approver.');
+  const wouldBlock = v.blockers.filter((b) => !['photos_required', 'photo_alt'].includes(b.code)).map(plainBlocker);
   return { ready: reasons.length === 0, reasons, wouldBlock };
 }
 
@@ -41,18 +47,20 @@ export function buildPayload({ jobId, view, draft, staff, kind }) {
   if (!PRICING_MODES.includes(c.pricingMode)) throw new HttpError(409, 'not_ready', { reasons: ['Choose a pricing mode.'] });
   const needsPrice = c.pricingMode === 'asking_price' || c.pricingMode === 'price_guide';
   const price = needsPrice ? Number(String(c.displayPrice).replace(/[^0-9.]/g, '')) : null;
-  const rv = reviewState(draft);
-  if (!rv.reviewed) throw new HttpError(409, 'not_ready', { reasons: ['The gallery review does not cover the current images.'] });
   const body = {
     version: 1, jobId, mode: kind, publicId: draft.public_id,
+    // approval is made in the Listings Manager by a Publisher of the app's own staff list; the website job accepts it because the request is signed
+    authority: 'listings_manager',
     content: { title: c.title, description: c.description, publicAddress: c.publicAddress, pricingMode: c.pricingMode, displayPrice: Number.isFinite(price) ? price : null, featured: c.featured === true },
     manifest: {
       version: 1,
-      // privacyReviewed is true ONLY because a Publisher reviewed exactly this gallery (checked just above); nothing is stored per photograph
+      // privacyReviewed is true because the Publisher approves the listing with its photographs and the automatic checks passed (preflight);
+      // nothing is stored per photograph
       photos: canonical(draft.photos).map((p) => ({ id: p.id, alt: (p.alt ?? '').trim(), width: p.width, height: p.height, accent: p.accent, privacyReviewed: true, ...(p.kind === 'floorplan' ? { kind: 'floorplan' } : {}), files: p.files.map((f) => ({ w: f.w, file: f.file })) })),
     },
-    approver: { notionUserId: staff.notionUserId ?? null, name: staff.email },
-    galleryReview: { by: rv.by, at: rv.at, count: rv.count },
+    // a display name for the public snapshot (never an email address); the id only has to be stable per person
+    approver: { id: staff.notionUserId ?? `app-${createHash('sha256').update(staff.email).digest('hex').slice(0, 12)}`, name: staff.displayName ?? 'SDA Home Choices', notionUserId: staff.notionUserId ?? null },
+    approval: { by: staff.email, at: new Date().toISOString() },
   };
   return { payload: body, hash: sha(body.content) + ':' + sha(body.manifest.photos.map((p) => [p.id, p.alt, p.kind ?? 'photo'])) };
 }

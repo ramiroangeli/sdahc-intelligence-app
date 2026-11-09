@@ -30,15 +30,14 @@
    gh variable set LISTINGS_MEDIA_BASE_URL --repo ramiroangeli/sdahc-website --body "<public Blob origin, as in .env.listings>"
    gh variable set LISTINGS_APP_URL --repo ramiroangeli/sdahc-website --body "https://app.sdahomechoices.com.au"
    ```
-7. **Staff list** (`LISTINGS_STAFF_JSON`): add `"notionUserId": "<the person's Notion user id>"` for each Publisher. It becomes "Web Approved By" in a real publication. It must also be on the website's `src/data/listings/approvers.json` (a pull request by the code owner). A dry run works without it and reports the gap.
+7. **Staff list** (`LISTINGS_STAFF_JSON`): nothing is required beyond what exists. Optionally add `"displayName": "Ali Example"` for a Publisher: it is the name shown publicly as the approver of a listing (never an email address; the default is "SDA Home Choices"). Approval is made in the Listings Manager, so a Notion user id and the website `approvers.json` are no longer needed for it.
 8. Merge this PR and let it deploy.
 
 ## First dry run (the first new listing)
 1. Open **Website > Listings**, the draft, tab **Review & publish**.
-2. Check the final content and the photographs in order. In **Commercial verification**, a Publisher records the accepted occupancy position, with the source link of the approved advertisement (the note and link go into the review history).
+2. Check the final content and the photographs in order (there is no separate gallery review: publishing approves the photographs with the listing, and the automatic checks have already run). In **Commercial verification**, a Publisher records the accepted occupancy position, with the source link of the approved advertisement (the note and link go into the review history).
 3. Click **Run dry run**. Watch the steps; you can close the page, the job continues. The GitHub run link is shown.
-4. Expected today: **it stops at the publication engine for one reason, Victorian pricing compliance**: `compliance.json` in the website repository holds a determination for Rutherford Grove only, and a determination applies to one listing and one pricing mode. A determination for this listing (its public id, and its pricing mode) has to be recorded there by pull request by the code owner, with its own basis. This is the real gate working, not a defect. Until it exists no real publication of this listing is possible.
-5. Also reported (informational in a dry run): whether the Publisher is on the approvers list.
+4. Expected today: **it stops at the publication engine for one reason, the advertising sign-off** (shown to staff in plain words). For a Victorian listing the website still requires a recorded position before it can go live: `compliance.json` in the website repository holds one for Rutherford Grove only. Instead of one record per listing, ONE standing record for a pricing mode (`"listingId": "*"`, with who, when, basis, reference and statement) now covers every listing for that mode. It is recorded by pull request by the code owner, and nothing is recorded yet. This is the real requirement being enforced, not a defect.
 
 A rehearsal of the whole pipeline on a developer machine (real Notion read, real engine, real test suite, real production build, real privacy scan) passed once a scratch determination was added to a throwaway checkout: all seven checks OK. That entry was never committed.
 
@@ -54,3 +53,9 @@ Writing the approved fields to Notion, copying images to the public store, the s
 | `docs/github-ruleset-main.json` (prepared earlier) | not applied | requires code-owner review on listing files, which blocks automatic merging. It needs a decision before the real publication |
 | Auto-merge | disabled | not needed if the workflow merges after its own checks pass |
 None of this is needed for a dry run.
+
+
+## Simplifications applied after the first dry run (approved)
+1. **The Listings Manager is the authority for public content.** The approved text, price and photograph list come from the app; Notion only prefills a new draft and stays the CRM (read only). Edits to the Notion `Web *` fields are not tracked and cannot stop a publication. The website job accepts the approval because the request is signed and the approver is a Publisher in the app's staff list.
+2. **No mandatory gallery review.** Publishing a listing approves its photographs. The automatic checks remain: location data removed from every image, type and size limits, minimum width, and the privacy checks on typed descriptions (house numbers, prices, contact details, links, file names). The `photo_review` column stays in the database, unused.
+3. **Advertising requirements in plain words.** Staff see one line, "Advertising sign-off", never internal document names or technical terms. The requirement itself is unchanged and still enforced by the website engine.

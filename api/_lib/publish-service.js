@@ -22,7 +22,7 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   if (!draft) throw new HttpError(404, 'draft_not_found');
   if (draft.version !== expectedVersion || view.draft.version !== expectedVersion) throw new HttpError(409, 'draft_changed');
   if (view.notion.changed.length) throw new HttpError(409, 'not_ready', { reasons: ['The Notion record changed since this draft was based on it. Review the changes and save the draft first.'], wouldBlock: [] });
-  const pf = preflight(view, staff);
+  const pf = preflight(view);
   if (!pf.ready) throw new HttpError(409, 'not_ready', { reasons: pf.reasons, wouldBlock: pf.wouldBlock });
 
   // idempotent: asking again for the same draft version returns the job already running or already succeeded

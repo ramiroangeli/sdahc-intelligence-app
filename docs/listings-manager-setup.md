@@ -133,3 +133,7 @@ Timings after deployment: browser console `photo upload timings`, and the functi
   The website needs the matching change (its schema, manifest reader and photo gate required 8 characters): website PR **#54**. Merge it before publishing anything with short or empty descriptions. `api/_lib/vendor/listings-core.mjs` was rebuilt from that change; rebuild it again from the website's `main` after the merge (`node scripts/vendor-listings-core.mjs --from <clean website checkout>`).
 - **History** is collapsed when a listing opens, on a navy card (text contrast 14.3:1 and 6.5:1), with the heading as a button (`aria-expanded`). Content is unchanged.
 - No new tables, columns, infrastructure or permissions.
+
+
+## Update: gallery review removed (Phase 4)
+The single gallery review described in the Photo UX release no longer exists: publishing approves the photographs with the listing, and the automatic checks remain. The review endpoint, dialog and state were removed; the `photo_review` column is left in place, unused. See `docs/phase4-dry-run-setup.md`.
