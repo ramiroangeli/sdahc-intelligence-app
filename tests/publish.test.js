@@ -572,3 +572,43 @@ test('a real job that is stuck is closed out later than a dry run (40 minutes), 
   assert.equal(retry.status, 200); assert.equal(retry.json.job.attempt, 2);
   assert.ok(late);
 });
+
+test('MERGED BUT NOT VERIFIED: a failure after the merge is shown as merged-not-live, never as untouched and never as Live; publishing again recovers', async () => {
+  const ctx = await ready();
+  const a = (await startReal(ctx)).json.job;
+  for (const step of ['started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'media', 'pull_request', 'checks', 'merge']) await send(ctx, a.id, step, 'ok');
+  await send(ctx, a.id, 'deploy', 'failed');
+  await send(ctx, a.id, 'finished', 'failed', { code: 'deploy_failed', message: 'The change is merged into the website but could not be confirmed live.', merged: true, mergeCommit: SHA40 });
+  const h = await history(ctx);
+  assert.equal(h.live, null, 'never Live');
+  assert.equal(h.mergedUnverified.jobId, a.id);
+  assert.equal(h.jobs[0].result.merged, true); assert.equal(h.jobs[0].result.mergeCommit, SHA40);
+  // a failure BEFORE the merge is not reported as merged
+  const b = (await startReal(ctx)).json.job;
+  assert.equal(b.attempt, 2);
+  await send(ctx, b.id, 'finished', 'failed', { code: 'checks_failed', message: 'x' });
+  assert.equal((await history(ctx)).mergedUnverified.jobId, a.id);
+  // recovery: a later job verifies it
+  const c = (await startReal(ctx)).json.job;
+  await finishLive(ctx, c.id);
+  const done = await history(ctx);
+  assert.equal(done.mergedUnverified, null); assert.equal(done.live.jobId, c.id);
+  const code = (await import('node:fs')).readFileSync('listings.js', 'utf8');
+  assert.match(code, /Merged, not yet confirmed live/); assert.ok(!/unless a step above shows it merged/.test(code));
+});
+
+test('PUBLIC STORE CHECK: administrators only; GET reads, POST also writes a probe; the answer is a verdict, never a credential', async () => {
+  const { publicMediaCheckRoute } = await import('../api/_lib/routes.js');
+  const { staff } = await import('./drafts-harness.js');
+  const ADMIN = staff('admin@sdahomechoices.com.au', ['listings.view', 'listings.edit', 'listings.publish', 'listings.admin']);
+  const w = world(); const db = await database(); resetCaches();
+  const seen = [];
+  w.publicBlob.check = async ({ write }) => { seen.push(write); return { ok: true, verdict: 'READ OK' }; };
+  for (const who of [VIEWER, EDITOR, PUBLISHER]) assert.equal((await call(publicMediaCheckRoute, w, db, who, { url: '/api/listings/public-media-check' })).status, 403);
+  assert.equal((await call(publicMediaCheckRoute, w, db, ADMIN, { url: '/api/listings/public-media-check' })).json.ok, true);
+  assert.equal((await call(publicMediaCheckRoute, w, db, ADMIN, { method: 'POST', url: '/api/listings/public-media-check' })).json.ok, true);
+  assert.deepEqual(seen, [false, true]);
+  assert.equal((await call(publicMediaCheckRoute, w, db, ADMIN, { method: 'PUT', url: '/api/listings/public-media-check' })).status, 405);
+  const none = await (await import('../api/_lib/public-media.js')).checkPublicMedia({ deps: {}, env: {} });
+  assert.equal(none.ok, false); assert.match(none.verdict, /NOT CONNECTED/);
+});

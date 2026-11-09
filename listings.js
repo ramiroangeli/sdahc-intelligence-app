@@ -764,11 +764,12 @@ function reviewContent() {
     active ? lsEl('div', { class: 'ls-sub', text: 'This keeps running on the server if you close the page.' }) : null,
     latest ? jobTimeline(latest) : null,
     jobs && jobs.jobs.length > 1 ? lsEl('details', { class: 'ls-jobs-older' }, lsEl('summary', { text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: j.kind.replace('_', ' ') + ' v' + j.draftVersion + ' attempt ' + j.attempt + ': ' + j.status + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null);
-  const live = jobs && jobs.live;
+  const live = jobs && jobs.live; const stuck = jobs && jobs.mergedUnverified;
   const realActive = !!(active && isReal(active));
-  const verb = live ? 'Publish update' : 'Approve and publish';
+  const verb = stuck ? 'Re-check and finish publishing' : live ? 'Publish update' : 'Approve and publish';
   const publishCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' },
     lsEl('h3', { text: live ? 'Live on the website' : 'Approve and publish' }),
+    stuck && !(active && isReal(active)) ? lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'Merged, not yet confirmed live. The last publication merged into the website but the live page could not be verified. It is not shown as Live. Use the button below to re-check it.') : null,
     live ? lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Verified on the website ', when(live.since), live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open the live page' })] : null) : null,
     lsEl('p', { class: 'ls-sub', text: live ? 'Changes saved after publishing are not public until you publish an update. The live page keeps showing the last verified version until the update has been checked.'
       : 'Publishing makes this exact saved version public. The images are copied to the public store, a pull request with only this listing is checked and merged, and the listing shows as Live here only after the live page, its images and the catalogue have been checked. If anything fails, the current website is left untouched.' }),
@@ -807,7 +808,8 @@ function jobTimeline(j) {
     lsEl('ol', { class: 'ls-tl-list' }, rows),
     j.status === 'succeeded' && !real ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
     j.status === 'succeeded' && real && res && res.live ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'Published and checked on the live website.') : null,
-    j.status === 'failed' && real ? lsEl('div', { class: 'ls-banner' }, 'The website that visitors see was not changed by this attempt unless a step above shows it merged. You can try again: repeating is safe.') : null,
+    j.status === 'failed' && real && res && res.merged ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, 'The change was merged into the website, but the live page has not been confirmed. The listing is not shown as Live. Press publish again to re-check: nothing is redone.') : null,
+    j.status === 'failed' && real && !(res && res.merged) ? lsEl('div', { class: 'ls-banner' }, 'Nothing was merged: the website that visitors see is unchanged. You can try again; repeating is safe.') : null,
     j.error ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, errText(j.error)) : null,
     issues.length ? lsEl('ul', { class: 'ls-ferr ls-job-issues' }, issues.map((m) => lsEl('li', { text: plainIssue(m) }))) : null,
     checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : (real ? 'Problem: ' : 'Would stop: ')) + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,

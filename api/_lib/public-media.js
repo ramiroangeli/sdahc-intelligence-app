@@ -77,3 +77,26 @@ export async function promoteMedia({ publicId, manifest, privateStore, publicSto
   }
   return { photos: photos.length, files: jobs.length };
 }
+
+/**
+ * Administrator diagnostic: can this deployment reach the public store with OIDC? Read (list one object) and, on request, write and delete
+ * one tiny probe file under lst_0000000000/. Answers with a verdict only; never a token, a URL or object contents.
+ */
+export async function checkPublicMedia({ deps = {}, env = process.env, write = false }) {
+  if (deps.publicBlob?.check) return deps.publicBlob.check({ write });
+  const storeId = (env.PUBLIC_BLOB_STORE_ID || '').trim();
+  if (!storeId) return { ok: false, verdict: 'NOT CONNECTED: PUBLIC_BLOB_STORE_ID is not set on this deployment.' };
+  try {
+    const { list, put, del } = await import('@vercel/blob');
+    const r = await list({ storeId, prefix: 'lst_', limit: 1 });
+    const out = { ok: true, read: true, hasListingMedia: r.blobs.length > 0, write: null, verdict: 'READ OK: the public store answers to OIDC.' };
+    if (write) {
+      const b = await put('lst_0000000000/oidc-probe.txt', 'probe', { access: 'public', storeId, addRandomSuffix: false, allowOverwrite: true, contentType: 'text/plain' });
+      await del(b.url, { storeId });
+      out.write = true; out.verdict = 'READ OK and WRITE OK: a probe file was written and deleted. No long-lived token is in use.';
+    }
+    return out;
+  } catch (e) {
+    return { ok: false, verdict: `FAILED (${String(e.name || 'Error')}): ${String(e.message || '').replace(/\b(vercel_blob_[A-Za-z0-9_]+|eyJ[A-Za-z0-9_.-]+)/g, '[hidden]').slice(0, 240)}` };
+  }
+}
