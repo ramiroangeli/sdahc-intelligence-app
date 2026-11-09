@@ -25,21 +25,21 @@ export async function getHistory(db, draftId, limit = 25) {
 
 // NOTE jsonb parameters are cast through text ($n::text::jsonb): postgres.js re-serialises a string bound to a jsonb
 // parameter, which stored the JSON text as a jsonb string scalar. Passing text keeps the value an object.
-export async function createDraft(db, { publicId, notionPageId, label, content, baseFacts, baseEditedAt, actor }) {
+export async function createDraft(db, { publicId, notionPageId, label, content, baseFacts, baseEditedAt, actor, photos = [], extraFields = [] }) {
   return db.begin(async (tx) => {
     let rows;
     try {
       rows = await tx.unsafe(
-        `insert into listings.drafts (public_id, notion_page_id, label, content, base_facts, base_notion_edited_at, created_by, created_by_auth_user, updated_by, updated_by_auth_user)
-         values ($1,$2,$3,$4::text::jsonb,$5::text::jsonb,$6,$7,$8,$7,$8) returning ${COLS}`,
-        [publicId, notionPageId, label, JSON.stringify(content), JSON.stringify(baseFacts), baseEditedAt ?? null, actor.email, actor.authUserId ?? null]);
+        `insert into listings.drafts (public_id, notion_page_id, label, content, base_facts, base_notion_edited_at, created_by, created_by_auth_user, updated_by, updated_by_auth_user, photos)
+         values ($1,$2,$3,$4::text::jsonb,$5::text::jsonb,$6,$7,$8,$7,$8,$9::text::jsonb) returning ${COLS}`,
+        [publicId, notionPageId, label, JSON.stringify(content), JSON.stringify(baseFacts), baseEditedAt ?? null, actor.email, actor.authUserId ?? null, JSON.stringify(photos)]);
     } catch (e) {
       if (/duplicate key|unique/i.test(e.message)) throw new HttpError(409, 'draft_exists');
       throw e;
     }
     const d = rows[0];
     await tx.unsafe(`insert into listings.draft_history (draft_id, version, action, changed_fields, content, changed_by, changed_by_auth_user) values ($1,$2,'create',$3,$4::text::jsonb,$5,$6)`,
-      [d.id, d.version, Object.keys(content).sort(), JSON.stringify(content), actor.email, actor.authUserId ?? null]);
+      [d.id, d.version, [...Object.keys(content), ...(photos.length ? ['photos'] : []), ...extraFields].sort(), JSON.stringify(content), actor.email, actor.authUserId ?? null]);
     return d;
   });
 }

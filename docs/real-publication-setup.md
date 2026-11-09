@@ -27,3 +27,14 @@ Merge the app pull request. It deploys to production on merge. `LISTINGS_GITHUB_
 - The app copies only `lst_xxxxxxxxxx/<hash>-<width>.webp` and `lst_xxxxxxxxxx/manifest.json` to the public store (enforced in `api/_lib/public-media.js`); it never deletes there.
 - The GitHub job can write only a branch and the single `approved/<slug>.json` file, and merge only a pull request whose `site-checks` passed on the exact commit.
 - Nothing writes to Notion. The listing is Live in the app only after the live page, every image and the catalogue were fetched from the production site.
+
+## Adopting a listing that was published before the Listings Manager
+
+A listing that is already on the website (for example Rutherford Grove) has no draft, and a normal "Create draft" is refused (`already_published`).
+**Listings > Add next listing > Import published listing** (needs the Editor and Publisher capabilities) creates its draft from the approved snapshot:
+
+- The draft keeps the published content, public address, slug, photograph ids, alt text, order and floorplan flag. The existing public WebP files are copied byte for byte into PRIVATE staging, so public image URLs do not change.
+- Before anything is written the import checks the snapshot's content hash and schema, that every image is a WebP of the stated width at `<public id>/<photo id>-<width>.webp` on the public Blob host, and that the draft reproduces the published listing exactly (the website job's own comparison).
+- It writes only the draft (with its gallery, in one transaction; history action `create`, changed fields include `importedFromPublished`) and the private staging files. It never writes to Notion, GitHub, the public store or the website, and never starts a job. The live page is untouched.
+- Repeating it returns the existing draft and writes nothing. Failures leave nothing behind and are recorded in the audit log (`listings.draft.import`).
+- The portal shows the listing as Live only after its first successful real update (the portal derives Live from publication jobs). Make a small real edit, run a dry run, then publish an update.

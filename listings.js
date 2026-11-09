@@ -149,7 +149,10 @@ function paintPicker(root) {
     oninput: (e) => { LS.pickerQ = e.target.value; clearTimeout(lsTimer); lsTimer = setTimeout(async () => { try { LS.picker = (await lsApi('GET', '/api/listings/properties?q=' + encodeURIComponent(LS.pickerQ))).properties; } catch (x) { LS.pickerError = x.status || 0; } lsPaintKeepFocus(); }, 350); } });
   const rows = (LS.picker || []).map((p) => {
     const asking = LS.confirm === p.id;
-    const action = p.onWebsite ? badge('Already on website', 'ls-badge-live')
+    const canAdopt = p.onWebsite && !p.hasDraft && LS.me && LS.me.canEdit && LS.me.canPublish;
+    const action = canAdopt ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.confirm = p.id; lsPaint(); }, text: 'Import published listing' })
+      : p.onWebsite && p.hasDraft ? lsEl('a', { class: 'btn btn-secondary btn-sm', href: '#/listings/draft/' + p.id, text: 'Open draft' })
+      : p.onWebsite ? badge('Already on website', 'ls-badge-live')
       : p.hasDraft ? lsEl('a', { class: 'btn btn-secondary btn-sm', href: '#/listings/draft/' + p.id, text: 'Open draft' })
       : lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => { LS.confirm = p.id; lsPaint(); }, text: 'Create draft' });
     const tr = lsEl('tr', null,
@@ -157,10 +160,10 @@ function paintPicker(root) {
       lsEl('td', null, badge(p.notionStatus, 'ls-badge-notion')), lsEl('td', null, action));
     if (!asking) return [tr];
     return [tr, lsEl('tr', { class: 'ls-confirm-row' }, lsEl('td', { colspan: '3' }, lsEl('div', { class: 'ls-confirm' },
-      lsEl('strong', { text: 'Create a website draft for ' + p.name + '?' }),
-      lsEl('span', { text: ' Check the house or unit number: a neighbouring property may look the same. The Notion record is not changed.' }),
+      lsEl('strong', { text: (p.onWebsite ? 'Import the published listing for ' : 'Create a website draft for ') + p.name + '?' }),
+      lsEl('span', { text: p.onWebsite ? ' This copies the listing exactly as it is on the website, with its photographs, into a draft you can then edit and publish as an update. The website and the Notion record are not changed.' : ' Check the house or unit number: a neighbouring property may look the same. The Notion record is not changed.' }),
       lsEl('div', { class: 'ls-actions' },
-        lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-confirm-create', onclick: () => lsCreate(p.id), text: 'Yes, create draft' }),
+        lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-confirm-create', onclick: () => lsCreate(p.id, p.onWebsite), text: p.onWebsite ? 'Yes, import it' : 'Yes, create draft' }),
         lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.confirm = null; lsPaint(); }, text: 'Cancel' })))))];
   });
   root.append(lsEl('div', { class: 'panel' },
@@ -175,10 +178,11 @@ function paintPicker(root) {
           lsEl('tbody', null, rows)))));
 }
 
-async function lsCreate(propertyId) {
-  try { const d = await lsApi('POST', '/api/listings/draft', { propertyId }); LS.d = d; lsGo('#/listings/draft/' + d.draft.id); }
+async function lsCreate(propertyId, adopt) {
+  try { const d = await lsApi('POST', '/api/listings/draft', adopt ? { propertyId, importPublished: true } : { propertyId }); LS.d = d; lsGo('#/listings/draft/' + d.draft.id); }
   catch (e) {
-    LS.flash = e.status === 409 && e.message === 'already_published' ? 'That property is already on the website.' : e.status === 409 ? 'A draft already exists for that property.' : e.status === 403 ? 'You need the Editor capability.' : 'The draft could not be created (' + e.message + ').';
+    LS.flash = adopt && e.status === 409 ? 'The published listing could not be imported (' + e.message.replace(/_/g, ' ') + '). Nothing was changed.' : adopt && e.status === 403 ? 'Importing a published listing needs the Editor and Publisher capabilities.' : adopt ? 'The published listing could not be imported. Nothing was changed; try again.'
+      : e.status === 409 && e.message === 'already_published' ? 'That property is already on the website.' : e.status === 409 ? 'A draft already exists for that property.' : e.status === 403 ? 'You need the Editor capability.' : 'The draft could not be created (' + e.message + ').';
     LS.confirm = null; lsPaint();
   }
 }
