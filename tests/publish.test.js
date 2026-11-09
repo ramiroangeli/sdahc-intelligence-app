@@ -67,9 +67,9 @@ test('missing or weak server configuration fails closed with 503 and records not
   assert.equal(ctx.gh.dispatches.length, 0);
 });
 
-test('only the dry run is enabled: publish, update and withdraw are refused before anything is recorded', async () => {
+test('only dry_run, publish and update are enabled: withdraw and anything else is refused before anything is recorded', async () => {
   const ctx = await ready();
-  for (const mode of ['publish', 'update', 'withdraw', '', undefined, 'DROP TABLE']) {
+  for (const mode of ['withdraw', '', undefined, 'DROP TABLE', 'PUBLISH']) {
     const r = await start(ctx, ALI_N, { mode: mode ?? 'x' });
     assert.equal(r.status, 400); assert.equal(r.json.error, 'mode_not_enabled');
   }
@@ -362,14 +362,20 @@ test('BROWSER FILES hold no credentials, no signing code and no GitHub token nam
   }
 });
 
-test('REVIEW SCREEN: a third tab, read-only polling, a dry run that can only be requested as dry_run, and the real publish button disabled', async () => {
+test('REVIEW SCREEN: a third tab, read-only polling, a dry run, and a confirmed publish that asks for publish or update only', async () => {
   const { readFileSync } = await import('node:fs');
   const code = readFileSync('listings.js', 'utf8');
   assert.match(code, /\(\\\/preview\|\\\/review\)\?\$/);
   assert.match(code, /text: 'Review & publish'/);
   assert.match(code, /mode: 'dry_run'/);
-  assert.ok(!/mode: 'publish'|mode: 'update'|mode: 'withdraw'/.test(code), 'the browser cannot ask for a real publication in this release');
-  assert.match(code, /id: 'ls-publish-btn', disabled: true/);
+  assert.ok(!/mode: 'withdraw'/.test(code), 'withdrawal is not offered by the browser');
+  assert.match(code, /mode: kind/); assert.match(code, /'update' : 'publish'/);
+  // publishing needs a second, explicit confirmation; the first button only opens it
+  assert.match(code, /id: 'ls-publish-btn'[^]*LS\.confirmPublish = true/); assert.match(code, /id: 'ls-publish-confirm', onclick: lsStartPublish/);
+  const startFn = code.slice(code.indexOf('async function lsStartPublish'), code.indexOf('function reviewContent'));
+  assert.ok(/lsApi\('POST'/.test(startFn) && !/setInterval|setTimeout/.test(startFn));
+  // Live is shown only from the server's verified record (jobs.live), never from the browser's own guess
+  assert.match(code, /const live = jobs && jobs\.live;/); assert.ok(!/LS\.live\s*=\s*true|isLive\s*=\s*true/.test(code));
   // polling reads only: the one function that repeats is a GET
   const poll = code.slice(code.indexOf('function lsSchedulePoll'), code.indexOf('function lsRefreshReview'));
   assert.ok(/lsLoadJobs\(\)/.test(poll) && !/lsApi\('(POST|PUT|DELETE)'/.test(poll));
@@ -413,4 +419,156 @@ test('TOKEN CHECK SCRIPT: separates an invalid token, no repository access, a mi
   const calls = []; await checkToken({ token: T, fetchImpl: async (u, o = {}) => { calls.push([o.method, String(u), o.body]); return { status: 422, json: async () => ({}), headers: { get: () => null } }; } });
   assert.deepEqual(calls.map((c) => c[0]), ['GET', 'GET', 'POST']);
   assert.match(calls[2][2], /token-check-no-such-ref-nothing-will-run/);
+});
+
+/* ---------------------------------------------------------------- real publication (publish, update) */
+import { promoteMedia, publicPath } from '../api/_lib/public-media.js';
+const startReal = (ctx, mode = 'publish', over = {}) => start(ctx, ALI_N, { mode, ...over });
+const history = async (ctx, who = ALI_N) => (await call(draftPublishRoute, ctx.w, ctx.db, who, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV })).json;
+const SHA40 = 'a'.repeat(40);
+const finishLive = async (ctx, jobId, over = {}) => {
+  for (const step of ['started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'media', 'pull_request', 'checks', 'merge', 'deploy', 'verify']) await send(ctx, jobId, step, 'ok');
+  return send(ctx, jobId, 'finished', 'succeeded', { dryRun: false, live: true, slug: 'wattle-street-exampleton-vic', kind: 'publish', version: 1, url: 'https://sdahomechoices.com.au/opportunities/wattle-street-exampleton-vic/', mergeCommit: SHA40, photos: 3, ...over });
+};
+
+test('PUBLISH: a Publisher copies exactly the approved images (and the manifest) to the public store, then the workflow starts in publish mode', async () => {
+  const ctx = await ready();
+  const r = await startReal(ctx);
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.job.kind, 'publish'); assert.equal(r.json.job.status, 'dispatched');
+  assert.equal(ctx.gh.dispatches.length, 1); assert.equal(ctx.gh.dispatches[0].body.inputs.mode, 'publish');
+  const paths = [...ctx.w.publicBlob.mem.keys()].sort();
+  assert.ok(paths.length >= 4, 'three photographs with their widths plus the manifest');
+  assert.ok(paths.every((p) => new RegExp(`^${ID_7B}/([a-f0-9]{12}-\\d{2,4}\\.webp|manifest\\.json)$`).test(p)), 'nothing outside <public id>/<hash>-<width>.webp and manifest.json is ever written: ' + paths.join());
+  for (const [p, v] of ctx.w.publicBlob.mem) {
+    if (p.endsWith('.webp')) { assert.equal(v.type, 'image/webp'); assert.equal(v.b.toString('ascii', 8, 12), 'WEBP'); assert.ok(v.ttl >= 86400); }
+  }
+  const manifest = JSON.parse(ctx.w.publicBlob.mem.get(`${ID_7B}/manifest.json`).b.toString());
+  const approved = (await jobsRepo.getJob(ctx.db, r.json.job.id, { withPayload: true })).payload.manifest;
+  assert.deepEqual(manifest.photos.map((p) => p.id), approved.photos.map((p) => p.id), 'the public manifest lists the approved photographs in the approved order');
+  assert.ok(manifest.photos.every((p) => p.privacyReviewed === true && p.files.every((f) => f.file.startsWith(p.id))));
+  assert.ok((await history(ctx)).jobs[0].steps.some((s) => s.step === 'media_copy' && s.status === 'ok'));
+  assert.ok(ctx.w.publicBlob.mem.size === paths.length && ![...ctx.w.blob.mem.keys()].some((k) => !k.startsWith('listings-staging/')), 'the private staging store is only read, never rewritten');
+});
+
+test('PUBLISH is for Publishers only, needs the public store configured, and a dry run never touches the public store', async () => {
+  const ctx = await ready();
+  for (const who of [EDITOR, VIEWER]) assert.equal((await start(ctx, who, { mode: 'publish' })).status, 403);
+  const noStore = await call(draftPublishRoute, { ...ctx.w, publicBlob: undefined }, ctx.db, ALI_N, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_7B, expectedVersion: await version(ctx.db), mode: 'publish' } });
+  assert.equal(noStore.status, 503); assert.equal(noStore.json.error, 'public_media_not_configured');
+  assert.equal((await jobs(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0); assert.equal(ctx.w.publicBlob.mem.size, 0);
+  assert.equal((await start(ctx)).status, 200);
+  assert.equal(ctx.w.publicBlob.mem.size, 0, 'a dry run publishes no image');
+});
+
+test('MEDIA FAILURES stop the job before GitHub is asked: a missing staged image, a corrupt one, or a public store that is down; nothing half-public, retry works', async () => {
+  const ctx = await ready();
+  const staged = [...ctx.w.blob.mem.keys()].filter((k) => k.endsWith('.webp'));
+  const keep = ctx.w.blob.mem.get(staged[0]); ctx.w.blob.mem.delete(staged[0]);
+  const missing = await startReal(ctx);
+  assert.equal(missing.status, 409); assert.equal(missing.json.error, 'media_failed'); assert.match(missing.json.reason, /missing|WebP/);
+  ctx.w.blob.mem.set(staged[0], Buffer.from('not an image at all, really not'));
+  assert.equal((await startReal(ctx)).json.error, 'media_failed');
+  assert.equal(ctx.w.publicBlob.mem.size, 0, 'every image is verified before any is copied');
+  ctx.w.blob.mem.set(staged[0], keep);
+  ctx.w.publicBlob.fail = true;
+  const down = await startReal(ctx);
+  assert.equal(down.status, 502); assert.equal(down.json.error, 'media_failed');
+  assert.equal(ctx.gh.dispatches.length, 0);
+  assert.ok(!ctx.w.publicBlob.mem.has(`${ID_7B}/manifest.json`), 'the manifest is written last, so it never points at missing files');
+  const all = await jobs(ctx.db);
+  assert.equal(all.length, 3); assert.ok(all.every((j) => j.status === 'failed' && j.error_code === 'media_failed'));
+  ctx.w.publicBlob.fail = false;
+  const retry = await startReal(ctx);
+  assert.equal(retry.status, 200); assert.equal(retry.json.job.attempt, 4); assert.equal(ctx.gh.dispatches.length, 1);
+});
+
+test('the public store wrapper refuses any path outside <public id>/<hash>-<width>.webp and <public id>/manifest.json', async () => {
+  for (const [id, file] of [['lst_0123456789', '../x.webp'], ['lst_0123456789', 'a.webp'], ['lst_0123456789', 'index.html'], ['../lst_0123456789', 'manifest.json'], ['lst_0123456789/x', 'manifest.json'], ['', 'manifest.json'], ['lst_012345678', 'manifest.json']]) {
+    assert.throws(() => publicPath(id, file), /public_path_refused|Error/, `${id} ${file}`);
+  }
+  assert.equal(publicPath('lst_0123456789', 'aabbccddeeff-960.webp'), 'lst_0123456789/aabbccddeeff-960.webp');
+  const priv = { get: async () => Buffer.from('RIFF0000WEBPxxxx') }; const puts = []; const pub = { put: async (p) => puts.push(p) };
+  await assert.rejects(promoteMedia({ publicId: 'lst_0123456789', manifest: { photos: [{ id: 'aabbccddeeff', files: [{ w: 480, file: '../../etc.webp' }] }] }, privateStore: priv, publicStore: pub }), (e) => e.code === 'media_failed' || e.message === 'media_failed');
+  await assert.rejects(promoteMedia({ publicId: 'lst_0123456789', manifest: { photos: [{ id: 'aabbccddeeff', files: [{ w: 480, file: '112233445566-480.webp' }] }] }, privateStore: priv, publicStore: pub }), (e) => true, 'a file that does not belong to its photograph is refused');
+  assert.equal(puts.length, 0);
+});
+
+test('LIVE only after verification: no job state short of a verified success marks the listing Live', async () => {
+  const ctx = await ready();
+  assert.equal((await history(ctx)).live, null);
+  const dry = (await start(ctx)).json.job;
+  await send(ctx, dry.id, 'finished', 'succeeded', { dryRun: true, slug: 'wattle-street-exampleton-vic' });
+  assert.equal((await history(ctx)).live, null, 'a passed dry run is not Live');
+  const a = (await startReal(ctx)).json.job;
+  for (const step of ['started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'media', 'pull_request', 'checks', 'merge', 'deploy']) await send(ctx, a.id, step, 'ok');
+  assert.equal((await history(ctx)).live, null, 'merged and deployed but not yet verified is not Live');
+  await send(ctx, a.id, 'verify', 'failed', { issues: ['The listing page did not answer.'] });
+  await send(ctx, a.id, 'finished', 'failed', { code: 'verify_failed', message: 'the live site does not yet serve the listing correctly' });
+  const h = await history(ctx);
+  assert.equal(h.live, null); assert.equal(h.jobs[0].status, 'failed');
+  // success flagged live:false (or without live) is not Live either
+  const b = (await startReal(ctx)).json.job;
+  await finishLive(ctx, b.id, { live: false });
+  assert.equal((await history(ctx)).live, null);
+  const c = (await startReal(ctx)).json.job;
+  await finishLive(ctx, c.id);
+  const done = await history(ctx);
+  assert.equal(done.live.jobId, c.id); assert.equal(done.live.url, 'https://sdahomechoices.com.au/opportunities/wattle-street-exampleton-vic/'); assert.equal(done.live.kind, 'publish');
+});
+
+test('RETRY after a failure at any step is safe: a new attempt is a new job on the same draft version and can still go live', async () => {
+  const ctx = await ready();
+  const a = (await startReal(ctx)).json.job;
+  await send(ctx, a.id, 'checks', 'failed', { issues: ['The required check did not pass.'] });
+  await send(ctx, a.id, 'finished', 'failed', { code: 'checks_failed', message: 'the required check did not pass' });
+  const b = (await startReal(ctx)).json;
+  assert.equal(b.existing, false); assert.equal(b.job.attempt, 2);
+  await finishLive(ctx, b.job.id);
+  const again = await startReal(ctx);
+  assert.equal(again.json.existing, true, 'asking again for a version that is already live returns that job and does nothing');
+  assert.equal(ctx.gh.dispatches.length, 2);
+});
+
+test('once live, a first publication is refused and an update is the way to change it; updates copy images again and dispatch update mode', async () => {
+  const ctx = await ready();
+  const a = (await startReal(ctx)).json.job; await finishLive(ctx, a.id);
+  // a changed draft version
+  const open1 = await open(ctx.w, ctx.db); const v = open1.json.draft.version;
+  const saved = await call(draftRoute, ctx.w, ctx.db, ALI_N, { method: 'PUT', body: { id: ID_7B, expectedVersion: v, content: { ...GOOD, title: 'Established Improved Liveability SDA Investment, updated' } } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.json));
+  const refused = await startReal(ctx, 'publish');
+  assert.equal(refused.status, 409); assert.equal(refused.json.error, 'already_live');
+  const before = ctx.w.publicBlob.mem.size;
+  const u = await startReal(ctx, 'update');
+  assert.equal(u.status, 200, JSON.stringify(u.json)); assert.equal(u.json.job.kind, 'update');
+  assert.equal(ctx.gh.dispatches.at(-1).body.inputs.mode, 'update');
+  assert.equal(ctx.w.publicBlob.mem.size, before, 'same content-hashed names: overwritten in place, no stray files');
+  await send(ctx, u.json.job.id, 'finished', 'failed', { code: 'merge_refused', message: 'x' });
+  assert.equal((await history(ctx)).live.jobId, a.id, 'a failed update leaves the earlier live record as it was');
+});
+
+test('CALLBACKS for the real steps: new steps are accepted, links only from github.com and the SDAHC site, ids only as 40 hex characters', async () => {
+  const ev = (detail) => sanitiseEvent({ jobId: '11111111-1111-4111-8111-111111111111', step: 'verify', status: 'ok', detail });
+  assert.equal(ev({ url: 'https://sdahomechoices.com.au/opportunities/a-b/', live: true, mergeCommit: SHA40, sha: SHA40, number: 7 }).detail.url, 'https://sdahomechoices.com.au/opportunities/a-b/');
+  assert.equal(ev({ url: 'https://github.com/o/r/pull/7' }).detail.url, 'https://github.com/o/r/pull/7');
+  for (const bad of ['http://sdahomechoices.com.au/x', 'https://evil.example/x', 'https://sdahomechoices.com.au.evil.example/x', 'javascript:alert(1)', 'https://github.com@evil.example/x', 'https://sdahomechoices.com.au/x" onclick="y']) assert.equal(ev({ url: bad, live: true })?.detail?.url, undefined, bad);
+  assert.equal(ev({ mergeCommit: 'not-a-sha', sha: '123' }).detail, null);
+  for (const step of ['media', 'pull_request', 'checks', 'merge', 'deploy', 'verify']) assert.doesNotThrow(() => sanitiseEvent({ jobId: '11111111-1111-4111-8111-111111111111', step, status: 'ok' }));
+});
+
+test('a real job that is stuck is closed out later than a dry run (40 minutes), and a late success after that is ignored but a retry recovers', async () => {
+  const ctx = await ready();
+  const a = (await startReal(ctx)).json.job;
+  const row = await jobsRepo.getJob(ctx.db, a.id);
+  const at = (min) => Date.now() + min * 60 * 1000;
+  const same = await reconcile(row, { db: ctx.db, publish: { workflow: 'publish-listing.yml', githubToken: GH_TOKEN }, repo: 'o/r', fetchImpl: ctx.gh.fetch, now: at(30) });
+  assert.ok(jobsRepo.isActive(same), 'at 30 minutes a real job is still allowed to run');
+  const closed = await reconcile(row, { db: ctx.db, publish: null, repo: 'o/r', fetchImpl: ctx.gh.fetch, now: at(41) });
+  assert.equal(closed.status, 'failed'); assert.equal(closed.error_code, 'timed_out');
+  const late = await finishLive(ctx, a.id);
+  assert.equal((await history(ctx)).live, null, 'a success report that arrives after the job was closed is ignored');
+  const retry = await startReal(ctx);
+  assert.equal(retry.status, 200); assert.equal(retry.json.job.attempt, 2);
+  assert.ok(late);
 });

@@ -655,6 +655,15 @@ const JOB_STEPS = [
   ['requested', 'Requested'], ['dispatched', 'Handed to GitHub'], ['started', 'Job started'], ['payload', 'Approved content received'],
   ['engine', 'Publication engine accepts the content'], ['tests', 'Website test suite'], ['build', 'Production build and privacy scan'], ['finished', 'Finished'],
 ];
+/* A real publication: the app copies the approved images first, then the job opens one pull request, waits for the required checks, merges,
+   waits for the deployment and proves the live page. Only the last step makes the listing Live. */
+const REAL_STEPS = [
+  ['requested', 'Requested'], ['media_copy', 'Approved images copied to the public store'], ['dispatched', 'Handed to GitHub'], ['started', 'Job started'],
+  ['payload', 'Approved content received'], ['engine', 'Publication engine accepts the content'], ['tests', 'Website test suite'], ['build', 'Production build and privacy scan'],
+  ['media', 'Images checked on the public store'], ['pull_request', 'Publication pull request opened (one file)'], ['checks', 'Required checks passed'],
+  ['merge', 'Merged under the branch rules'], ['deploy', 'Production deployment finished'], ['verify', 'Live page, images and catalogue checked'], ['finished', 'Finished'],
+];
+const isReal = (j) => j.kind === 'publish' || j.kind === 'update';
 let lsPollTimer = null;
 function lsStopPolling() { if (lsPollTimer) { clearTimeout(lsPollTimer); lsPollTimer = null; } }
 async function lsLoadJobs() {
@@ -682,6 +691,29 @@ async function lsStartDryRun() {
       : e.status === 409 && b.error === 'job_active' ? 'A publication job is already running for this listing.'
       : e.status === 503 ? 'Publishing is not configured yet. An administrator needs to add the GitHub access token and the shared secret.'
       : e.status === 502 ? 'GitHub could not be asked to start the job: ' + (b.reason || 'unknown reason') : e.status === 403 ? 'Only a Publisher can run this.' : 'Could not start the dry run (' + e.message + ').' };
+    await lsLoadJobs().catch(() => {});
+  }
+  LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
+}
+
+async function lsStartPublish() {
+  if (LS.jobBusy) return;
+  const kind = LS.jobs && LS.jobs.live ? 'update' : 'publish';
+  LS.jobBusy = true; LS.jobFlash = null; LS.confirmPublish = false; lsRefreshReview();
+  try {
+    const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: kind });
+    LS.jobFlash = { ok: out.existing ? 'This version has already been published.' : 'Publishing started. It runs on the server: you can close this page. The listing shows as Live only after the website has been checked.' };
+    await lsLoadJobs();
+  } catch (e) {
+    const b = e.body || {};
+    LS.jobFlash = { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
+      : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
+      : e.status === 409 && b.error === 'job_active' ? 'A publication job is already running for this listing.'
+      : e.status === 409 && b.error === 'already_live' ? 'This listing is already live. Reload: the button now publishes your changes as an update.'
+      : (b.error === 'media_failed') ? 'The images could not be prepared for the public site: ' + (b.reason || 'unknown reason') + ' Nothing has been published.'
+      : e.status === 503 && b.error === 'public_media_not_configured' ? 'Publishing is not fully set up yet: the public image store is not connected. An administrator needs to finish the setup.'
+      : e.status === 503 ? 'Publishing is not configured yet. An administrator needs to add the GitHub access token and the shared secret.'
+      : e.status === 502 ? 'GitHub could not be asked to start the job: ' + (b.reason || 'unknown reason') : e.status === 403 ? 'Only a Publisher can publish.' : 'Could not start publishing (' + e.message + ').' };
     await lsLoadJobs().catch(() => {});
   }
   LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
@@ -732,12 +764,24 @@ function reviewContent() {
     active ? lsEl('div', { class: 'ls-sub', text: 'This keeps running on the server if you close the page.' }) : null,
     latest ? jobTimeline(latest) : null,
     jobs && jobs.jobs.length > 1 ? lsEl('details', { class: 'ls-jobs-older' }, lsEl('summary', { text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: j.kind.replace('_', ' ') + ' v' + j.draftVersion + ' attempt ' + j.attempt + ': ' + j.status + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null);
-  const publishCard = lsEl('div', { class: 'ls-rv-box' },
-    lsEl('h3', { text: 'Approve and publish' }),
-    lsEl('p', { class: 'ls-sub', text: 'Publishing for real (Notion fields, public images, snapshot, deployment, live check) arrives in the next release. Run the dry run first.' }),
-    lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-publish-btn', disabled: true, title: 'Not enabled in this release', text: 'Approve and publish (next release)' }));
+  const live = jobs && jobs.live;
+  const realActive = !!(active && isReal(active));
+  const verb = live ? 'Publish update' : 'Approve and publish';
+  const publishCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' },
+    lsEl('h3', { text: live ? 'Live on the website' : 'Approve and publish' }),
+    live ? lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Verified on the website ', when(live.since), live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open the live page' })] : null) : null,
+    lsEl('p', { class: 'ls-sub', text: live ? 'Changes saved after publishing are not public until you publish an update. The live page keeps showing the last verified version until the update has been checked.'
+      : 'Publishing makes this exact saved version public. The images are copied to the public store, a pull request with only this listing is checked and merged, and the listing shows as Live here only after the live page, its images and the catalogue have been checked. If anything fails, the current website is left untouched.' }),
+    ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
+      : LS.confirmPublish ? lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm publication' },
+        lsEl('p', null, lsEl('strong', { text: live ? 'Publish this version as an update to the live listing?' : 'Publish this listing to the live website?' }), ' It will be visible to the public once checked.'),
+        lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-confirm', onclick: lsStartPublish, text: 'Yes, publish' }), ' ',
+        lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-publish-cancel', onclick: () => { LS.confirmPublish = false; lsRefreshReview(); }, text: 'Cancel' }))
+      : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: () => { LS.confirmPublish = true; lsRefreshReview(); },
+        text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'A job is running.' : verb }),
+    !ro && !startable ? lsEl('div', { class: 'ls-sub', text: 'Finish the items above first.' }) : null);
   return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' },
-    lsEl('div', { class: 'ls-banner' }, 'Review the final listing, then run the dry run. This screen shows the saved draft.'),
+    lsEl('div', { class: 'ls-banner' }, 'Review the final listing, optionally run the dry run, then publish. This screen shows the saved draft.'),
     lsEl('ul', { class: 'ls-check ls-rv-check' }, checklist.map(([t, ok]) => lsEl('li', { class: ok ? 'ok' : 'no' }, lsEl('span', { 'aria-hidden': 'true', text: ok ? '✓' : '○' }), ' ', t))),
     finalCard, photoCard, verifyCard, dryCard, publishCard);
 }
@@ -748,7 +792,8 @@ const plainIssue = (m) => (/Victorian pricing compliance/i.test(m) ? 'Advertisin
 function jobTimeline(j) {
   const done = new Map(j.steps.map((s) => [s.step, s]));
   const failedStep = j.steps.find((s) => s.status === 'failed');
-  const rows = JOB_STEPS.map(([key, label]) => {
+  const real = isReal(j);
+  const rows = (real ? REAL_STEPS : JOB_STEPS).map(([key, label]) => {
     const s = done.get(key);
     const state = s ? (s.status === 'failed' ? 'bad' : (key === 'finished' && j.status !== 'succeeded' ? 'bad' : 'ok')) : (j.active ? 'wait' : 'skip');
     return lsEl('li', { class: 'ls-tl ' + state }, lsEl('span', { class: 'ls-tl-dot', 'aria-hidden': 'true', text: state === 'ok' ? '✓' : state === 'bad' ? '✗' : state === 'wait' ? '…' : '–' }), ' ', label, s ? lsEl('span', { class: 'ls-sub', text: ' ' + when(s.at) }) : null);
@@ -756,19 +801,24 @@ function jobTimeline(j) {
   const res = j.result; const issues = (failedStep && failedStep.detail && failedStep.detail.issues) || [];
   const checks = (res && res.checks) || (failedStep && failedStep.detail && failedStep.detail.checks) || [];
   return lsEl('div', { class: 'ls-job', id: 'ls-job', 'data-status': j.status },
-    lsEl('div', null, badge(j.status === 'succeeded' ? 'Dry run passed' : j.status === 'failed' ? 'Failed' : j.status === 'cancelled' ? 'Cancelled' : 'Running', j.status === 'succeeded' ? 'ls-badge-live' : j.status === 'failed' ? 'ls-badge-bad' : 'ls-badge-warn'),
+    lsEl('div', null, badge(j.status === 'succeeded' ? (real ? (j.result && j.result.live ? 'Live' : 'Finished') : 'Dry run passed') : j.status === 'failed' ? 'Failed' : j.status === 'cancelled' ? 'Cancelled' : (real ? 'Publishing' : 'Running'), j.status === 'succeeded' ? 'ls-badge-live' : j.status === 'failed' ? 'ls-badge-bad' : 'ls-badge-warn'),
       ' ', lsEl('span', { class: 'ls-sub', text: 'v' + j.draftVersion + ', attempt ' + j.attempt + ', started by ' + j.requestedBy.split('@')[0] + ' ' + when(j.createdAt) }),
       j.runUrl && /^https:\/\/github\.com\//.test(j.runUrl) ? [' ', lsEl('a', { class: 'ls-link', href: j.runUrl, target: '_blank', rel: 'noopener noreferrer', text: 'GitHub run' })] : null),
     lsEl('ol', { class: 'ls-tl-list' }, rows),
-    j.status === 'succeeded' ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
+    j.status === 'succeeded' && !real ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
+    j.status === 'succeeded' && real && res && res.live ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'Published and checked on the live website.') : null,
+    j.status === 'failed' && real ? lsEl('div', { class: 'ls-banner' }, 'The website that visitors see was not changed by this attempt unless a step above shows it merged. You can try again: repeating is safe.') : null,
     j.error ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, errText(j.error)) : null,
     issues.length ? lsEl('ul', { class: 'ls-ferr ls-job-issues' }, issues.map((m) => lsEl('li', { text: plainIssue(m) }))) : null,
-    checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : 'Would stop: ') + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,
-    res && res.wouldBlock && res.wouldBlock.length ? lsEl('div', { class: 'ls-banner' }, 'A real publication would currently stop on: ' + res.wouldBlock.map((x) => x.replace(/_/g, ' ')).join(', ') + '.') : null);
+    checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : (real ? 'Problem: ' : 'Would stop: ')) + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,
+    !real && res && res.wouldBlock && res.wouldBlock.length ? lsEl('div', { class: 'ls-banner' }, 'A real publication would currently stop on: ' + res.wouldBlock.map((x) => x.replace(/_/g, ' ')).join(', ') + '.') : null);
 }
 const ERR_TEXT = {
   dispatch_failed: 'GitHub could not start the job.', workflow_ended: 'The GitHub run ended without reporting a result.', no_report: 'The job finished but its result never reached the app.', timed_out: 'The job did not finish in time.',
   engine_refused: 'The website publication engine would not publish this content.', parity_failed: 'The proposed page differs from what was approved.', tests_failed: 'The website test suite failed.', build_failed: 'The build or the privacy scan failed.',
+  media_failed: 'The images could not be prepared for the public store.', media_missing: 'An approved image is not on the public store.', checks_failed: 'The required website checks did not pass, so nothing was merged.',
+  merge_refused: 'GitHub\'s branch rules did not allow the merge, so nothing was published.', deploy_failed: 'The production deployment did not succeed.', verify_failed: 'The live website does not show the listing correctly yet.',
+  wrong_mode: 'This listing needs a different kind of publication (first publication or update).', unexpected_files: 'The publication would have changed more than this listing, so it was stopped.',
   not_configured: 'The job is missing configuration.', manifest_invalid: 'The photograph list is not valid.', property_not_found: 'The property was not found in Notion.', mode_not_enabled: 'This mode is not enabled.', payload_mismatch: 'The job did not match the request.',
 };
 const errText = (e) => (ERR_TEXT[e.code] || 'The job failed.') + (e.message ? ' ' + e.message : '');

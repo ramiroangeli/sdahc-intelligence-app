@@ -61,7 +61,10 @@ const devFetch = async (url, opts = {}) => {
   return fetch(url, opts);
 };
 const publishEnv = { ...process.env, LISTINGS_GITHUB_DISPATCH_TOKEN: 'dev-not-a-real-token', LISTINGS_CALLBACK_SECRET: callbackSecret };
-const deps = { authorise: fakeAuth, db, blob, fetch: devFetch, env: publishEnv };
+// the public media store is in memory here too: nothing leaves this machine
+const pubMem = new Map();
+const publicBlob = { put: async (p, b) => { pubMem.set(p, b); } };
+const deps = { authorise: fakeAuth, db, blob, publicBlob, fetch: devFetch, env: publishEnv };
 const routes = { '/api/listings': listRoute(deps), '/api/listings/me': meRoute(deps), '/api/listings/properties': propertiesRoute(deps), '/api/listings/draft': draftRoute(deps), '/api/listings/draft-photos': draftPhotosRoute(deps), '/api/listings/draft-photo': draftPhotoRoute(deps), '/api/listings/draft-verify': draftVerifyRoute(deps), '/api/listings/draft-publish': draftPublishRoute(deps), '/api/listings/publish-callback': publishCallbackRoute(deps), '/api/listings/publish-payload': publishPayloadRoute(deps) };
 
 const STUB = `<script>(function(){var s={access_token:'dev-preview-token-not-real-0000',user:{email:'dev-preview@local'}};
