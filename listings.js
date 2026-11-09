@@ -264,9 +264,8 @@ function sideContent() {
     ['Required fields complete', v.complete],
     ['Photographs added', !v.blockers.some((b) => b.code === 'photos_required')],
     ['Photographs added, descriptions pass the checks', LS.live.photos ? LS.live.photos.items.length > 0 && LS.live.photos.items.every((x) => x.issues.length === 0) : false],
-    ['Gallery reviewed by a Publisher', !!(LS.live.photos && LS.live.photos.review && LS.live.photos.review.reviewed)],
     ['Commercial verification clear', ver.open === 0],
-    ['Compliance cleared', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
+    ['Advertising sign-off', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
   ];
   nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'Readiness' }),
     lsEl('div', { class: 'ls-ready ' + (v.publishable ? 'ok' : 'no'), text: v.publishable ? 'Ready for publication review' : 'Not ready to publish' }),
@@ -393,7 +392,7 @@ const PHOTO_MAX_SIDE = 2800;
 const PHOTO_PARALLEL = 3;
 const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const photoCache = new Map();
-LS.photoBusy = null; LS.photoMsg = null; LS.dragId = null; LS.removeAsk = null; LS.queue = []; LS.running = 0; LS.reviewOpen = null; LS.refreshTimer = null;
+LS.photoBusy = null; LS.photoMsg = null; LS.dragId = null; LS.removeAsk = null; LS.queue = []; LS.running = 0; LS.refreshTimer = null;
 window.__lsPhotoTimings = window.__lsPhotoTimings || [];
 
 async function lsToken() {
@@ -449,7 +448,7 @@ const PHOTO_ERR = {
   too_many_photos: 'The gallery is full (24 images).', image_too_large: 'The image is too large.', draft_changed: 'Someone else saved this draft first. Reload to see their version.',
   photos_not_configured: 'Photo storage is not set up yet. An administrator needs to finish the setup.', not_configured: 'Photo storage is not set up yet.',
   cover_must_stay_first: 'The cover stays first. Use "Make cover" on another photo to change it.', cover_is_floorplan: 'A floorplan cannot be the cover.',
-  gallery_changed: 'The gallery changed while you were reviewing it. Open the review again.', photos_not_ready: 'Fix the flagged image descriptions first (or clear them).', no_photographs: 'Add a photograph first.',
+  no_photographs: 'Add a photograph first.',
 };
 const photoErrText = (e) => (e.friendly || PHOTO_ERR[e.message] || (e.status === 403 ? 'You do not have permission for that.' : 'The photo change could not be saved (' + e.message + ').'));
 
@@ -620,51 +619,6 @@ function photoCard(p, idx, items, ro) {
   return card;
 }
 
-/* ---- the one gallery review ---- */
-function reviewBar(ph, ro) {
-  const rv = ph.review; const canReview = LS.d.permissions.canPublish && ph.items.length > 0;
-  const notReady = !ph.readiness.ready || LS.running > 0 || !!LS.photoBusy;
-  const text = rv.reviewed ? 'Gallery reviewed by ' + rv.by.split('@')[0] + ' ' + when(rv.at) + ' (' + rv.count + ' images). Adding, replacing or removing an image asks for a new review.'
-    : !ph.items.length ? 'No images yet.' : rv.state === 'stale' ? 'The gallery changed since it was reviewed. A Publisher reviews all images again at final approval.' : 'Gallery not reviewed yet. A Publisher reviews all images once, at final approval.';
-  return lsEl('div', { class: 'ls-review ' + (rv.reviewed ? 'ok' : '') },
-    lsEl('div', { class: 'ls-review-text', text }),
-    canReview ? lsEl('button', { class: 'btn ' + (rv.reviewed ? 'btn-secondary' : 'btn-primary') + ' btn-sm', type: 'button', id: 'ls-review-open', disabled: notReady, title: notReady ? 'Finish uploads and fix any flagged image descriptions first' : '', onclick: lsOpenReview, text: rv.reviewed ? 'Review again' : 'Review gallery' }) : null);
-}
-function lsOpenReview() { LS.reviewOpen = { loaded: 0, saving: false, err: null }; lsPaintReview(); }
-function lsCloseReview() { LS.reviewOpen = null; const m = document.getElementById('ls-review-modal'); if (m) m.remove(); const b = document.getElementById('ls-review-open'); if (b) b.focus(); }
-async function lsConfirmReview() {
-  const R = LS.reviewOpen; if (!R || R.saving) return; R.saving = true; lsPaintReview();
-  try {
-    const out = await lsApi('POST', '/api/listings/draft-gallery-review', { id: LS.d.draft.id, ids: LS.d.photos.items.map((p) => p.id), expectedVersion: LS.d.draft.version });
-    lsAdoptPhotos(out); LS.photoMsg = { ok: 'Gallery review recorded.' }; lsCloseReview(); lsRefreshPhotos(); lsScheduleRefresh();
-  } catch (e) { R.saving = false; R.err = photoErrText(e); lsPaintReview(); }
-}
-function lsPaintReview() {
-  const R = LS.reviewOpen; const old = document.getElementById('ls-review-modal'); if (old) old.remove(); if (!R) return;
-  const items = LS.d.photos.items; const all = R.loaded >= items.length;
-  const list = lsEl('ol', { class: 'ls-rv-list' }, items.map((p, i) => {
-    const img = lsPhotoImg(p.id, 960, p.altText);
-    const done = () => { if (!img.dataset.counted) { img.dataset.counted = '1'; R.loaded += 1; const b = document.getElementById('ls-review-confirm'); if (b && R.loaded >= items.length && !R.saving) b.disabled = false; const c = document.getElementById('ls-rv-count'); if (c) c.textContent = R.loaded + ' of ' + items.length + ' loaded'; } };
-    img.addEventListener('load', done); img.addEventListener('error', done);
-    // an image that cannot be shown cannot be inspected, so the review stays closed; say so instead of leaving a silent disabled button
-    img.addEventListener('lsfail', () => { R.failed = (R.failed || 0) + 1; const c = document.getElementById('ls-rv-count'); if (c) c.textContent = R.loaded + ' of ' + items.length + ' loaded. ' + R.failed + ' could not be loaded: close this window and open the review again.'; });
-    return lsEl('li', { class: 'ls-rv-item' }, lsEl('div', { class: 'ls-rv-img' }, img),
-      lsEl('div', { class: 'ls-rv-cap' }, lsEl('strong', { text: (i + 1) + ' of ' + items.length + (p.cover ? ' · Cover' : p.kind === 'floorplan' ? ' · Floorplan' : '') }), lsEl('div', { text: p.altText + (p.altFallback ? ' (neutral text: none written)' : '') })));
-  }));
-  const modal = lsEl('div', { class: 'ls-modal', id: 'ls-review-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ls-rv-title', tabindex: '-1',
-    onkeydown: (e) => { if (e.key === 'Escape') lsCloseReview(); } },
-    lsEl('div', { class: 'ls-modal-card' },
-      lsEl('div', { class: 'ls-modal-head' }, lsEl('h3', { id: 'ls-rv-title', text: 'Review the gallery (' + items.length + ' images)' }),
-        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: lsCloseReview, 'aria-label': 'Close', text: 'Close' })),
-      lsEl('p', { class: 'ls-help', text: 'Look at every image in the order it will appear. Check for house numbers, letterboxes, signs, number plates and identifiable people. Owner authorisation for marketing material is obtained before upload.' }),
-      list,
-      lsEl('div', { class: 'ls-modal-foot' }, lsEl('span', { class: 'ls-sub', id: 'ls-rv-count', text: R.loaded + ' of ' + items.length + ' loaded' }),
-        R.err ? lsEl('span', { class: 'ls-ferr', role: 'alert', text: R.err }) : null,
-        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: lsCloseReview, text: 'Cancel' }),
-        lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-review-confirm', disabled: !all || R.saving, onclick: lsConfirmReview, text: R.saving ? 'Recording...' : 'I have inspected all ' + items.length + ' images: confirm' }))));
-  document.body.append(modal); modal.focus();
-}
-
 function photosSection() {
   const ro = readOnly(); const ph = LS.d.photos; const items = ph.items;
   const zone = ro ? null : lsEl('div', { class: 'ls-drop', id: 'ls-photo-drop', tabindex: '0', role: 'button', 'aria-label': 'Add photographs',
@@ -681,7 +635,7 @@ function photosSection() {
     LS.queue.length ? lsEl('ul', { class: 'ls-ph-grid ls-ph-queue-list', 'aria-label': 'Uploads in progress' }, LS.queue.map(qCard)) : null,
     items.length ? lsEl('ul', { class: 'ls-ph-grid' }, items.map((p, i) => photoCard(p, i, items, ro))) : (LS.queue.length ? null : lsEl('div', { class: 'ls-sub', text: 'No images yet.' })),
     items.length ? lsEl('div', { class: 'ls-help', text: 'Drag a card or use the arrows to reorder. "Make cover" moves a photo to the front. The cover and floorplans have no arrows: their place is fixed by the rules above.' }) : null,
-    reviewBar(ph, ro));
+    null);
 }
 function lsRefreshPhotos() { const el = document.getElementById('ls-photos'); if (el && LS.d) el.replaceWith(photosSection()); }
 
@@ -740,17 +694,15 @@ function reviewContent() {
   if (!v.complete) pf.push('Complete the required fields.');
   if (!ph.items.some((p) => p.kind !== 'floorplan')) pf.push('Add at least one photograph.');
   if (!ph.readiness.ready) pf.push('Fix the flagged photo descriptions.');
-  if (ph.items.length && !ph.review.reviewed) pf.push('Review the whole gallery (Photographs section, Review gallery).');
   if (d.notion.changed.length) pf.push('The Notion record changed: review it and save the draft.');
   if (dirty) pf.push('Save your changes: this review shows the saved draft.');
   const startable = pf.length === 0;
-  const stops = v.blockers.filter((b) => !['photo_review', 'photos_required', 'photo_alt'].includes(b.code));
+  const stops = v.blockers.filter((b) => !['photos_required', 'photo_alt'].includes(b.code));
   const jobs = LS.jobs; const active = jobs && jobs.active; const latest = jobs && jobs.jobs && jobs.jobs[0];
 
   const checklist = [
     ['Required fields are complete', v.complete], ['Photographs added and described', ph.items.some((p) => p.kind !== 'floorplan') && ph.readiness.ready],
-    ['Gallery reviewed (' + (ph.review.reviewed ? ph.review.by.split('@')[0] + ', ' + when(ph.review.at) : 'not yet') + ')', ph.review.reviewed],
-    ['Commercial verification accepted', d.verification.open === 0], ['Compliance cleared for this listing', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
+    ['Commercial verification accepted', d.verification.open === 0], ['Advertising sign-off', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
   ];
   const finalCard = lsEl('div', { class: 'ls-rv-box' },
     lsEl('h3', { text: 'Final public content' }),
@@ -763,12 +715,12 @@ function reviewContent() {
     lsEl('h3', { text: 'Photographs, in publication order' }),
     ph.items.length ? lsEl('ol', { class: 'ls-rv-photos' }, ph.items.map((p, i) => lsEl('li', null, lsEl('div', { class: 'ls-rv-ph' }, lsPhotoImg(p.id, 480, p.altText), lsEl('span', { class: 'ls-ph-pos', text: String(i + 1) }), p.cover ? lsEl('span', { class: 'ls-ph-flag', text: 'Cover' }) : p.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null),
       lsEl('div', { class: 'ls-sub', text: p.altText + (p.altFallback ? ' (neutral text)' : '') })))) : lsEl('div', { class: 'ls-sub', text: 'No images yet.' }),
-    lsEl('div', { class: 'ls-sub', text: ph.review.reviewed ? 'Gallery reviewed by ' + ph.review.by.split('@')[0] + ' ' + when(ph.review.at) + '.' : 'The gallery has not been reviewed for these images.' }));
+    lsEl('div', { class: 'ls-sub', text: 'Publishing approves these photographs with the listing. The automatic checks (no location data, size, type, descriptions) have already run.' }));
   const openItems = [...d.verification.system, ...d.verification.notes].filter((i) => i.status === 'open' || i.verifiedBy || i.resolvedBy);
   const verifyCard = lsEl('div', { class: 'ls-rv-box' },
-    lsEl('h3', { text: 'Commercial verification and compliance' }),
+    lsEl('h3', { text: 'Commercial verification and advertising sign-off' }),
     openItems.length ? lsEl('ul', { class: 'ls-ver' }, openItems.map((i) => verifyItem(i))) : lsEl('div', { class: 'ls-sub', text: 'Nothing flagged.' }),
-    stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').length ? lsEl('div', { class: 'ls-blocks' }, lsEl('strong', { text: 'Needs a decision outside this screen' }), lsEl('ul', null, stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').map((b) => lsEl('li', { text: b.code === 'victoria_compliance' ? b.message + ' A determination for this listing is recorded in the website repository by its code owner.' : b.message })))) : null);
+    stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').length ? lsEl('div', { class: 'ls-blocks', id: 'ls-signoff' }, lsEl('strong', { text: 'Advertising sign-off' }), lsEl('ul', null, stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').map((b) => lsEl('li', { text: b.message })))) : null);
   const dryCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-dry' },
     lsEl('h3', { text: 'Dry run' }),
     lsEl('p', { class: 'ls-sub', text: 'Runs the website\'s own publication checks on this exact content: the engine, the test suite, a production build and the privacy scan. Nothing is published, Notion is not changed and no image becomes public.' }),
@@ -790,6 +742,9 @@ function reviewContent() {
     finalCard, photoCard, verifyCard, dryCard, publishCard);
 }
 
+/* The website engine's own wording for advertising rules is technical; staff read it in plain words. The rules are unchanged. */
+const plainIssue = (m) => (/Victorian pricing compliance/i.test(m) ? 'Advertising sign-off needed: SDA Home Choices management has not yet confirmed the advertising position for this listing.'
+  : /Design Category Basic/i.test(m) ? 'Needs confirmation that this existing (legacy) SDA property is classified as Basic.' : m);
 function jobTimeline(j) {
   const done = new Map(j.steps.map((s) => [s.step, s]));
   const failedStep = j.steps.find((s) => s.status === 'failed');
@@ -807,7 +762,7 @@ function jobTimeline(j) {
     lsEl('ol', { class: 'ls-tl-list' }, rows),
     j.status === 'succeeded' ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
     j.error ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, errText(j.error)) : null,
-    issues.length ? lsEl('ul', { class: 'ls-ferr ls-job-issues' }, issues.map((m) => lsEl('li', { text: m }))) : null,
+    issues.length ? lsEl('ul', { class: 'ls-ferr ls-job-issues' }, issues.map((m) => lsEl('li', { text: plainIssue(m) }))) : null,
     checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : 'Would stop: ') + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,
     res && res.wouldBlock && res.wouldBlock.length ? lsEl('div', { class: 'ls-banner' }, 'A real publication would currently stop on: ' + res.wouldBlock.map((x) => x.replace(/_/g, ' ')).join(', ') + '.') : null);
 }

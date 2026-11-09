@@ -1,10 +1,10 @@
 // Draft photo gallery: upload, processing (metadata stripped), authorisation, one-array ordering (cover first, floorplans last),
-// the single gallery review, performance guards, and proof that drafts never touch the public website.
+// performance guards, and proof that drafts never touch the public website.
 // Real SQL (PGlite) and the real auth path.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { draftGalleryReviewRoute, draftPhotoRoute, draftPhotosRoute, draftRoute, listRoute } from '../api/_lib/routes.js';
+import { draftPhotoRoute, draftPhotosRoute, draftRoute, listRoute } from '../api/_lib/routes.js';
 import { altPrivacyIssues, canonical, photoReadiness } from '../api/_lib/photos.js';
 import { processImage, sniff } from '../api/_lib/photo-process.js';
 import { authConfig, req as baseReq, res as makeRes } from './helpers.js';
@@ -29,9 +29,8 @@ const upload = (w, db, who, id, bytes, { type = 'image/jpeg', replace, kind } = 
   url: `/api/listings/draft-photos?id=${id}${replace ? `&replace=${replace}` : ''}${kind ? `&kind=${kind}` : ''}`,
 });
 const gallery = (w, db, who, id, version, photos, coverId) => call(draftPhotosRoute, w, db, who, { method: 'PUT', body: { id, expectedVersion: version, photos, ...(coverId !== undefined ? { coverId } : {}) } });
-const review = (w, db, who, id, ids, version) => call(draftGalleryReviewRoute, w, db, who, { method: 'POST', body: { id, ids, ...(version ? { expectedVersion: version } : {}) } });
 const open = (w, db, who = ALI) => call(draftRoute, w, db, who, { url: `/api/listings/draft?id=${ID_7B}` });
-const stored = async (db) => (await db.unsafe('select photos, photo_review from listings.drafts where public_id = $1', [ID_7B]))[0];
+const stored = async (db) => (await db.unsafe('select photos from listings.drafts where public_id = $1', [ID_7B]))[0];
 const ids = (r) => r.json.photos.items.map((p) => p.id);
 const ALT = 'Front of the house with a ramp and a wide entry';
 const alts = (items) => items.map((p) => ({ id: p.id, alt: ALT, kind: p.kind }));
@@ -118,11 +117,11 @@ test('a PNG and a WebP are accepted; the same image twice is a duplicate and cos
   assert.equal(b.json.photos.items.length, 2);
 });
 
-test('AUTHORISATION: no token is 401; a viewer cannot upload, edit or review (403); only staff can read an image', async () => {
+test('AUTHORISATION: no token is 401; a viewer cannot upload or edit (403); only staff can read an image', async () => {
   const { w, db, v } = await setup();
   const up = await upload(w, db, ALI, ID_7B, await jpeg(1600, 1000, { r: 5, g: 5, b: 90 }));
   const photoId = up.json.photos.items[0].id;
-  for (const [route, rq] of [[draftPhotoRoute, { method: 'GET', url: `/api/listings/draft-photo?id=${ID_7B}&photo=${photoId}&w=480` }], [draftPhotosRoute, { method: 'POST', url: `/api/listings/draft-photos?id=${ID_7B}`, body: Buffer.alloc(10) }], [draftPhotosRoute, { method: 'PUT', body: { id: ID_7B } }], [draftGalleryReviewRoute, { method: 'POST', body: { id: ID_7B, ids: [photoId] } }]]) {
+  for (const [route, rq] of [[draftPhotoRoute, { method: 'GET', url: `/api/listings/draft-photo?id=${ID_7B}&photo=${photoId}&w=480` }], [draftPhotosRoute, { method: 'POST', url: `/api/listings/draft-photos?id=${ID_7B}`, body: Buffer.alloc(10) }], [draftPhotosRoute, { method: 'PUT', body: { id: ID_7B } }]]) {
     const r = makeRes();
     await route({ authConfig: authConfig([ALI]), fetch: w.fetch, db, blob: w.blob })({ ...baseReq(rq), headers: {}, ...rq }, r);
     assert.equal(r.statusCode, 401, `${rq.method} ${rq.url ?? ''}`);
@@ -131,8 +130,6 @@ test('AUTHORISATION: no token is 401; a viewer cannot upload, edit or review (40
   const stored0 = w.blob.mem.size;
   assert.equal((await upload(w, db, VIEWER, ID_7B, await jpeg(1600, 1000, { r: 9, g: 9, b: 9 }))).status, 403);
   assert.equal((await gallery(w, db, VIEWER, ID_7B, v + 1, [])).status, 403);
-  assert.equal((await review(w, db, VIEWER, ID_7B, [photoId])).status, 403);
-  assert.equal((await review(w, db, EDITOR, ID_7B, [photoId])).status, 403, 'an Editor without the Publisher capability cannot review');
   assert.equal(w.blob.mem.size, stored0, 'a refused upload stores nothing');
   const read = await call(draftPhotoRoute, w, db, VIEWER, { url: `/api/listings/draft-photo?id=${ID_7B}&photo=${photoId}&w=480` });
   assert.equal(read.status, 200, 'a viewer may look at the staged image');
@@ -214,57 +211,35 @@ test('legacy data (cover flag, per-photo review fields) is shown in the same ord
   assert.deepEqual(canonical([{ id: 'x', kind: 'floorplan', files: [] }, { id: 'y', files: [] }]).map((p) => p.id), ['y', 'x']);
 });
 
-test('GALLERY REVIEW: one Publisher action records who and when; adding, replacing or removing an image invalidates it; reordering does not', async () => {
+test('NO MANDATORY GALLERY REVIEW: photographs flow to the publication rules without a review step; the review endpoint and state no longer exist', async () => {
+  const { existsSync } = await import('node:fs');
+  assert.equal(existsSync('api/listings/draft-gallery-review.js'), false, 'the review endpoint is gone');
   const { w, db } = await setup();
   const r = await fill(w, db, 2, { plan: true });
-  const all = ids(r);
-  // alt text first (automated checks still apply)
-  const withAlt = await gallery(w, db, ALI, ID_7B, r.json.draft.version, alts(r.json.photos.items));
-  assert.equal(withAlt.json.photos.review.state, 'none');
-  assert.ok((await open(w, db)).json.validation.blockers.some((b) => b.code === 'photo_review'), 'review pending is a publication blocker');
-  // wrong set of ids is refused: the reviewer must have been shown every image
-  assert.equal((await review(w, db, ALI, ID_7B, all.slice(1))).json.error, 'gallery_changed');
-  assert.equal((await review(w, db, ALI, ID_7B, [...all, 'ffffffffffff'])).json.error, 'gallery_changed');
-  const ok = await review(w, db, PUBLISHER, ID_7B, all);
-  assert.equal(ok.status, 200, JSON.stringify(ok.json));
-  assert.equal(ok.json.photos.review.reviewed, true);
-  assert.equal(ok.json.photos.review.by, PUBLISHER.email); assert.ok(ok.json.photos.review.at); assert.equal(ok.json.photos.review.count, 3);
+  const g = await gallery(w, db, ALI, ID_7B, r.json.draft.version, alts(r.json.photos.items));
+  assert.ok(!('review' in g.json.photos), 'no review state is exposed');
+  const full = (await open(w, db)).json;
+  const codes = full.validation.blockers.map((b) => b.code);
+  assert.ok(!codes.includes('photo_review') && !codes.includes('photos_required') && !codes.includes('photo_alt'), 'nothing about a review or the photographs blocks publication: ' + codes);
+  // adding, replacing, removing or reordering images never asks for anything
+  const add = await upload(w, db, ALI, ID_7B, await jpeg(1900, 1100, col(70)));
+  assert.equal(add.status, 200);
   assert.ok(!(await open(w, db)).json.validation.blockers.some((b) => b.code === 'photo_review'));
-  const hist = (await open(w, db)).json.history; assert.ok(hist.some((h) => h.action === 'verify' && h.fields.includes('photoReview') && h.by === PUBLISHER.email));
-  // reorder + alt edit do not invalidate (the same images were inspected)
-  const [a, b, f] = all; const v1 = ok.json.draft.version;
-  const re = await gallery(w, db, ALI, ID_7B, v1, [{ id: a, alt: 'A new description of the front', kind: 'photo' }, { id: b, alt: ALT, kind: 'photo' }, { id: f, alt: ALT, kind: 'floorplan' }]);
-  assert.equal(re.json.photos.review.reviewed, true);
-  // adding an image invalidates
-  const add = await upload(w, db, ALI, ID_7B, await jpeg(1800, 1100, col(70)));
-  assert.equal(add.json.photos.review.reviewed, false); assert.equal(add.json.photos.review.state, 'none');
-  assert.equal((await stored(db)).photo_review, null);
-  // review again, then replace
-  const alt2 = await gallery(w, db, ALI, ID_7B, add.json.draft.version, alts(add.json.photos.items));
-  const ok2 = await review(w, db, ALI, ID_7B, ids(alt2));
-  assert.equal(ok2.json.photos.review.reviewed, true);
-  const rep = await upload(w, db, ALI, ID_7B, await jpeg(1900, 1200, col(71)), { replace: a });
-  assert.equal(rep.status, 200); assert.equal(rep.json.photos.review.reviewed, false);
-  // review again, then remove
-  const ok3 = await review(w, db, ALI, ID_7B, ids(rep));
-  assert.equal(ok3.json.photos.review.reviewed, true);
-  const rm = await gallery(w, db, ALI, ID_7B, ok3.json.draft.version, alts(ok3.json.photos.items).slice(1));
-  assert.equal(rm.json.photos.review.reviewed, false);
 });
 
-test('the gallery review cannot be used to skip checks: needs a photograph, and typed alt text must pass the automated privacy checks', async () => {
+test('the AUTOMATIC image checks remain: typed descriptions are checked for privacy, and a photograph is still required', async () => {
   const { w, db } = await setup();
-  assert.equal((await review(w, db, ALI, ID_7B, [])).json.error, 'no_photographs');
+  const none = (await open(w, db)).json;
+  assert.ok(none.validation.blockers.some((b) => b.code === 'photos_required'), 'no photograph is still a blocker');
   const r = await fill(w, db, 1);
-  const rv = await review(w, db, ALI, ID_7B, ids(r));
-  assert.equal(rv.status, 200, 'an empty description is allowed and does not block the review');
-  const leak = await gallery(w, db, ALI, ID_7B, rv.json.draft.version, [{ id: ids(r)[0], alt: 'The house at 7B Wattle Street from the road', kind: 'photo' }]);
+  const leak = await gallery(w, db, ALI, ID_7B, r.json.draft.version, [{ id: ids(r)[0], alt: 'The house at 7B Wattle Street from the road', kind: 'photo' }]);
   assert.equal(leak.status, 200, 'saving is never blocked');
   assert.ok(leak.json.photos.items[0].issues.some((i) => i.code === 'alt_private'));
-  assert.equal((await review(w, db, ALI, ID_7B, ids(leak))).json.error, 'photos_not_ready');
   const full = await open(w, db);
   assert.equal(full.json.validation.publishable, false);
   assert.ok(full.json.validation.blockers.some((b) => b.code === 'photo_alt' && /house or unit number/.test(b.message)));
+  const clean = await gallery(w, db, ALI, ID_7B, leak.json.draft.version, [{ id: ids(r)[0], alt: '', kind: 'photo' }]);
+  assert.equal(clean.json.photos.readiness.ready, true);
 });
 
 test('alt text rules: file names, a house number next to the street name, prices and contact details are flagged', () => {
@@ -278,7 +253,7 @@ test('alt text rules: file names, a house number next to the street name, prices
   assert.equal(altPrivacyIssues('Priced at $695,000 with a 7% yield', 'Wattle Street').length, 1);
 });
 
-test('replacing an image keeps its position and description, deletes the old files from staging, and invalidates the review', async () => {
+test('replacing an image keeps its position and description, deletes the old files from staging', async () => {
   const { w, db } = await setup();
   const r = await fill(w, db, 2);
   const [a, b] = ids(r);
@@ -315,7 +290,6 @@ test('PERFORMANCE: a photo change makes no Notion or GitHub call, and the three 
   assert.equal(up.status, 200);
   assert.equal(peak, 3, 'variants are written concurrently');
   const g = await gallery(w, db, ALI, ID_7B, up.json.draft.version, alts(up.json.photos.items));
-  await review(w, db, ALI, ID_7B, ids(g));
   assert.deepEqual(w.calls.filter((c) => !c.url.includes('/auth/v1/user')), [], 'photo changes never call Notion, GitHub or the website');
   assert.ok(up.json.timings && up.json.timings.total >= 0 && 'process' in up.json.timings && 'store' in up.json.timings && 'persist' in up.json.timings, 'stage timings are returned');
 });
@@ -351,7 +325,6 @@ test('DRAFT PHOTOS NEVER TOUCH THE PUBLIC WEBSITE: no GitHub or Notion writes, n
   w.calls.length = 0;
   const up = await upload(w, db, ALI, ID_7B, await jpeg(1600, 1000, { r: 40, g: 140, b: 40 }));
   const g = await gallery(w, db, ALI, ID_7B, up.json.draft.version, alts(up.json.photos.items));
-  await review(w, db, ALI, ID_7B, ids(g));
   await call(draftPhotoRoute, w, db, ALI, { url: `/api/listings/draft-photo?id=${ID_7B}&photo=${ids(g)[0]}&w=480` });
   await open(w, db);
   assert.ok(w.calls.every((c) => c.method === 'GET'), 'only reads: ' + JSON.stringify(w.calls.filter((c) => c.method !== 'GET')));

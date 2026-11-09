@@ -7,7 +7,7 @@ import { HttpError, PUBLIC_ID_RE } from './http.js';
 import { changedGroups, getProperty, listAllProperties } from './property.js';
 import { loadCompliance, loadSnapshots } from './site.js';
 import { systemItems, verificationState } from './verification.js';
-import { photoReadiness, photoView, photosForRules, reviewState, streetOf } from './photos.js';
+import { photoReadiness, photoView, photosForRules, streetOf } from './photos.js';
 
 const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
 
@@ -28,8 +28,7 @@ async function context(cfg, prop, { fetchImpl }) {
 function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const content = draft.content;
   const photos = Array.isArray(draft.photos) ? draft.photos : [];
-  const rv = reviewState(draft);
-  const validation = validateDraft(content, { ...ctx, photos: photosForRules(photos, rv.reviewed) });
+  const validation = validateDraft(content, { ...ctx, photos: photosForRules(photos) });
   const pr = photoReadiness(photos, { street: streetOf(draft.label) });
   const ver = verificationState({ occupancy: prop.facts.occupancy, content, verification: draft.verification, notes: draft.notes });
   const systemErrors = ver.system.filter((i) => i.severity === 'error' && i.status === 'open');
@@ -41,11 +40,10 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const fieldErrors = { ...validation.fieldErrors };
   for (const e of systemErrors) (fieldErrors.description ??= []).push(e.text);
   const complete = validation.complete && systemErrors.length === 0;
-  // photograph rules: automated alt-text checks plus ONE gallery-level review by a Publisher (no per-image checkboxes)
+  // photograph rules: the automatic checks (description privacy, size, type, no metadata). Approving the listing approves its photographs.
   const photoBlockers = [
     ...pr.gallery.map((g) => ({ code: 'photos_required', message: g.message })),
     ...pr.items.flatMap((i) => i.issues.map((x) => ({ code: 'photo_alt', message: x.message }))),
-    ...(photos.length && !rv.reviewed ? [{ code: 'photo_review', message: rv.state === 'stale' ? 'The gallery changed since it was reviewed. A Publisher reviews all images again at final approval.' : 'The gallery has not been reviewed. A Publisher reviews all images once, at final approval.' }] : []),
   ];
   const blockersAll = [...blockers.filter((b) => b.code !== 'photos_required'), ...photoBlockers];
   return {

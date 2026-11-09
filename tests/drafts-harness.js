@@ -61,7 +61,7 @@ export function world() {
     if (u.includes('api.github.com') && u.includes('/withdrawn')) return ok(state.withdrawn.map((w, i) => ({ type: 'file', name: `w${i}.json`, download_url: `https://raw.githubusercontent.com/x/withdrawn/w${i}.json` })));
     if (u.includes('/approved/s')) return ok(state.snapshots[Number(/s(\d+)\.json/.exec(u)[1])]);
     if (u.includes('/withdrawn/w')) return ok(state.withdrawn[Number(/w(\d+)\.json/.exec(u)[1])]);
-    if (u.includes('compliance.json')) return ok(COMPLIANCE);
+    if (u.includes('compliance.json')) return ok(state.compliance ?? COMPLIANCE);
     if (u.includes('/opportunities/')) return { ok: true, status: state.liveStatus };
     throw new Error('unexpected fetch ' + u);
   };

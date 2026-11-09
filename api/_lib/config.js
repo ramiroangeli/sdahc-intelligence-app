@@ -21,8 +21,9 @@ export function parseStaff(raw) {
     if (!Array.isArray(caps) || caps.some((c) => !ALL_CAPABILITIES.includes(c))) throw new ConfigError(`LISTINGS_STAFF_JSON entry ${i} has unknown capabilities`);
     if (row.authUserId !== undefined && !GUID_RE.test(String(row.authUserId))) throw new ConfigError(`LISTINGS_STAFF_JSON entry ${i} has an invalid authUserId`);
     if (row.notionUserId !== undefined && !GUID_RE.test(String(row.notionUserId))) throw new ConfigError(`LISTINGS_STAFF_JSON entry ${i} has an invalid notionUserId`);
-    // notionUserId: this person's Notion user id. It becomes "Web Approved By" and must also be on the website's approvers list.
-    return { email, capabilities: [...new Set(caps)], active: row.active !== false, authUserId: row.authUserId ? String(row.authUserId).toLowerCase() : null, notionUserId: row.notionUserId ? String(row.notionUserId).toLowerCase() : null };
+    if (row.displayName !== undefined && (typeof row.displayName !== 'string' || row.displayName.length > 60 || /[@<>]/.test(row.displayName))) throw new ConfigError(`LISTINGS_STAFF_JSON entry ${i} has an invalid displayName`);
+    // displayName: the name shown publicly as the approver of a listing (never an email address). notionUserId: this person's Notion user id. It becomes "Web Approved By" and must also be on the website's approvers list.
+    return { email, capabilities: [...new Set(caps)], active: row.active !== false, authUserId: row.authUserId ? String(row.authUserId).toLowerCase() : null, notionUserId: row.notionUserId ? String(row.notionUserId).toLowerCase() : null, displayName: row.displayName ? row.displayName.trim() : null };
   });
 }
 

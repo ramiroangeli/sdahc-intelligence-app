@@ -84,19 +84,9 @@ export function photoReadiness(photos, { street } = {}) {
   return { items, gallery, ready: gallery.length === 0 && items.every((i) => i.ready) };
 }
 
-const sameSet = (a, b) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
-/** Gallery-level review: valid only for exactly the images the reviewer inspected. */
-export function reviewState(draft) {
-  const r = draft?.photo_review ?? null;
-  const ids = canonical(draft?.photos).map((p) => p.id);
-  if (!r || !Array.isArray(r.ids)) return { state: 'none', reviewed: false, by: null, at: null, count: ids.length };
-  const ok = ids.length > 0 && sameSet(r.ids, ids);
-  return { state: ok ? 'reviewed' : 'stale', reviewed: ok, by: r.by ?? null, at: r.at ?? null, count: r.ids.length };
-}
-
-/** Photos in the website's public shape, ONLY to run the website's own rules on a draft whose gallery a Publisher really reviewed.
- *  Never stored, never sent to the browser. Without a valid gallery review nothing is passed. */
-export const photosForRules = (photos, reviewed) => (!reviewed ? [] : withEffectiveAlt(photos)
+/** Photos in the website's public shape, ONLY to run the website's own rules on the draft. Never stored, never sent to the browser. Approving the
+ *  listing is the approval of its photographs (automatic checks still run), so privacyReviewed is true here. */
+export const photosForRules = (photos) => (withEffectiveAlt(photos)
   .filter((p) => p.altText.length <= 200)
   .map((p) => ({ id: p.id, alt: p.altText, width: p.width, height: p.height, accent: p.accent, ...(p.kind === 'floorplan' ? { kind: 'floorplan' } : {}), privacyReviewed: true, variants: p.files.map((f) => ({ w: f.w, src: `/images/listings/${f.file}` })) })));
 
@@ -106,7 +96,6 @@ export function photoView(draftOrPhotos, extra = {}) {
   const list = withEffectiveAlt(draft.photos);
   const ready = photoReadiness(list, { street: streetOf(draft.label) });
   const cover = list.find((p) => p.kind !== 'floorplan');
-  const review = reviewState({ photos: list, photo_review: draft.photo_review });
   return {
     items: list.map((p) => ({
       id: p.id, alt: p.alt, altText: p.altText, altFallback: p.altFallback, width: p.width, height: p.height, kind: p.kind === 'floorplan' ? 'floorplan' : 'photo', cover: cover?.id === p.id,
@@ -115,7 +104,6 @@ export function photoView(draftOrPhotos, extra = {}) {
     publicOrder: list.map((p) => p.id),
     coverId: cover?.id ?? null,
     readiness: { ready: ready.ready, gallery: ready.gallery },
-    review: { state: review.state, reviewed: review.reviewed, by: review.by, at: review.at, count: review.count },
   };
 }
 
@@ -172,8 +160,7 @@ export async function addPhoto({ db, deps, env, id, body, declaredType, replaceI
     if (target) next = photos.map((p) => (p.id === replaceId ? entry : p));
     else { const at = entry.kind === 'floorplan' ? -1 : photos.findIndex((p) => p.kind === 'floorplan'); next = at < 0 ? [...photos, entry] : [...photos.slice(0, at), entry, ...photos.slice(at)]; }
     try {
-      // any added or replaced image invalidates the previous gallery review
-      saved = await repo.updateDraft(db, { publicId: id, expectedVersion: cur.version, action: 'update', patch: { photos: canonical(next), photoReview: null }, actor, current: cur });
+      saved = await repo.updateDraft(db, { publicId: id, expectedVersion: cur.version, action: 'update', patch: { photos: canonical(next) }, actor, current: cur });
       replacedFiles = target ? target.files.map((f) => f.file).filter((f) => !newFiles.includes(f)) : [];
       break;
     } catch (e) {
@@ -227,24 +214,9 @@ export async function saveGallery({ db, deps, env, id, expectedVersion, items, c
   const head = cover ? [plain.find((p) => p.id === cover), ...plain.filter((p) => p.id !== cover)] : [];
   const next = [...head, ...floors];
   const removed = cur.filter((p) => !seen.has(p.id));
-  const saved = await repo.updateDraft(db, { publicId: id, expectedVersion, action: 'update', patch: { photos: next, ...(removed.length ? { photoReview: null } : {}) }, actor, current: draft });
+  const saved = await repo.updateDraft(db, { publicId: id, expectedVersion, action: 'update', patch: { photos: next }, actor, current: draft });
   if (removed.length) await photoStore(deps, env).del(pathsFor(id, filesOf(removed))).catch(() => {});
   return { saved, removed: removed.length };
-}
-
-/** The ONE gallery review: a Publisher confirms they inspected every image. Valid only for exactly those images. */
-export async function reviewGallery({ db, id, ids, expectedVersion, actor }) {
-  requireId(id);
-  const draft = await repo.getDraft(db, id);
-  if (!draft) throw new HttpError(404, 'draft_not_found');
-  const photos = canonical(existing(draft));
-  if (!photos.some((p) => p.kind !== 'floorplan')) throw new HttpError(409, 'no_photographs');
-  const ready = photoReadiness(photos, { street: streetOf(draft.label) });
-  if (!ready.ready) throw new HttpError(409, 'photos_not_ready', { issues: ready.items.filter((i) => !i.ready).length });
-  if (!Array.isArray(ids) || !sameSet(ids, photos.map((p) => p.id))) throw new HttpError(409, 'gallery_changed');
-  const review = { by: actor.email, byAuthUser: actor.authUserId ?? null, at: new Date().toISOString(), ids: photos.map((p) => p.id).sort(), count: photos.length };
-  const saved = await repo.updateDraft(db, { publicId: id, expectedVersion: Number.isInteger(expectedVersion) ? expectedVersion : draft.version, action: 'verify', patch: { photoReview: review }, actor, current: draft });
-  return light(saved, {});
 }
 
 export { light as photoLight };

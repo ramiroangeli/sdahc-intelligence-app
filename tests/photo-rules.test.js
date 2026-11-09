@@ -75,7 +75,7 @@ test('drag and drop: every allowed drop keeps the invariants; invalid drops (ont
 });
 
 test('the UI hides or disables invalid controls: no move or drag handle on the cover, no "Make cover" on a floorplan', () => {
-  const card = code.slice(code.indexOf('function photoCard'), code.indexOf('/* ---- the one gallery review'));
+  const card = code.slice(code.indexOf('function photoCard'), code.indexOf('function photosSection'));
   assert.match(card, /canDrag = !ro && !cover && !busy/);
   assert.match(card, /cover \|\| plan \? null : lsEl\('button'[^]*Make cover/);
   assert.match(card, /cover \? null : lsEl\('button'[^]*Move earlier/);
@@ -85,5 +85,5 @@ test('the UI hides or disables invalid controls: no move or drag handle on the c
 
 test('no per-photo privacy checkbox remains in the browser code', () => {
   assert.ok(!/privacyReviewed|Privacy reviewed|privacy review/i.test(code.replace(/[^\n]*Gallery[^\n]*/g, '')), 'no per-photo privacy review UI');
-  assert.match(code, /function reviewBar/);
+  assert.ok(!/function reviewBar|lsOpenReview|draft-gallery-review|Review gallery/.test(code), 'no gallery review UI remains');
 });

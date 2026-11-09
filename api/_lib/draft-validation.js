@@ -3,6 +3,8 @@
 // pipeline applies. Saving is never blocked by these results: an unfinished draft is allowed. They tell staff what is missing.
 import * as core from './vendor/listings-core.mjs';
 
+import { plainBlocker } from './publication.js';
+
 export const CONTENT_LIMITS = { title: 200, description: 20000, publicAddress: 200, displayPrice: 40 };
 const PRICING_KEYS = { asking_price: 'asking_price', price_guide: 'price_guide', eoi: 'eoi', contact_agent: 'contact_agent' };
 export const PRICING_CHOICES = core.PRICING_MODES.map((k) => ({ key: k, label: core.PRICING_MODE_LABEL[k] }));
@@ -101,11 +103,11 @@ export function validateDraft(content, ctx, now = new Date()) {
     for (const m of res.issues) {
       const c = classify(m);
       // never echo CRM values that a rule might have quoted
-      const message = m.replace(/\$\s?\d[\d,]*/g, '[amount]');
+      const message = c.code === 'victoria_compliance' || c.code === 'basic_classification' ? plainBlocker({ code: c.code, message: m }) : m.replace(/\$\s?\d[\d,]*/g, '[amount]');
       if (c.kind === 'blocker') blockers.push({ code: c.code, message });
       else { errors.push({ code: c.code, field: c.field, message }); if (c.field) addField(c.field, message); }
     }
-    if (ctx.complianceUnavailable && address.state === 'VIC' && !blockers.some((b) => b.code === 'victoria_compliance')) blockers.push({ code: 'victoria_compliance', message: 'Victorian compliance clearances could not be read from the website repository.' });
+    if (ctx.complianceUnavailable && address.state === 'VIC' && !blockers.some((b) => b.code === 'victoria_compliance')) blockers.push({ code: 'victoria_compliance', message: 'The advertising sign-off could not be checked just now. Try again shortly.' });
   }
   return {
     fieldErrors, errors, blockers, warnings, slug,

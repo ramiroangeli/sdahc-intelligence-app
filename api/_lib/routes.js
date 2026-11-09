@@ -12,7 +12,7 @@ import { isJobId, sanitiseEvent } from './publication.js';
 import { jobsFor, startPublication } from './publish-service.js';
 import { HttpError, queryOf, readBuffer, readJson } from './http.js';
 import { MAX_BYTES } from './photo-process.js';
-import { addPhoto, photoLight, readPhoto, reviewGallery, saveGallery } from './photos.js';
+import { addPhoto, photoLight, readPhoto, saveGallery } from './photos.js';
 import { CAPABILITIES as C, hasCapability } from './permissions.js';
 
 const dataCfg = (deps) => deps.dataConfig ?? loadDataConfig(deps.env ?? process.env);
@@ -101,18 +101,6 @@ export const draftPhotosRoute = guardedRoute({
     const { saved, removed } = await saveGallery({ db, deps, env, id: body?.id, expectedVersion: body?.expectedVersion, items: body?.photos, coverId: body?.coverId, actor });
     audit({ action: 'listings.photo.save', outcome: 'ok', actor, detail: { id: body.id, version: saved.version, removed } });
     return photoLight(saved, {});
-  },
-});
-
-/** The single gallery review. Publisher only: the reviewer's identity and the time are recorded server-side. */
-export const draftGalleryReviewRoute = guardedRoute({
-  capability: { POST: C.PUBLISH },
-  run: async ({ req, session, deps }) => {
-    const actor = actorOf(session);
-    const body = await readJson(req);
-    const out = await reviewGallery({ db: getDb(deps), id: body?.id, ids: body?.ids, expectedVersion: body?.expectedVersion, actor });
-    audit({ action: 'listings.photo.review', outcome: 'ok', actor, detail: { id: body.id, version: out.draft.version } });
-    return out;
   },
 });
 

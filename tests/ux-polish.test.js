@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import sharp from 'sharp';
-import { draftGalleryReviewRoute, draftPhotosRoute, draftRoute } from '../api/_lib/routes.js';
+import { draftPhotosRoute, draftRoute } from '../api/_lib/routes.js';
 import { fallbackAlt, photoReadiness, photoView, photosForRules, withEffectiveAlt } from '../api/_lib/photos.js';
 import { ALI, ID_7B, call, database, resetCaches, world } from './drafts-harness.js';
 
@@ -105,10 +105,9 @@ test('DESCRIPTIONS: an empty description gets a neutral fallback that states onl
   assert.equal(v.readiness.ready, true);
 });
 
-test('DESCRIPTIONS: the fallback and short text go to the website rules unchanged, in the order of the gallery, only after a real gallery review', () => {
+test('DESCRIPTIONS: the fallback and short text go to the website rules unchanged, in the order of the gallery', () => {
   const ph = [{ id: 'a1', alt: '', files: [{ w: 480, file: 'a1-480.webp' }], width: 1600, height: 1000, accent: 'teal' }, { id: 'b2', alt: 'Kitchen', files: [{ w: 480, file: 'b2-480.webp' }], width: 1600, height: 1000, accent: 'teal' }];
-  assert.deepEqual(photosForRules(ph, false), [], 'nothing without a gallery review');
-  assert.deepEqual(photosForRules(ph, true).map((p) => p.alt), ['Photograph 1 of 2 of the property', 'Kitchen']);
+  assert.deepEqual(photosForRules(ph).map((p) => p.alt), ['Photograph 1 of 2 of the property', 'Kitchen']);
 });
 
 async function setup() { resetCaches(); const w = world(); const db = await database(); const c = await call(draftRoute, w, db, ALI, { method: 'POST', body: { propertyId: ID_7B } }); return { w, db, v: c.json.draft.version }; }
@@ -116,7 +115,7 @@ const GOOD = { title: 'Established Improved Liveability SDA Investment', descrip
 const jpeg = (n) => sharp({ create: { width: 1600 + n * 10, height: 1000, channels: 3, background: { r: (n * 37) % 255, g: (n * 91) % 255, b: (n * 151) % 255 } } }).jpeg().toBuffer();
 const up = (w, db, bytes) => call(draftPhotosRoute, w, db, ALI, { method: 'POST', body: bytes, headers: { 'x-image-type': 'image/jpeg' }, url: `/api/listings/draft-photos?id=${ID_7B}` });
 
-test('END TO END: a gallery with no descriptions and one "Kitchen" can be reviewed and passes the website photo rules; the main listing description stays required', async () => {
+test('END TO END: a gallery with no descriptions and one "Kitchen" passes the website photo rules with no review step; the main listing description stays required', async () => {
   const { w, db, v } = await setup();
   const a = await up(w, db, await jpeg(1)); const b = await up(w, db, await jpeg(2));
   assert.equal(a.status, 200); assert.equal(b.status, 200);
@@ -124,34 +123,32 @@ test('END TO END: a gallery with no descriptions and one "Kitchen" can be review
   const save = await call(draftPhotosRoute, w, db, ALI, { method: 'PUT', body: { id: ID_7B, expectedVersion: b.json.draft.version, photos: [{ id: ids[0], alt: '', kind: 'photo' }, { id: ids[1], alt: 'Kitchen', kind: 'photo' }] } });
   assert.equal(save.status, 200); assert.equal(save.json.photos.readiness.ready, true);
   assert.deepEqual(save.json.photos.items.map((p) => p.altText), ['Photograph 1 of 2 of the property', 'Kitchen']);
-  const rv = await call(draftGalleryReviewRoute, w, db, ALI, { method: 'POST', body: { id: ID_7B, ids } });
-  assert.equal(rv.status, 200, JSON.stringify(rv.json));
   const cur = await call(draftRoute, w, db, ALI, { url: `/api/listings/draft?id=${ID_7B}` });
   const put = await call(draftRoute, w, db, ALI, { method: 'PUT', body: { id: ID_7B, expectedVersion: cur.json.draft.version, content: GOOD } });
   assert.equal(put.status, 200);
   const val = put.json.validation;
   assert.ok(!val.errors.some((e) => /photos?\b|alt/i.test(e.message)), 'the website rules raise nothing about the photo descriptions: ' + JSON.stringify(val.errors));
-  assert.ok(!val.blockers.some((b) => ['photos_required', 'photo_alt', 'photo_review'].includes(b.code)), JSON.stringify(val.blockers.map((b) => b.code)));
+  assert.ok(!val.blockers.some((b) => ['photos_required', 'photo_alt'].includes(b.code)), JSON.stringify(val.blockers.map((b) => b.code)));
   // the main listing description is still required
   const empty = await call(draftRoute, w, db, ALI, { method: 'PUT', body: { id: ID_7B, expectedVersion: put.json.draft.version, content: { ...GOOD, description: '' }, dryRun: true } });
   assert.ok(empty.json.validation.fieldErrors.description, 'the listing description is still required');
 });
 
-test('END TO END: a typed description with a house number still blocks the gallery review', async () => {
+test('END TO END: a typed description with a house number still blocks publication (automatic check)', async () => {
   const { w, db } = await setup();
   const a = await up(w, db, await jpeg(3));
   const ids = a.json.photos.items.map((p) => p.id);
   const bad = await call(draftPhotosRoute, w, db, ALI, { method: 'PUT', body: { id: ID_7B, expectedVersion: a.json.draft.version, photos: [{ id: ids[0], alt: 'The house at 7B Wattle Street', kind: 'photo' }] } });
   assert.equal(bad.status, 200, 'saving is never blocked');
-  assert.equal((await call(draftGalleryReviewRoute, w, db, ALI, { method: 'POST', body: { id: ID_7B, ids } })).json.error, 'photos_not_ready');
+  const v = await call(draftRoute, w, db, ALI, { url: `/api/listings/draft?id=${ID_7B}` });
+  assert.ok(v.json.validation.blockers.some((b) => b.code === 'photo_alt'));
 });
 
-test('UI: descriptions are labelled optional, the preview and review use the effective text, and no minimum-length wording remains', () => {
+test('UI: descriptions are labelled optional, the preview uses the effective text, and no minimum-length wording remains', () => {
   assert.match(code, /text: 'Description \(optional\)'/);
   assert.match(code, /placeholder: 'Optional, e\.g\. Kitchen'/);
   assert.match(code, /No description\. The website will say:/);
   assert.match(code, /lsPhotoImg\(lead\.id, 960, lead\.altText\)/);
-  assert.match(code, /lsPhotoImg\(p\.id, 960, p\.altText\)/);
   assert.ok(!/at least 8 characters|too short|Describe the image in at least/i.test(code));
 });
 
@@ -187,9 +184,4 @@ test('HISTORY: the content is unchanged (versions, actions, who, when, changed f
   }
   assert.ok(ratio('#FFFFFF', vars.navy) >= 7);
   assert.match(css, /\.ls-hist-toggle:focus-visible \{ outline/, 'a visible keyboard focus');
-});
-
-test('REVIEW: an image that cannot be loaded keeps the review closed and says why', () => {
-  assert.match(code, /img\.dispatchEvent\(new Event\('lsfail'\)\)/);
-  assert.match(code, /could not be loaded: close this window and open the review again/);
 });

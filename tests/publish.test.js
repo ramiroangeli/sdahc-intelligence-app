@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { draftGalleryReviewRoute, draftPhotosRoute, draftPublishRoute, draftRoute, draftVerifyRoute, publishCallbackRoute, publishPayloadRoute } from '../api/_lib/routes.js';
+import { draftPhotosRoute, draftPublishRoute, draftRoute, draftVerifyRoute, publishCallbackRoute, publishPayloadRoute } from '../api/_lib/routes.js';
 import { reconcile, sanitiseEvent } from '../api/_lib/publication.js';
 import * as jobsRepo from '../api/_lib/jobs-repo.js';
 import { ALI, ALI_N, EDITOR, GH_TOKEN, ID_7B, PUBLISHER, PUBLISH_ENV, SECRET, VIEWER, call, callSigned, database, github, resetCaches, world } from './drafts-harness.js';
@@ -15,8 +15,8 @@ const jpeg = (n, w = 1600) => sharp({ create: { width: w + n * 10, height: 1000,
 const upload = (w, db, bytes, kind) => call(draftPhotosRoute, w, db, ALI_N, { method: 'POST', body: bytes, headers: { 'x-image-type': 'image/jpeg' }, url: `/api/listings/draft-photos?id=${ID_7B}${kind ? `&kind=${kind}` : ''}` });
 const open = (w, db, who = ALI_N) => call(draftRoute, w, db, who, { url: `/api/listings/draft?id=${ID_7B}` });
 
-/** A draft that is complete, has photographs (with one floorplan) and a reviewed gallery: everything a dry run needs. */
-async function ready({ photos = true, review = true, content = GOOD } = {}) {
+/** A draft that is complete and has photographs (with one floorplan): everything a dry run needs. */
+async function ready({ photos = true, content = GOOD } = {}) {
   resetCaches();
   const w = world(); const db = await database(); const gh = github(w);
   const c = await call(draftRoute, w, db, ALI_N, { method: 'POST', body: { propertyId: ID_7B } });
@@ -28,7 +28,6 @@ async function ready({ photos = true, review = true, content = GOOD } = {}) {
     const ids = p3.json.photos.items.map((p) => p.id);
     const g = await call(draftPhotosRoute, w, db, ALI_N, { method: 'PUT', body: { id: ID_7B, expectedVersion: p3.json.draft.version, photos: [{ id: ids[0], alt: 'Kitchen', kind: 'photo' }, { id: ids[1], alt: '', kind: 'photo' }, { id: ids[2], alt: '', kind: 'floorplan' }] } });
     assert.equal(g.status, 200);
-    if (review) assert.equal((await call(draftGalleryReviewRoute, w, db, ALI_N, { method: 'POST', body: { id: ID_7B, ids } })).status, 200);
   }
   return { w, db, gh };
 }
@@ -47,18 +46,15 @@ test('only a Publisher can start a dry run; Editors, Viewers and anonymous calle
   assert.equal((await call(draftPublishRoute, ctx.w, ctx.db, VIEWER, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV })).status, 200, 'everyone with access can read the history');
 });
 
-test('PREFLIGHT: an incomplete draft, a missing gallery review or no photographs stops the dry run with plain reasons, before any job exists', async () => {
+test('PREFLIGHT: an incomplete draft or no photographs stops the dry run with plain reasons, before any job exists', async () => {
   const noPhotos = await ready({ photos: false });
   const a = await start(noPhotos);
   assert.equal(a.status, 409); assert.equal(a.json.error, 'not_ready');
   assert.ok(a.json.reasons.some((r) => /photograph/i.test(r)));
-  const noReview = await ready({ review: false });
-  const b = await start(noReview);
-  assert.ok(b.json.reasons.some((r) => /reviews the whole gallery/i.test(r)));
   const incomplete = await ready({ content: { ...GOOD, description: '' } });
   const c = await start(incomplete);
   assert.ok(c.json.reasons.some((r) => /required fields/i.test(r)));
-  for (const ctx of [noPhotos, noReview, incomplete]) { assert.equal((await jobs(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0); }
+  for (const ctx of [noPhotos, incomplete]) { assert.equal((await jobs(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0); }
 });
 
 test('missing or weak server configuration fails closed with 503 and records nothing', async () => {
@@ -99,10 +95,15 @@ test('START: a ready draft records a job, freezes ONLY the approved public conte
   assert.equal(row.payload.content.publicAddress, 'Wattle Street, Exampleton VIC 3999');
   assert.equal(row.payload.content.pricingMode, 'contact_agent');
   assert.equal(row.payload.manifest.photos.length, 3);
-  assert.ok(row.payload.manifest.photos.every((p) => p.privacyReviewed === true && /^[a-f0-9]{12}$/.test(p.id)), 'photos are covered by the real gallery review');
+  assert.ok(row.payload.manifest.photos.every((p) => p.privacyReviewed === true && /^[a-f0-9]{12}$/.test(p.id)), 'photographs are approved with the listing (the automatic checks passed in preflight)');
   assert.deepEqual(row.payload.manifest.photos.map((p) => p.kind ?? 'photo'), ['photo', 'photo', 'floorplan'], 'cover first, floorplan last, same order as the draft');
   assert.deepEqual(row.payload.manifest.photos.map((p) => p.alt), ['Kitchen', '', ''], 'short and empty descriptions stay as typed (the website adds the neutral fallback)');
-  assert.ok(row.payload.galleryReview.by && row.payload.galleryReview.at);
+  // the Listings Manager is the authority: the approval travels with the payload, with a display name (never an email) for the public snapshot
+  assert.equal(row.payload.authority, 'listings_manager');
+  assert.equal(row.payload.approver.id, ALI_N.notionUserId); assert.equal(row.payload.approver.name, 'SDA Home Choices');
+  assert.ok(!JSON.stringify(row.payload.approver).includes('@'), 'no email address in the approver that reaches the public snapshot');
+  assert.equal(row.payload.approval.by, ALI_N.email); assert.ok(row.payload.approval.at);
+  assert.ok(!('galleryReview' in row.payload), 'no gallery review is part of the payload');
   // a dry run never touches Notion or any public store
   assert.ok(ctx.w.calls.every((c) => c.method === 'GET' || /\/query|\/dispatches/.test(c.url)), JSON.stringify(ctx.w.calls.filter((c) => c.method !== 'GET').map((c) => c.url)));
 });

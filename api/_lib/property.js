@@ -108,7 +108,7 @@ export function mapFacts(page) {
     hashes: {
       identity: sha({ full, address, archived: page.archived === true }),
       classification: sha(classification),
-      web: sha({ web, status }),
+      // the Web fields are deliberately not tracked: the Listings Manager is the source of public content, Notion only prefills it
       commercial: sha({ price, yieldPct, gross: num(p['Gross income']), mrrc: num(p['MRRC Income']), sda: num(p['SDA Income']), enrolled: num(p['Enrolled value']), lease: num(p['Private Rental/ Lease']), crmDescription }),
     },
   };
