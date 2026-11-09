@@ -1,7 +1,9 @@
-// Publication jobs, increment 1: the DRY RUN. It proves that an approved draft would publish and changes nothing anywhere.
+// Publication jobs: the dry run (changes nothing) and the real publication (publish, update).
 // What runs where:
-//   here (server)   preflight, freeze the approved public content, record the job, ask GitHub to start the workflow, answer status
-//   GitHub Actions  the website's own engine, tests, build and privacy scan (scripts/listings-publish-job.mjs), reporting back by signed request
+//   here (server)   preflight, freeze the approved public content, record the job, copy the approved images to the public media store
+//                   (public-media.js), ask GitHub to start the workflow, answer status
+//   GitHub Actions  the website's own engine, tests, build and privacy scan, then (real modes) one-file pull request, required check, merge,
+//                   deployment and live proof (scripts/listings-publish-job.mjs), reporting back by signed request
 // The job continues on GitHub's servers whether or not anyone keeps a browser open. This module never writes to Notion, GitHub content or Blob.
 import { createHash } from 'node:crypto';
 import { loadPublishConfig } from './config.js';
@@ -10,8 +12,9 @@ import * as jobs from './jobs-repo.js';
 import { canonical } from './photos.js';
 import { signedHeaders } from './signing.js';
 
-export const ENABLED_KINDS = ['dry_run']; // 'publish', 'update', 'withdraw' arrive in later increments
-const STEP_NAMES = ['started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'finished'];
+export const ENABLED_KINDS = ['dry_run', 'publish', 'update']; // 'withdraw' arrives in a later increment
+export const REAL_KINDS = ['publish', 'update'];
+const STEP_NAMES = ['started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'media', 'pull_request', 'checks', 'merge', 'deploy', 'verify', 'finished'];
 const EVENT_STATUSES = ['running', 'ok', 'failed', 'succeeded'];
 const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isJobId = (x) => typeof x === 'string' && JOB_ID_RE.test(x);
@@ -117,7 +120,8 @@ export async function reconcile(job, { db, publish, repo, fetchImpl, now = Date.
   if (!jobs.isActive(job)) return job;
   const age = now - new Date(job.updated_at).getTime();
   const created = now - new Date(job.created_at).getTime();
-  if (created > 25 * MIN) return (await jobs.failJob(db, job.id, 'timed_out', 'The job did not finish within 25 minutes.')) ?? job;
+  const limit = REAL_KINDS.includes(job.kind) ? 40 : 25;
+  if (created > limit * MIN) return (await jobs.failJob(db, job.id, 'timed_out', `The job did not finish within ${limit} minutes.`)) ?? job;
   if (age < 2 * MIN || !publish) return job;
   const run = await findRun({ publish, repo }, job.id, fetchImpl);
   if (!run) return job;
@@ -149,10 +153,16 @@ export function sanitiseEvent(body) {
   if (Number.isInteger(d.version)) detail.version = d.version;
   if (Number.isInteger(d.photos)) detail.photos = d.photos;
   if (typeof d.dryRun === 'boolean') detail.dryRun = d.dryRun;
+  if (typeof d.live === 'boolean') detail.live = d.live;
+  if (Number.isInteger(d.number)) detail.number = d.number;
+  if (typeof d.sha === 'string' && /^[a-f0-9]{40}$/.test(d.sha)) detail.sha = d.sha;
+  if (typeof d.mergeCommit === 'string' && /^[a-f0-9]{40}$/.test(d.mergeCommit)) detail.mergeCommit = d.mergeCommit;
+  // links shown to staff: https only, and only on the two hosts this system uses (the pull request on GitHub, the live page on the SDAHC site)
+  for (const k of ['url']) if (typeof d[k] === 'string' && /^https:\/\/(github\.com|sdahomechoices\.com\.au|www\.sdahomechoices\.com\.au)\/[\w./?=&%#:~+-]*$/.test(d[k]) && d[k].length <= 300) detail[k] = d[k];
   if (typeof d.slug === 'string' && /^[a-z]+(-[a-z]+)*$/.test(d.slug) && d.slug.length <= 80) detail.slug = d.slug;
   if (typeof d.contentHash === 'string' && /^[a-f0-9]{64}$/.test(d.contentHash)) detail.contentHash = d.contentHash;
   for (const k of ['problems', 'issues', 'wouldBlock']) if (Array.isArray(d[k])) detail[k] = d[k].slice(0, 20).map((x) => String(x).slice(0, 300));
-  if (Array.isArray(d.checks)) detail.checks = d.checks.slice(0, 12).filter((c) => c && typeof c.name === 'string').map((c) => ({ name: c.name.slice(0, 40).replace(/[^a-z0-9_]/gi, ''), ok: c.ok === true, note: String(c.note ?? '').slice(0, 1500) }));
+  if (Array.isArray(d.checks)) detail.checks = d.checks.slice(0, 24).filter((c) => c && typeof c.name === 'string').map((c) => ({ name: c.name.slice(0, 40).replace(/[^a-z0-9_]/gi, ''), ok: c.ok === true, note: String(c.note ?? '').slice(0, 1500) }));
   return { jobId: body.jobId, step: body.step, status: body.status, detail: Object.keys(detail).length ? detail : null };
 }
 export { signedHeaders };

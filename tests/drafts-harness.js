@@ -44,6 +44,8 @@ export function world() {
   const calls = [];
   const mem = new Map();
   const blob = { put: async (p, b) => { mem.set(p, b); }, get: async (p) => mem.get(p) ?? null, del: async (ps) => { for (const p of ps) mem.delete(p); }, mem };
+  // the PUBLIC media store: write-only from the app's side, records path, type and cache lifetime of every write
+  const pubMem = new Map(); const publicBlob = { put: async (p, b, type, ttl) => { if (publicBlob.fail) throw new Error('store down'); pubMem.set(p, { b, type, ttl }); }, mem: pubMem, fail: false };
   const state = { page7B: page7B(), snapshots: [RG_SNAPSHOT], withdrawn: [], liveStatus: 200, notionDown: false };
   const fetch = async (url, opts = {}) => {
     const u = String(url); const method = opts.method ?? 'GET';
@@ -65,7 +67,7 @@ export function world() {
     if (u.includes('/opportunities/')) return { ok: true, status: state.liveStatus };
     throw new Error('unexpected fetch ' + u);
   };
-  return { fetch, calls, state, blob };
+  return { fetch, calls, state, blob, publicBlob };
 }
 
 export async function database() {
@@ -98,7 +100,7 @@ export async function call(route, w, db, person, { method = 'GET', url = '/', bo
   const r = makeRes();
   const base = baseReq({ method });
   const rq = { ...base, headers: { ...base.headers, ...(headers ?? {}) }, url, body };
-  await route({ authConfig: authConfig([person]), fetch: fetchOverride ?? w.fetch, env, db, blob: w.blob, dataConfig: { notion: { token: 'tok', dataSourceId: 'ds', version: 'v' }, repo: 'o/r', ref: 'main', siteBase: 'https://sdahomechoices.com.au', githubReadToken: null } })(rq, r);
+  await route({ authConfig: authConfig([person]), fetch: fetchOverride ?? w.fetch, env, db, blob: w.blob, publicBlob: w.publicBlob, dataConfig: { notion: { token: 'tok', dataSourceId: 'ds', version: 'v' }, repo: 'o/r', ref: 'main', siteBase: 'https://sdahomechoices.com.au', githubReadToken: null } })(rq, r);
   const bin = Buffer.isBuffer(r.body);
   return { status: r.statusCode, json: r.body && !bin ? JSON.parse(r.body) : null, raw: r.body, headers: r.headers };
 }

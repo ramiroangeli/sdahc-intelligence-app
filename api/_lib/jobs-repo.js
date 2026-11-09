@@ -77,3 +77,21 @@ export async function failJob(db, id, code, message) {
     [id, code, message.slice(0, 300), JSON.stringify([{ step: 'finished', status: 'failed', at: new Date().toISOString(), detail: { code, message: message.slice(0, 300) } }])]);
   return rows[0] ?? null;
 }
+
+/** Records a step done by the app itself (for example copying the images) without changing the job's status. */
+export async function appendStep(db, id, step, status, detail) {
+  await db.unsafe(
+    `update listings.publish_jobs set step = $2, steps = steps || $3::text::jsonb, updated_at = now() where id = $1 and status in ('queued','dispatched','running')`,
+    [id, step, JSON.stringify([{ step, status, at: new Date().toISOString(), ...(detail ? { detail } : {}) }])]);
+}
+
+/**
+ * The listing is Live only when a real publication job SUCCEEDED, and that job only succeeds after the website job has verified the
+ * production page, the images and the catalogue. This is the single source for "Live" in the app. A dry run never counts.
+ */
+export async function liveJob(db, publicId) {
+  const rows = await db.unsafe(
+    `select ${COLS} from listings.publish_jobs where public_id = $1 and kind in ('publish','update') and status = 'succeeded' and (result->>'live')::boolean is true
+     order by finished_at desc limit 1`, [publicId]);
+  return rows[0] ?? null;
+}

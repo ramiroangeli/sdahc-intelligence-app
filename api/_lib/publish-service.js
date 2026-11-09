@@ -1,10 +1,12 @@
-// Starting a publication job (increment 1: the dry run only) and answering status. See publication.js.
+// Starting a publication job (dry run, first publication, update) and answering status. See publication.js.
 import { randomUUID } from 'node:crypto';
 import { audit } from './audit.js';
 import { loadPublishConfig } from './config.js';
 import { HttpError, PUBLIC_ID_RE } from './http.js';
 import * as jobs from './jobs-repo.js';
-import { ENABLED_KINDS, buildPayload, dispatchWorkflow, findRun, jobView, preflight, reconcile } from './publication.js';
+import { ENABLED_KINDS, REAL_KINDS, buildPayload, dispatchWorkflow, findRun, jobView, preflight, reconcile } from './publication.js';
+import { photoStore } from './photo-store.js';
+import { promoteMedia, publicMediaConfigured, publicStore } from './public-media.js';
 import * as drafts from './drafts-repo.js';
 import { openDraft } from './draft-service.js';
 
@@ -12,11 +14,13 @@ const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)
 
 export const publishingConfigured = (env) => { try { loadPublishConfig(env); return true; } catch { return false; } };
 
-export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps }) {
+export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps, deps = {} }) {
   requireId(id);
   if (!ENABLED_KINDS.includes(kind)) throw new HttpError(400, 'mode_not_enabled');
   if (!Number.isInteger(expectedVersion)) throw new HttpError(400, 'expected_version_required');
   const publish = loadPublishConfig(env); // fail closed first: nothing is recorded if the job could never start
+  const real = REAL_KINDS.includes(kind);
+  if (real && !publicMediaConfigured(deps, env)) throw new HttpError(503, 'public_media_not_configured');
   const view = await openDraft({ cfg, db, id, fetchImpl, caps });
   const draft = await drafts.getDraft(db, id);
   if (!draft) throw new HttpError(404, 'draft_not_found');
@@ -27,8 +31,10 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
 
   // idempotent: asking again for the same draft version returns the job already running or already succeeded
   const latest = await jobs.latestJob(db, id, draft.version, kind);
-  if (latest && (jobs.isActive(latest) || latest.status === 'succeeded')) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
+  const finishedOk = latest?.status === 'succeeded' && (!real || latest.result?.live === true);
+  if (latest && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
 
+  if (real && kind === 'publish' && await jobs.liveJob(db, id)) throw new HttpError(409, 'already_live', { reasons: ['This listing is already live. Publish your changes as an update.'] });
   const attempt = (await jobs.countAttempts(db, id, draft.version, kind)) + 1;
   const jobId = randomUUID();
   const { payload, hash } = buildPayload({ jobId, view, draft, staff, kind });
@@ -37,6 +43,20 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
     approverNotionUserId: staff.notionUserId ?? null, idempotencyKey: `${id}:${draft.version}:${kind}:${attempt}`,
   });
   audit({ action: 'listings.publish.request', outcome: 'ok', actor, detail: { id, kind, jobId: job.id, draftVersion: draft.version } });
+
+  if (real) {
+    // the approved images go to the public store BEFORE the website job starts; the job verifies them and refuses to continue if any is missing
+    try {
+      const copied = await promoteMedia({ publicId: id, manifest: payload.manifest, privateStore: photoStore(deps, env), publicStore: publicStore(deps, env) });
+      await jobs.appendStep(db, job.id, 'media_copy', 'ok', { photos: copied.photos });
+      audit({ action: 'listings.publish.media', outcome: 'ok', actor, detail: { id, jobId: job.id, photos: copied.photos, files: copied.files } });
+    } catch (e) {
+      const reason = e.extra?.reason ?? 'The images could not be copied to the public store.';
+      const failed = await jobs.failJob(db, job.id, 'media_failed', reason);
+      audit({ action: 'listings.publish.media', outcome: 'failed', actor, detail: { id, jobId: job.id, reason } });
+      throw new HttpError(e.status && e.status < 500 ? e.status : 502, 'media_failed', { reason, job: jobView(failed ?? job) });
+    }
+  }
 
   try {
     await dispatchWorkflow({ publish, repo: cfg.repo, ref: 'main', job, kind }, fetchImpl);
@@ -51,11 +71,14 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   return { job: jobView(dispatched), existing: false, wouldBlock: pf.wouldBlock };
 }
 
+const liveView = (j) => ({ jobId: j.id, kind: j.kind, draftVersion: j.draft_version, since: j.finished_at, url: j.result?.url ?? null, version: j.result?.version ?? null });
+
 export async function jobsFor({ cfg, db, id, fetchImpl, env }) {
   requireId(id);
   let publish = null; try { publish = loadPublishConfig(env); } catch { /* status still works without it */ }
   const list = await jobs.listJobs(db, id, 10);
   const out = [];
   for (const j of list) out.push(jobView(jobs.isActive(j) ? await reconcile(j, { db, publish, repo: cfg.repo, fetchImpl }) : j));
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), enabledKinds: ENABLED_KINDS };
+  const live = await jobs.liveJob(db, id);
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null };
 }
