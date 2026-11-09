@@ -95,3 +95,15 @@ export async function liveJob(db, publicId) {
      order by finished_at desc limit 1`, [publicId]);
   return rows[0] ?? null;
 }
+
+/**
+ * A real publication that merged but could not be confirmed live: the change is on the website's main branch, the page is not verified.
+ * Reported until a later job verifies it. Never counts as Live.
+ */
+export async function mergedUnverified(db, publicId) {
+  const rows = await db.unsafe(
+    `select ${COLS} from listings.publish_jobs j where public_id = $1 and kind in ('publish','update') and status = 'failed' and (result->>'merged')::boolean is true
+       and not exists (select 1 from listings.publish_jobs k where k.public_id = j.public_id and k.status = 'succeeded' and k.kind in ('publish','update') and (k.result->>'live')::boolean is true and k.finished_at > j.finished_at)
+     order by finished_at desc limit 1`, [publicId]);
+  return rows[0] ?? null;
+}

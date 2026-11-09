@@ -80,5 +80,6 @@ export async function jobsFor({ cfg, db, id, fetchImpl, env }) {
   const out = [];
   for (const j of list) out.push(jobView(jobs.isActive(j) ? await reconcile(j, { db, publish, repo: cfg.repo, fetchImpl }) : j));
   const live = await jobs.liveJob(db, id);
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null };
+  const stuck = await jobs.mergedUnverified(db, id);
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
 }

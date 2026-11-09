@@ -154,6 +154,7 @@ export function sanitiseEvent(body) {
   if (Number.isInteger(d.photos)) detail.photos = d.photos;
   if (typeof d.dryRun === 'boolean') detail.dryRun = d.dryRun;
   if (typeof d.live === 'boolean') detail.live = d.live;
+  if (typeof d.merged === 'boolean') detail.merged = d.merged;
   if (Number.isInteger(d.number)) detail.number = d.number;
   if (typeof d.sha === 'string' && /^[a-f0-9]{40}$/.test(d.sha)) detail.sha = d.sha;
   if (typeof d.mergeCommit === 'string' && /^[a-f0-9]{40}$/.test(d.mergeCommit)) detail.mergeCommit = d.mergeCommit;
