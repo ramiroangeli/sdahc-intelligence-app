@@ -7,6 +7,7 @@
 // The job continues on GitHub's servers whether or not anyone keeps a browser open. This module never writes to Notion, GitHub content or Blob.
 import { createHash } from 'node:crypto';
 import { loadPublishConfig } from './config.js';
+import { GithubAppError, installationToken } from './github-app.js';
 import { HttpError } from './http.js';
 import * as jobs from './jobs-repo.js';
 import { canonical } from './photos.js';
@@ -72,7 +73,12 @@ export function buildPayload({ jobId, view, draft, staff, kind }) {
 export const scrub = (text, token) => String(text ?? '').split(token || '\u0000').join('[token]').replace(/\b(github_pat_|ghp_|gho_|ghs_|ghu_|ghr_)[A-Za-z0-9_]+/g, '[token]').replace(/Bearer\s+\S+/gi, 'Bearer [token]').replace(/\s+/g, ' ').trim().slice(0, 200);
 
 /** Turns GitHub's answer into one actionable sentence for staff, plus the exact status and (scrubbed) message for the administrator. */
-export function explainDispatch(status, ghMessage, accepted) {
+export function explainDispatch(status, ghMessage, accepted, mode = 'token') {
+  if (mode === 'app') {
+    if (status === 401) return 'GitHub did not accept the App token. The portal will ask for a new one on the next attempt; if this repeats, check the GitHub App credentials.';
+    if (status === 403) return 'The GitHub App does not have "Actions: Read and write" on the website repository, or the installation is suspended.';
+    if (status === 404) return 'The workflow or the repository was not found for the GitHub App. Check that the App is installed on the website repository and that publish-listing.yml is on the main branch.';
+  }
   const needsWrite = /actions\s*=\s*write/i.test(accepted ?? '') || /not accessible by (personal access token|integration)/i.test(ghMessage ?? '');
   if (status === 401) return 'GitHub says the access token is not valid (expired, revoked or mistyped). Create a new one and replace LISTINGS_GITHUB_DISPATCH_TOKEN.';
   if (status === 403 && needsWrite) return 'The access token is valid but does not have "Actions: Read and write" on the website repository. Edit the token\'s permissions in GitHub (no new token is needed).';
@@ -82,12 +88,23 @@ export function explainDispatch(status, ghMessage, accepted) {
   return 'GitHub answered with an unexpected status.';
 }
 
+/** The credential for this call: the personal token (mode "token") or a short-lived GitHub App installation token limited to the website repo. */
+async function credential(publish, repo, fetchImpl) {
+  if (publish.authMode !== 'app') return publish.githubToken;
+  try { return (await installationToken(publish.githubApp, { repo, fetchImpl })).token; }
+  catch (e) {
+    if (e instanceof GithubAppError) throw new HttpError(502, 'dispatch_failed', { reason: e.reason, status: e.status ?? null });
+    throw new HttpError(502, 'dispatch_failed', { reason: 'The GitHub App token could not be obtained.' });
+  }
+}
+
 export async function dispatchWorkflow({ publish, repo, ref, job, kind }, fetchImpl) {
+  const token = await credential(publish, repo, fetchImpl);
   let res;
   try {
     res = await fetchImpl(`https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(publish.workflow)}/dispatches`, {
       method: 'POST',
-      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${publish.githubToken}`, 'User-Agent': 'sdahc-listings-manager', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' },
+      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'User-Agent': 'sdahc-listings-manager', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' },
       body: JSON.stringify({ ref, inputs: { job_id: job.id, public_id: job.public_id, mode: kind } }),
       signal: AbortSignal.timeout(15000),
     });
@@ -95,16 +112,17 @@ export async function dispatchWorkflow({ publish, repo, ref, job, kind }, fetchI
   if (res.status === 204) return;
   let message = ''; try { message = (await res.json()).message ?? ''; } catch { /* no body */ }
   const accepted = res.headers?.get?.('x-accepted-github-permissions') ?? '';
-  const github = scrub(message, publish.githubToken);
+  const github = scrub(message, token);
   // exact HTTP status and GitHub's scrubbed message travel with the failure (job history, audit log); the token and the Authorization header never do
-  throw new HttpError(502, 'dispatch_failed', { reason: `${explainDispatch(res.status, message, accepted)} (GitHub HTTP ${res.status}${github ? `: ${github}` : ''}${accepted ? `; needs ${scrub(accepted, publish.githubToken)}` : ''})`, status: res.status });
+  throw new HttpError(502, 'dispatch_failed', { reason: `${explainDispatch(res.status, message, accepted, publish.authMode)} (GitHub HTTP ${res.status}${github ? `: ${github}` : ''}${accepted ? `; needs ${scrub(accepted, token)}` : ''})`, status: res.status });
 }
 
 /** Finds the Actions run of a job by its title (the workflow names its run "publish <job id>"). Best effort. */
 export async function findRun({ publish, repo }, jobId, fetchImpl) {
   try {
+    const token = await credential(publish, repo, fetchImpl);
     const res = await fetchImpl(`https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(publish.workflow)}/runs?event=workflow_dispatch&per_page=15`, {
-      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${publish.githubToken}`, 'User-Agent': 'sdahc-listings-manager' }, signal: AbortSignal.timeout(10000) });
+      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'User-Agent': 'sdahc-listings-manager' }, signal: AbortSignal.timeout(10000) });
     if (!res.ok) return null;
     const run = (await res.json()).workflow_runs?.find((r) => r.display_title === `publish ${jobId}` || r.name === `publish ${jobId}`);
     return run ? { id: run.id, url: run.html_url, status: run.status, conclusion: run.conclusion } : null;

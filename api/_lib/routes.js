@@ -11,6 +11,7 @@ import * as jobsRepo from './jobs-repo.js';
 import { isJobId, sanitiseEvent } from './publication.js';
 import { jobsFor, startPublication } from './publish-service.js';
 import { checkPublicMedia } from './public-media.js';
+import { checkGithubApp } from './github-app.js';
 import { HttpError, queryOf, readBuffer, readJson } from './http.js';
 import { MAX_BYTES } from './photo-process.js';
 import { addPhoto, photoLight, readPhoto, saveGallery } from './photos.js';
@@ -162,6 +163,18 @@ export const publicMediaCheckRoute = guardedRoute({
   run: async ({ req, deps }) => {
     const out = await checkPublicMedia({ deps, env: deps.env ?? process.env, write: req.method === 'POST' });
     audit({ action: 'listings.publicmedia.check', outcome: out.ok ? 'ok' : 'failed', detail: { write: req.method === 'POST' } });
+    return out;
+  },
+});
+
+/** Administrators only, read only: can this deployment obtain a GitHub App token for the website repository? Starts nothing. */
+export const githubAppCheckRoute = guardedRoute({
+  capability: C.ADMIN,
+  methods: ['GET'],
+  run: async ({ deps }) => {
+    const env = deps.env ?? process.env;
+    const out = await checkGithubApp({ env, repo: dataCfg(deps).repo, workflow: (env.LISTINGS_PUBLISH_WORKFLOW || 'publish-listing.yml').trim(), fetchImpl: f(deps) });
+    audit({ action: 'listings.githubapp.check', outcome: out.ok ? 'ok' : 'failed', detail: {} });
     return out;
   },
 });

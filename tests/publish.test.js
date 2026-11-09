@@ -612,3 +612,142 @@ test('PUBLIC STORE CHECK: administrators only; GET reads, POST also writes a pro
   const none = await (await import('../api/_lib/public-media.js')).checkPublicMedia({ deps: {}, env: {} });
   assert.equal(none.ok, false); assert.match(none.verdict, /NOT CONNECTED/);
 });
+
+// ---- GitHub App authentication for the workflow dispatch (replaces the expiring personal token) ----
+const APP_KEY = (await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 2048 });
+const APP_PEM = APP_KEY.privateKey.export({ type: 'pkcs1', format: 'pem' });
+const APP_ENV = { LISTINGS_CALLBACK_SECRET: SECRET, LISTINGS_GITHUB_AUTH: 'app', LISTINGS_GITHUB_APP_ID: '123456', LISTINGS_GITHUB_APP_INSTALLATION_ID: '9876543', LISTINGS_GITHUB_APP_PRIVATE_KEY: APP_PEM };
+const INSTALL_TOKEN = ['ghs', 'INSTALLATIONTOKEN0123456789abcdefghijklmn'].join('_');
+/** GitHub's token endpoint: verifies the JWT with the public key and records exactly what was asked for. */
+function appGithub(inner, { status = 201, ttlMs = 3600 * 1000, now = () => Date.now() } = {}) {
+  const g = { mints: [], status, token: INSTALL_TOKEN };
+  g.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes('/app/installations/') && u.endsWith('/access_tokens')) {
+      const jwt = String(opts.headers.Authorization).replace(/^Bearer /, ''); const [h, b, s] = jwt.split('.');
+      const { createVerify } = await import('node:crypto');
+      const valid = createVerify('RSA-SHA256').update(`${h}.${b}`).verify(APP_KEY.publicKey, Buffer.from(s, 'base64url'));
+      g.mints.push({ url: u, valid, claims: JSON.parse(Buffer.from(b, 'base64url').toString()), head: JSON.parse(Buffer.from(h, 'base64url').toString()), body: JSON.parse(opts.body) });
+      if (g.status === 'throw') throw new Error('network');
+      if (g.status !== 201) return { status: g.status, ok: false, json: async () => ({ message: `Bad credentials ${g.token} ${APP_PEM.slice(0, 40)}` }), headers: { get: () => null } };
+      return { status: 201, ok: true, json: async () => ({ token: g.token, expires_at: new Date(now() + ttlMs).toISOString(), permissions: { actions: 'write', metadata: 'read' }, repository_selection: 'selected', repositories: [{ full_name: 'o/r' }] }), headers: { get: () => null } };
+    }
+    if (u.includes('/actions/workflows/') && !u.includes('/dispatches') && !u.includes('/runs')) return { status: 200, ok: true, json: async () => ({ state: 'active' }), headers: { get: () => null } };
+    return inner(url, opts);
+  };
+  return g;
+}
+
+test('GITHUB APP: the key is accepted as a PEM, a PEM with escaped line breaks, or base64; anything else is refused without echoing it', async () => {
+  const { parsePrivateKey, loadAppConfig } = await import('../api/_lib/github-app.js');
+  for (const raw of [APP_PEM, APP_PEM.replace(/\n/g, '\\n'), `"${APP_PEM.replace(/\n/g, '\\n')}"`, Buffer.from(APP_PEM).toString('base64')]) assert.equal(parsePrivateKey(raw).asymmetricKeyType, 'rsa');
+  for (const raw of ['', 'not a key', '-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----']) assert.throws(() => parsePrivateKey(raw), (e) => e.name === 'Error' && !e.message.includes('AAAA'));
+  assert.equal(loadAppConfig({}), null);
+  assert.throws(() => loadAppConfig({ LISTINGS_GITHUB_APP_ID: '1' }), /LISTINGS_GITHUB_APP_INSTALLATION_ID, LISTINGS_GITHUB_APP_PRIVATE_KEY/);
+  assert.throws(() => loadAppConfig({ ...APP_ENV, LISTINGS_GITHUB_APP_ID: 'abc' }), /numeric App ID/);
+  assert.equal(loadAppConfig(APP_ENV).appId, '123456');
+});
+
+test('GITHUB APP: the JWT is RS256, signed by the key, issued 60 s in the past and valid for 9 minutes at most', async () => {
+  const { appJwt, loadAppConfig } = await import('../api/_lib/github-app.js');
+  const now = Date.UTC(2026, 10, 9, 12, 0, 0);
+  const [h, b, s] = appJwt(loadAppConfig(APP_ENV), now).split('.');
+  const { createVerify } = await import('node:crypto');
+  assert.ok(createVerify('RSA-SHA256').update(`${h}.${b}`).verify(APP_KEY.publicKey, Buffer.from(s, 'base64url')));
+  const c = JSON.parse(Buffer.from(b, 'base64url').toString());
+  assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url').toString()), { alg: 'RS256', typ: 'JWT' });
+  assert.equal(c.iss, '123456'); assert.equal(c.iat, now / 1000 - 60); assert.equal(c.exp - c.iat, 600);
+  assert.ok(c.exp - now / 1000 <= 600, 'GitHub rejects a JWT that expires more than 10 minutes ahead');
+});
+
+test('GITHUB APP: the installation token is limited to the website repository and Actions write, cached, refreshed before expiry, never cached on failure', async () => {
+  const { installationToken, loadAppConfig, clearInstallationTokens, GithubAppError } = await import('../api/_lib/github-app.js');
+  clearInstallationTokens();
+  const app = loadAppConfig(APP_ENV); let clock = Date.UTC(2026, 10, 9, 12, 0, 0);
+  const g = appGithub(async () => { throw new Error('unexpected'); }, { now: () => clock });
+  const get = () => installationToken(app, { repo: 'o/r', fetchImpl: g.fetch, now: () => clock });
+  const [a, b] = await Promise.all([get(), get()]);
+  assert.equal(g.mints.length, 1, 'concurrent callers share one mint');
+  assert.equal(a.token, INSTALL_TOKEN); assert.equal(b.token, INSTALL_TOKEN);
+  const m = g.mints[0];
+  assert.ok(m.valid); assert.ok(m.url.endsWith('/app/installations/9876543/access_tokens'));
+  assert.deepEqual(m.body, { repositories: ['r'], permissions: { actions: 'write' } });
+  clock += 54 * 60 * 1000; await get(); assert.equal(g.mints.length, 1, 'still cached 54 minutes in');
+  clock += 2 * 60 * 1000; await get(); assert.equal(g.mints.length, 2, 'refreshed once fewer than 5 minutes remain');
+  for (const status of [401, 403, 404, 422, 500, 'throw']) {
+    clearInstallationTokens(); g.status = status;
+    const e = await get().then(() => null, (x) => x);
+    assert.ok(e instanceof GithubAppError, `status ${status}`);
+    assert.ok(!e.message.includes(INSTALL_TOKEN) && !e.message.includes('BEGIN') && !e.reason.includes('Bad credentials'), 'GitHub\'s body is never relayed');
+  }
+  g.status = 201; const ok = await get(); assert.equal(ok.token, INSTALL_TOKEN, 'a failure is not remembered');
+});
+
+test('GITHUB APP: configuration. Default stays the personal token; app mode needs the App variables and not the personal token; a bad mode fails closed', async () => {
+  const { loadPublishConfig } = await import('../api/_lib/config.js');
+  const tok = loadPublishConfig(PUBLISH_ENV); assert.equal(tok.authMode, 'token'); assert.equal(tok.githubToken, GH_TOKEN); assert.equal(tok.githubApp, null);
+  const both = loadPublishConfig({ ...PUBLISH_ENV, ...APP_ENV, LISTINGS_GITHUB_AUTH: undefined }); assert.equal(both.authMode, 'token', 'App variables alone never switch the mode');
+  const app = loadPublishConfig(APP_ENV); assert.equal(app.authMode, 'app'); assert.equal(app.githubToken, ''); assert.ok(app.githubApp);
+  assert.throws(() => loadPublishConfig({ LISTINGS_CALLBACK_SECRET: SECRET, LISTINGS_GITHUB_AUTH: 'app' }), /LISTINGS_GITHUB_APP_ID/);
+  assert.throws(() => loadPublishConfig({ ...APP_ENV, LISTINGS_GITHUB_AUTH: 'pat' }), /"token" or "app"/);
+  assert.throws(() => loadPublishConfig({ ...APP_ENV, LISTINGS_CALLBACK_SECRET: 'short' }), /LISTINGS_CALLBACK_SECRET/);
+});
+
+test('GITHUB APP DISPATCH: with LISTINGS_GITHUB_AUTH=app the workflow is dispatched with the installation token, the personal token is not used, and the job is recorded as usual', async () => {
+  const { clearInstallationTokens } = await import('../api/_lib/github-app.js');
+  clearInstallationTokens();
+  const ctx = await ready(); const g = appGithub(ctx.gh.fetch); ctx.gh.fetch = g.fetch;
+  const r = await start(ctx, ALI_N, { env: { ...APP_ENV, LISTINGS_GITHUB_DISPATCH_TOKEN: GH_TOKEN } });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(ctx.gh.dispatches.length, 1);
+  assert.equal(ctx.gh.dispatches[0].headers.Authorization, `Bearer ${INSTALL_TOKEN}`);
+  assert.ok(![...ctx.gh.dispatches].some((d) => JSON.stringify(d.headers).includes(GH_TOKEN)), 'the personal token is not used in app mode');
+  assert.deepEqual(ctx.gh.dispatches[0].body.inputs.mode, 'dry_run');
+  assert.equal(g.mints.length, 1, 'one token served both the dispatch and the run lookup');
+  assert.equal((await jobs(ctx.db)).length, 1);
+  for (const text of [r.raw, JSON.stringify(await jobs(ctx.db))]) assert.ok(!text.includes(INSTALL_TOKEN) && !text.includes('BEGIN RSA') && !text.includes(APP_PEM.slice(40, 80)), 'no token or key is ever returned or stored');
+  // and the default mode still dispatches with the personal token
+  const ctx2 = await ready(); const r2 = await start(ctx2);
+  assert.equal(r2.status, 200); assert.equal(ctx2.gh.dispatches[0].headers.Authorization, `Bearer ${GH_TOKEN}`);
+});
+
+test('GITHUB APP DISPATCH: a refused token or a refused dispatch fails the job with a plain reason and echoes nothing from GitHub\'s body', async () => {
+  const { clearInstallationTokens } = await import('../api/_lib/github-app.js');
+  for (const status of [401, 404, 'throw']) {
+    clearInstallationTokens();
+    const ctx = await ready(); const g = appGithub(ctx.gh.fetch, { status }); ctx.gh.fetch = g.fetch;
+    const r = await start(ctx, ALI_N, { env: APP_ENV });
+    assert.equal(r.status, 502, `mint ${status}`); assert.equal(r.json.error, 'dispatch_failed');
+    assert.equal(ctx.gh.dispatches.length, 0);
+    const all = r.raw + JSON.stringify(await jobs(ctx.db));
+    assert.ok(!all.includes(INSTALL_TOKEN) && !all.includes('BEGIN') && !/Bad credentials/.test(all));
+    assert.equal((await jobs(ctx.db))[0].status, 'failed');
+  }
+  clearInstallationTokens();
+  const ctx = await ready(); const g = appGithub(ctx.gh.fetch); ctx.gh.fetch = g.fetch; ctx.gh.status = 403; ctx.gh.body = { message: `Resource not accessible by integration ${INSTALL_TOKEN}` };
+  const r = await start(ctx, ALI_N, { env: APP_ENV });
+  assert.equal(r.status, 502); assert.match(r.json.reason, /GitHub App does not have "Actions: Read and write"/); assert.ok(!r.raw.includes(INSTALL_TOKEN));
+});
+
+test('GITHUB APP CHECK: administrators only, read only, answers a verdict and the token scope, never the token', async () => {
+  const { githubAppCheckRoute } = await import('../api/_lib/routes.js');
+  const { clearInstallationTokens } = await import('../api/_lib/github-app.js');
+  const { staff } = await import('./drafts-harness.js');
+  const ADMIN = staff('admin@sdahomechoices.com.au', ['listings.view', 'listings.edit', 'listings.publish', 'listings.admin']);
+  const w = world(); const db = await database(); resetCaches(); clearInstallationTokens();
+  const g = appGithub(w.fetch);
+  const url = '/api/listings/github-app-check';
+  for (const who of [VIEWER, EDITOR, PUBLISHER]) assert.equal((await call(githubAppCheckRoute, w, db, who, { url, fetch: g.fetch, env: APP_ENV })).status, 403);
+  assert.equal(g.mints.length, 0, 'nothing is minted for a caller who is not an administrator');
+  const ok = await call(githubAppCheckRoute, w, db, ADMIN, { url, fetch: g.fetch, env: APP_ENV });
+  assert.equal(ok.status, 200); assert.equal(ok.json.ok, true); assert.deepEqual(ok.json.repositories, ['o/r']); assert.equal(ok.json.permissions.actions, 'write');
+  assert.ok(!ok.raw.includes(INSTALL_TOKEN) && !ok.raw.includes('BEGIN'));
+  assert.equal((await call(githubAppCheckRoute, w, db, ADMIN, { method: 'POST', url, fetch: g.fetch, env: APP_ENV })).status, 405);
+  assert.equal(ctxDispatches(g), 0, 'the check never dispatches a workflow');
+  const none = await call(githubAppCheckRoute, w, db, ADMIN, { url, fetch: g.fetch, env: {} });
+  assert.equal(none.json.ok, false); assert.match(none.json.verdict, /NOT CONFIGURED/);
+  clearInstallationTokens(); g.status = 401;
+  const bad = await call(githubAppCheckRoute, w, db, ADMIN, { url, fetch: g.fetch, env: APP_ENV });
+  assert.equal(bad.json.ok, false); assert.match(bad.json.verdict, /FAILED/); assert.ok(!bad.raw.includes('Bad credentials'));
+});
+const ctxDispatches = (g) => g.mints.filter((m) => /dispatches/.test(m.url)).length;

@@ -1,6 +1,7 @@
 // Configuration from environment variables. Missing or malformed values THROW ConfigError and the caller
 // answers 503 without doing any work: the API fails closed. Nothing here has a permissive default for security.
 import { ALL_CAPABILITIES } from './permissions.js';
+import { loadAppConfig } from './github-app.js';
 
 export class ConfigError extends Error {}
 
@@ -63,15 +64,26 @@ export function loadDataConfig(env = process.env) {
   };
 }
 
-/** What publication jobs need. Both are server-side secrets. Missing or weak means publishing answers 503 and does nothing. */
+/**
+ * What publication jobs need. All server-side secrets. Missing or weak means publishing answers 503 and does nothing.
+ * How the portal proves itself to GitHub when it starts the workflow: LISTINGS_GITHUB_AUTH=token (default, the personal token, kept until the
+ * App is proven) or =app (the GitHub App: LISTINGS_GITHUB_APP_ID, LISTINGS_GITHUB_APP_INSTALLATION_ID, LISTINGS_GITHUB_APP_PRIVATE_KEY).
+ */
 export function loadPublishConfig(env = process.env) {
+  const authMode = (val(env, 'LISTINGS_GITHUB_AUTH') || 'token').toLowerCase();
+  if (!['token', 'app'].includes(authMode)) throw new ConfigError('LISTINGS_GITHUB_AUTH must be "token" or "app"');
   const githubToken = val(env, 'LISTINGS_GITHUB_DISPATCH_TOKEN');
   const callbackSecret = val(env, 'LISTINGS_CALLBACK_SECRET');
   const missing = [];
-  if (!githubToken) missing.push('LISTINGS_GITHUB_DISPATCH_TOKEN');
+  if (authMode === 'token' && !githubToken) missing.push('LISTINGS_GITHUB_DISPATCH_TOKEN');
   if (callbackSecret.length < 32) missing.push('LISTINGS_CALLBACK_SECRET (at least 32 characters)');
   if (missing.length) throw new ConfigError(`missing configuration: ${missing.join(', ')}`);
+  let githubApp = null;
+  if (authMode === 'app') {
+    githubApp = loadAppConfig(env);
+    if (!githubApp) throw new ConfigError('missing configuration: LISTINGS_GITHUB_APP_ID, LISTINGS_GITHUB_APP_INSTALLATION_ID, LISTINGS_GITHUB_APP_PRIVATE_KEY');
+  }
   const workflow = val(env, 'LISTINGS_PUBLISH_WORKFLOW') || 'publish-listing.yml';
   if (!/^[\w.-]+\.ya?ml$/.test(workflow)) throw new ConfigError('LISTINGS_PUBLISH_WORKFLOW must be a workflow file name');
-  return { githubToken, callbackSecret, workflow };
+  return { authMode, githubToken: authMode === 'token' ? githubToken : '', githubApp, callbackSecret, workflow };
 }
