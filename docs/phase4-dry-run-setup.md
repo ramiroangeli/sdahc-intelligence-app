@@ -16,6 +16,12 @@
    printf %s "$SECRET" | vercel env add LISTINGS_CALLBACK_SECRET preview --sensitive
    unset SECRET
    ```
+   **Common mistake: leaving Actions at "Read-only".** The token then reads the repository and the workflow but GitHub answers 403 `Resource not accessible by personal access token` when asked to start it. Fix: GitHub > Settings > Developer settings > Fine-grained personal access tokens > the token > Repository permissions > **Actions: Read and write** > Update. The token value does not change: nothing needs replacing in Vercel and nothing needs redeploying.
+   **Check it before using it** (starts nothing, never prints the token):
+   ```
+   LISTINGS_GITHUB_DISPATCH_TOKEN=<token> node scripts/check-github-dispatch-token.mjs
+   ```
+   It must print `"ok": true` and "OK: the token may start the workflow".
 5. **The access token in Vercel** (Sensitive): `vercel env add LISTINGS_GITHUB_DISPATCH_TOKEN production --sensitive` (and `preview`), paste the token when asked.
 6. **GitHub Actions secrets and variables for the website repository** (the repository has none today). The Notion token is the existing READ-ONLY website integration:
    ```

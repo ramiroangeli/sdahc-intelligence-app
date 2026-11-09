@@ -42,8 +42,8 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
     await dispatchWorkflow({ publish, repo: cfg.repo, ref: 'main', job, kind }, fetchImpl);
   } catch (e) {
     const failed = await jobs.failJob(db, job.id, 'dispatch_failed', e.extra?.reason ?? 'The workflow could not be started.');
-    audit({ action: 'listings.publish.dispatch', outcome: 'failed', actor, detail: { id, jobId: job.id } });
-    throw new HttpError(502, 'dispatch_failed', { reason: e.extra?.reason, job: jobView(failed ?? job) });
+    audit({ action: 'listings.publish.dispatch', outcome: 'failed', actor, detail: { id, jobId: job.id, githubStatus: e.extra?.status ?? null, reason: e.extra?.reason ?? null } });
+    throw new HttpError(502, 'dispatch_failed', { reason: e.extra?.reason, githubStatus: e.extra?.status ?? null, job: jobView(failed ?? job) });
   }
   const run = await findRun({ publish, repo: cfg.repo }, job.id, fetchImpl);
   const dispatched = (await jobs.markDispatched(db, job.id, run)) ?? job;

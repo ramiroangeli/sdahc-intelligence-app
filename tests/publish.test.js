@@ -8,6 +8,8 @@ import { reconcile, sanitiseEvent } from '../api/_lib/publication.js';
 import * as jobsRepo from '../api/_lib/jobs-repo.js';
 import { ALI, ALI_N, EDITOR, GH_TOKEN, ID_7B, PUBLISHER, PUBLISH_ENV, SECRET, VIEWER, call, callSigned, database, github, resetCaches, world } from './drafts-harness.js';
 
+// built at run time so the repository scan for token-shaped strings stays meaningful
+const FAKE_PAT = ['github', 'pat', '11ABCDEFG0123456789', 'abcdefghijklmnopqrstuvwxyz'].join('_');
 const GOOD = { title: 'Established Improved Liveability SDA Investment', description: 'An improved liveability SDA house in Exampleton with three participant places and onsite overnight assistance.', publicAddress: 'Wattle Street, Exampleton VIC 3999', pricingMode: 'contact_agent', displayPrice: '', featured: false };
 const jpeg = (n, w = 1600) => sharp({ create: { width: w + n * 10, height: 1000, channels: 3, background: { r: (n * 37) % 255, g: (n * 91) % 255, b: (n * 151) % 255 } } }).jpeg().toBuffer();
 const upload = (w, db, bytes, kind) => call(draftPhotosRoute, w, db, ALI_N, { method: 'POST', body: bytes, headers: { 'x-image-type': 'image/jpeg' }, url: `/api/listings/draft-photos?id=${ID_7B}${kind ? `&kind=${kind}` : ''}` });
@@ -143,7 +145,7 @@ test('the database allows only one active job per listing, and jobs are never de
 
 test('DISPATCH FAILURE: a refused token, a missing workflow or an unreachable GitHub fails the job with a clear reason, leaks nothing, and retry makes attempt 2', async () => {
   const ctx = await ready();
-  for (const [status, re] of [[401, /refused the access token/], [404, /workflow or the repository was not found/], [422, /on the main branch/], ['throw', /could not be reached/]]) {
+  for (const [status, re] of [[401, /not valid \(expired, revoked or mistyped\)/], [404, /not found for this token/], [422, /on the main branch/], ['throw', /could not be reached/]]) {
     ctx.gh.status = status;
     const r = await start(ctx);
     assert.equal(r.status, 502); assert.equal(r.json.error, 'dispatch_failed'); assert.match(r.json.reason, re);
@@ -155,6 +157,40 @@ test('DISPATCH FAILURE: a refused token, a missing workflow or an unreachable Gi
   ctx.gh.status = 204;
   const ok = await start(ctx);
   assert.equal(ok.status, 200); assert.equal(ok.json.job.attempt, 5); assert.equal(ok.json.job.status, 'dispatched');
+});
+
+test('THE REPORTED INCIDENT: a valid token without "Actions: Read and write" is reported exactly (HTTP 403, GitHub\'s message, the permission needed) and the credential never appears anywhere', async () => {
+  const { setAuditSink } = await import('../api/_lib/audit.js');
+  const lines = []; setAuditSink((l) => lines.push(l));
+  const ctx = await ready();
+  ctx.gh.status = 403; ctx.gh.accepted = 'actions=write';
+  ctx.gh.body = { message: `Resource not accessible by personal access token (sent ${GH_TOKEN} as Bearer ${GH_TOKEN} ${FAKE_PAT})` };
+  const r = await start(ctx);
+  assert.equal(r.status, 502); assert.equal(r.json.error, 'dispatch_failed');
+  assert.match(r.json.reason, /does not have "Actions: Read and write"/);
+  assert.match(r.json.reason, /GitHub HTTP 403: Resource not accessible by personal access token/);
+  assert.match(r.json.reason, /needs actions=write/);
+  assert.equal(r.json.githubStatus, 403);
+  assert.match(r.json.job.error.message, /Actions: Read and write/, 'the job history says the same');
+  const hist = await call(draftPublishRoute, ctx.w, ctx.db, VIEWER, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV, fetch: ctx.gh.fetch });
+  const everything = [r.raw, hist.raw, lines.join('\n'), JSON.stringify(await jobs(ctx.db))].join('\n');
+  for (const secret of [GH_TOKEN, SECRET, FAKE_PAT, 'Bearer ' + GH_TOKEN]) assert.ok(!everything.includes(secret), `a credential leaked: ${secret.slice(0, 12)}`);
+  assert.ok(lines.some((l) => /"githubStatus":403/.test(l)), 'the audit log records the exact status');
+  assert.ok(!/authorization/i.test(lines.join('')), 'no Authorization header in the log');
+  // after the permission is fixed on GitHub, the next attempt simply works (no new credential, no redeploy)
+  ctx.gh.status = 204; ctx.gh.body = {}; ctx.gh.accepted = null;
+  const ok = await start(ctx);
+  assert.equal(ok.status, 200); assert.equal(ok.json.job.attempt, 2); assert.equal(ok.json.job.status, 'dispatched');
+});
+
+test('OTHER GITHUB REFUSALS stay distinguishable: an invalid token, a 403 that is not a permission problem, a hidden repository', async () => {
+  const ctx = await ready();
+  const cases = [[401, 'Bad credentials', null, /not valid/], [403, 'API rate limit exceeded', null, /^GitHub refused the request\. \(GitHub HTTP 403: API rate limit exceeded\)$/], [404, 'Not Found', null, /not found for this token/]];
+  for (const [status, message, accepted, re] of cases) {
+    ctx.gh.status = status; ctx.gh.body = { message }; ctx.gh.accepted = accepted;
+    const r = await start(ctx);
+    assert.match(r.json.reason, re); assert.ok(r.json.reason.includes(`GitHub HTTP ${status}`)); assert.ok(!r.raw.includes(GH_TOKEN));
+  }
 });
 
 test('NOTION CHANGED: a draft whose Notion record moved since it was based on it must be reviewed and saved first', async () => {
@@ -353,4 +389,27 @@ test('the status read marks nothing as Live: a dry run never changes the dashboa
   const after = (await call(listRoute, ctx.w, ctx.db, VIEWER, { env: PUBLISH_ENV })).json.listings.find((l) => l.id === ID_7B);
   assert.deepEqual(after.deployment, before.deployment); assert.equal(after.website, null); assert.equal(after.notion?.statusKey ?? null, before.notion?.statusKey ?? null);
   assert.equal(after.deployment.state, 'not_published');
+});
+
+test('TOKEN CHECK SCRIPT: separates an invalid token, no repository access, a missing Actions permission and a good token; never prints the token', async () => {
+  const { checkToken } = await import('../scripts/check-github-dispatch-token.mjs');
+  const T = GH_TOKEN;
+  const world = (repo, wf, dispatch) => async (url, opts = {}) => {
+    const u = String(url); const pick = u.includes('/dispatches') ? dispatch : u.includes('/actions/workflows/') ? wf : repo;
+    return { status: pick[0], ok: pick[0] < 300, json: async () => ({ message: pick[1] }), headers: { get: (k) => (/accepted/.test(k) ? pick[2] ?? null : /expiration/.test(k) ? '2026-12-08 15:55:26 UTC' : null) } };
+  };
+  const run = (...a) => checkToken({ token: T, fetchImpl: world(...a) });
+  const a = await run([401, 'Bad credentials'], [401, 'Bad credentials'], [401, 'Bad credentials']);
+  assert.match(a.verdict, /^INVALID/);
+  assert.match((await run([404, 'Not Found'], [404, 'Not Found'], [404, 'Not Found'])).verdict, /^NO ACCESS/);
+  assert.match((await run([200, ''], [404, 'Not Found'], [404, 'Not Found'])).verdict, /^WORKFLOW NOT FOUND/);
+  const perm = await run([200, ''], [200, ''], [403, `Resource not accessible by personal access token ${T}`, 'actions=write']);
+  assert.match(perm.verdict, /^MISSING PERMISSION: .*Actions: Read and write/); assert.equal(perm.dispatch.needs, 'actions=write'); assert.equal(perm.ok, false);
+  const good = await run([200, ''], [200, ''], [422, 'No ref found for: token-check-no-such-ref-nothing-will-run']);
+  assert.equal(good.ok, true); assert.match(good.verdict, /Nothing was started/); assert.equal(good.expires, '2026-12-08 15:55:26 UTC');
+  assert.ok(!JSON.stringify([a, perm, good]).includes(T), 'the token is never in the output');
+  // it can never start a run: the ref it asks for does not exist, and it sends no other write
+  const calls = []; await checkToken({ token: T, fetchImpl: async (u, o = {}) => { calls.push([o.method, String(u), o.body]); return { status: 422, json: async () => ({}), headers: { get: () => null } }; } });
+  assert.deepEqual(calls.map((c) => c[0]), ['GET', 'GET', 'POST']);
+  assert.match(calls[2][2], /token-check-no-such-ref-nothing-will-run/);
 });
