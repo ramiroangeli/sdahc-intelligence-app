@@ -10,6 +10,7 @@ import { signedRoute } from './signed.js';
 import * as jobsRepo from './jobs-repo.js';
 import { isJobId, sanitiseEvent } from './publication.js';
 import { jobsFor, startPublication } from './publish-service.js';
+import { checkPublicMedia } from './public-media.js';
 import { HttpError, queryOf, readBuffer, readJson } from './http.js';
 import { MAX_BYTES } from './photo-process.js';
 import { addPhoto, photoLight, readPhoto, saveGallery } from './photos.js';
@@ -151,5 +152,16 @@ export const publishPayloadRoute = signedRoute({
     if (!jobsRepo.isActive(job)) throw new HttpError(410, 'job_finished');
     audit({ action: 'listings.publish.payload', outcome: 'ok', detail: { jobId: id } });
     return job.payload;
+  },
+});
+
+/** Administrators only: can this deployment reach the public image store? GET reads; POST also writes and deletes one probe file. */
+export const publicMediaCheckRoute = guardedRoute({
+  capability: C.ADMIN,
+  methods: ['GET', 'POST'],
+  run: async ({ req, deps }) => {
+    const out = await checkPublicMedia({ deps, env: deps.env ?? process.env, write: req.method === 'POST' });
+    audit({ action: 'listings.publicmedia.check', outcome: out.ok ? 'ok' : 'failed', detail: { write: req.method === 'POST' } });
+    return out;
   },
 });

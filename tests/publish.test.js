@@ -596,3 +596,19 @@ test('MERGED BUT NOT VERIFIED: a failure after the merge is shown as merged-not-
   const code = (await import('node:fs')).readFileSync('listings.js', 'utf8');
   assert.match(code, /Merged, not yet confirmed live/); assert.ok(!/unless a step above shows it merged/.test(code));
 });
+
+test('PUBLIC STORE CHECK: administrators only; GET reads, POST also writes a probe; the answer is a verdict, never a credential', async () => {
+  const { publicMediaCheckRoute } = await import('../api/_lib/routes.js');
+  const { staff } = await import('./drafts-harness.js');
+  const ADMIN = staff('admin@sdahomechoices.com.au', ['listings.view', 'listings.edit', 'listings.publish', 'listings.admin']);
+  const w = world(); const db = await database(); resetCaches();
+  const seen = [];
+  w.publicBlob.check = async ({ write }) => { seen.push(write); return { ok: true, verdict: 'READ OK' }; };
+  for (const who of [VIEWER, EDITOR, PUBLISHER]) assert.equal((await call(publicMediaCheckRoute, w, db, who, { url: '/api/listings/public-media-check' })).status, 403);
+  assert.equal((await call(publicMediaCheckRoute, w, db, ADMIN, { url: '/api/listings/public-media-check' })).json.ok, true);
+  assert.equal((await call(publicMediaCheckRoute, w, db, ADMIN, { method: 'POST', url: '/api/listings/public-media-check' })).json.ok, true);
+  assert.deepEqual(seen, [false, true]);
+  assert.equal((await call(publicMediaCheckRoute, w, db, ADMIN, { method: 'PUT', url: '/api/listings/public-media-check' })).status, 405);
+  const none = await (await import('../api/_lib/public-media.js')).checkPublicMedia({ deps: {}, env: {} });
+  assert.equal(none.ok, false); assert.match(none.verdict, /NOT CONNECTED/);
+});
