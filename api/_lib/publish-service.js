@@ -20,6 +20,18 @@ export async function approvedOnWebsite(cfg, id, fetchImpl) {
   try { return (await loadSnapshots(cfg, { fetchImpl })).approved.has(id); } catch { return null; }
 }
 
+/**
+ * True when the saved draft says nothing new about the public listing since the version that is on the website: the last version a real job
+ * verified Live, or (for a listing imported from the website that has no job yet) the version created by the import. Any saved public change
+ * (text, price, photographs, an acknowledged Notion change) counts as a change, even if it was changed back. Never true while a publication is
+ * merged but unconfirmed, or running, so the re-check and monitoring paths keep working. Reads only the database.
+ */
+export async function noPublicChanges(db, draft, { live, stuck, active, publishedOnWebsite }) {
+  if (!draft || stuck || active) return false;
+  const base = live ? (live.draft_id === draft.id ? live.draft_version : null) : (publishedOnWebsite ? await drafts.importedVersion(db, draft.id) : null);
+  return base != null && !(await drafts.publicChangesSince(db, draft.id, base));
+}
+
 const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
 
 export const publishingConfigured = (env) => { try { loadPublishConfig(env); return true; } catch { return false; } };
@@ -44,6 +56,13 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   const finishedOk = latest?.status === 'succeeded' && (!real || latest.result?.live === true);
   if (latest && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
 
+  // nothing to publish: no job is recorded (a dry run of unchanged content used to end as a failed job). A resumed or stuck publication is not "unchanged".
+  {
+    const live = await jobs.liveJob(db, id);
+    if ((kind === 'dry_run' || (real && live)) && await noPublicChanges(db, draft, { live, stuck: await jobs.mergedUnverified(db, id), active: false, publishedOnWebsite: live ? true : await approvedOnWebsite(cfg, id, fetchImpl) })) {
+      throw new HttpError(409, 'no_changes', { reasons: ['No changes to publish. This listing already matches what is on the website.'] });
+    }
+  }
   if (real && kind === 'publish' && await jobs.liveJob(db, id)) throw new HttpError(409, 'already_live', { reasons: ['This listing is already live. Publish your changes as an update.'] });
   // refused before any image is copied or job recorded; the website job would refuse it later anyway (wrong_mode)
   if (real && kind === 'publish' && await approvedOnWebsite(cfg, id, fetchImpl) === true) throw new HttpError(409, 'already_published', { reasons: ['This listing is already published on the website. Publish your changes as an update.'] });
@@ -94,5 +113,6 @@ export async function jobsFor({ cfg, db, id, fetchImpl, env }) {
   const live = await jobs.liveJob(db, id);
   const stuck = await jobs.mergedUnverified(db, id);
   const publishedOnWebsite = live ? true : await approvedOnWebsite(cfg, id, fetchImpl);
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
+  const noChanges = await noPublicChanges(db, await drafts.getDraft(db, id), { live, stuck, active: out.some((j) => j.active), publishedOnWebsite });
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
 }
