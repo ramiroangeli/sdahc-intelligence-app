@@ -700,9 +700,12 @@ async function lsStartDryRun() {
   LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
 }
 
+/** Already public: verified Live by a portal job, or on the website without one (a listing imported from the website). Either way, changes go out as an update. */
+const lsIsPublished = () => !!(LS.jobs && (LS.jobs.live || LS.jobs.publishedOnWebsite));
+
 async function lsStartPublish() {
   if (LS.jobBusy) return;
-  const kind = LS.jobs && LS.jobs.live ? 'update' : 'publish';
+  const kind = lsIsPublished() ? 'update' : 'publish';
   LS.jobBusy = true; LS.jobFlash = null; LS.confirmPublish = false; lsRefreshReview();
   try {
     const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: kind });
@@ -713,6 +716,7 @@ async function lsStartPublish() {
     LS.jobFlash = { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
       : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
       : e.status === 409 && b.error === 'job_active' ? 'A publication job is already running for this listing.'
+      : e.status === 409 && b.error === 'already_published' ? 'This listing is already published on the website. Reload: the button now publishes your changes as an update.'
       : e.status === 409 && b.error === 'already_live' ? 'This listing is already live. Reload: the button now publishes your changes as an update.'
       : (b.error === 'media_failed') ? 'The images could not be prepared for the public site: ' + (b.reason || 'unknown reason') + ' Nothing has been published.'
       : e.status === 503 && b.error === 'public_media_not_configured' ? 'Publishing is not fully set up yet: the public image store is not connected. An administrator needs to finish the setup.'
@@ -770,16 +774,18 @@ function reviewContent() {
     jobs && jobs.jobs.length > 1 ? lsEl('details', { class: 'ls-jobs-older' }, lsEl('summary', { text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: j.kind.replace('_', ' ') + ' v' + j.draftVersion + ' attempt ' + j.attempt + ': ' + j.status + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null);
   const live = jobs && jobs.live; const stuck = jobs && jobs.mergedUnverified;
   const realActive = !!(active && isReal(active));
-  const verb = stuck ? 'Re-check and finish publishing' : live ? 'Publish update' : 'Approve and publish';
+  const onSite = !live && !!(jobs && jobs.publishedOnWebsite);
+  const verb = stuck ? 'Re-check and finish publishing' : live || onSite ? 'Publish update' : 'Approve and publish';
   const publishCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' },
-    lsEl('h3', { text: live ? 'Live on the website' : 'Approve and publish' }),
+    lsEl('h3', { text: live ? 'Live on the website' : onSite ? 'Publish update' : 'Approve and publish' }),
     stuck && !(active && isReal(active)) ? lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'Merged, not yet confirmed live. The last publication merged into the website but the live page could not be verified. It is not shown as Live. Use the button below to re-check it.') : null,
     live ? lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Verified on the website ', when(live.since), live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open the live page' })] : null) : null,
-    lsEl('p', { class: 'ls-sub', text: live ? 'Changes saved after publishing are not public until you publish an update. The live page keeps showing the last verified version until the update has been checked.'
+    onSite ? lsEl('div', { class: 'ls-banner', id: 'ls-on-website', role: 'status' }, 'This listing is already on the website. Publishing sends your saved changes as an update and keeps the existing page address. It shows as Live here once the update has been checked.') : null,
+    lsEl('p', { class: 'ls-sub', text: live || onSite ? 'Changes saved after publishing are not public until you publish an update. The live page keeps showing the last verified version until the update has been checked.'
       : 'Publishing makes this exact saved version public. The images are copied to the public store, a pull request with only this listing is checked and merged, and the listing shows as Live here only after the live page, its images and the catalogue have been checked. If anything fails, the current website is left untouched.' }),
     ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
       : LS.confirmPublish ? lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm publication' },
-        lsEl('p', null, lsEl('strong', { text: live ? 'Publish this version as an update to the live listing?' : 'Publish this listing to the live website?' }), ' It will be visible to the public once checked.'),
+        lsEl('p', null, lsEl('strong', { text: live || onSite ? 'Publish this version as an update to the live listing?' : 'Publish this listing to the live website?' }), ' It will be visible to the public once checked.'),
         lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-confirm', onclick: lsStartPublish, text: 'Yes, publish' }), ' ',
         lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-publish-cancel', onclick: () => { LS.confirmPublish = false; lsRefreshReview(); }, text: 'Cancel' }))
       : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: () => { LS.confirmPublish = true; lsRefreshReview(); },

@@ -6,9 +6,9 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import * as core from '../api/_lib/vendor/listings-core.mjs';
-import { draftRoute } from '../api/_lib/routes.js';
+import { draftPublishRoute, draftRoute, publishCallbackRoute } from '../api/_lib/routes.js';
 import { setAuditSink } from '../api/_lib/audit.js';
-import { ALI, EDITOR, ID_7B, ID_RG, PAGE_RG, PUBLISHER, VIEWER, call, database, resetCaches, world } from './drafts-harness.js';
+import { ALI, ALI_N, EDITOR, ID_7B, ID_RG, PAGE_RG, PUBLISHER, PUBLISH_ENV, SECRET, VIEWER, call, callSigned, database, github, resetCaches, world } from './drafts-harness.js';
 
 const HOST = 'https://t0t0t0t0.public.blob.vercel-storage.com';
 const SPEC = [
@@ -192,4 +192,79 @@ test('IMPORT: no additional Vercel function (the Hobby plan allows 12), and the 
   assert.match(ui, /Import published listing/); assert.match(ui, /importPublished: true/);
   for (const re of [/blob\.vercel-storage/, /listings-staging/, /LISTINGS_GITHUB/, /ghp_|github_pat_/]) assert.ok(!re.test(ui), String(re));
   assert.ok(PAGE_RG);
+});
+
+// ---- Publishing an imported listing: it is already public, so it goes out as an UPDATE (it has no successful portal job to say so) ----
+async function imported() {
+  const ctx = await setup();
+  const r = await call(draftRoute, ctx.w, ctx.db, ALI_N, { method: 'POST', fetch: ctx.fetch, body: { propertyId: ID_RG, importPublished: true } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  ctx.gh = github(ctx.w);
+  ctx.id = ID_RG;
+  return ctx;
+}
+const publishAs = async (ctx, mode, who = ALI_N) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: (await ctx.db.unsafe('select version from listings.drafts where public_id = $1', [ID_RG]))[0].version, mode } });
+const history = async (ctx) => (await call(draftPublishRoute, ctx.w, ctx.db, ALI_N, { url: `/api/listings/draft-publish?id=${ID_RG}`, env: PUBLISH_ENV, fetch: ctx.gh.fetch })).json;
+const jobRows = (db) => db.unsafe('select kind, status, attempt from listings.publish_jobs order by created_at');
+
+test('IMPORTED PUBLICATION: with no successful portal job, the portal still knows the listing is published, so the button is an update', async () => {
+  const ctx = await imported();
+  const h = await history(ctx);
+  assert.equal(h.live, null, 'nothing is shown as Live until a real job verifies it');
+  assert.equal(h.publishedOnWebsite, true, 'the website snapshot is the evidence that it is already published');
+  assert.equal((await jobRows(ctx.db)).length, 0);
+  // a genuinely new listing is not "published": it keeps the first-publication button
+  const w2 = world(); const db2 = await database(); resetCaches();
+  const fresh = await call(draftPublishRoute, w2, db2, ALI_N, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV });
+  assert.equal(fresh.json.publishedOnWebsite, false);
+  const src = readFileSync(new URL('../listings.js', import.meta.url), 'utf8');
+  assert.match(src, /LS\.jobs\.live \|\| LS\.jobs\.publishedOnWebsite/, 'the browser chooses update for a published listing');
+  assert.match(src, /live \|\| onSite \? 'Publish update'/);
+});
+
+test('IMPORTED PUBLICATION: a first publication request is refused before anything is recorded, copied or dispatched; an update starts in update mode', async () => {
+  const ctx = await imported();
+  const bad = await publishAs(ctx, 'publish');
+  assert.equal(bad.status, 409); assert.equal(bad.json.error, 'already_published');
+  assert.match(bad.json.reasons.join(' '), /update/i);
+  assert.equal((await jobRows(ctx.db)).length, 0, 'no job'); assert.equal(ctx.gh.dispatches.length, 0, 'no workflow'); assert.equal(ctx.w.publicBlob.mem.size, 0, 'no public image written');
+  const ok = await publishAs(ctx, 'update');
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal(ok.json.job.kind, 'update');
+  assert.equal(ctx.gh.dispatches.length, 1);
+  assert.equal(ctx.gh.dispatches[0].body.inputs.mode, 'update');
+  assert.equal(ok.json.job.draftVersion, 1);
+  // the public identity is what the import preserved: same listing id and the same image files, written in place
+  assert.ok([...ctx.w.publicBlob.mem.keys()].every((k) => k.startsWith(ID_RG + '/')));
+  assert.equal((await publishAs(ctx, 'update')).json.existing, true, 'asking again for the same version returns the running job');
+});
+
+test('IMPORTED PUBLICATION: a failed attempt does not block the corrected update for the same approved draft version', async () => {
+  const ctx = await imported();
+  // the situation seen in production: the website job refused a first publication (the portal had asked for one before this fix)
+  ctx.w.state.snapshots = []; resetCaches();
+  const first = await publishAs(ctx, 'publish');
+  assert.equal(first.status, 200);
+  const fail = await callSigned(publishCallbackRoute, ctx.db, { method: 'POST', url: '/api/listings/publish-callback', secret: SECRET, body: JSON.stringify({ jobId: first.json.job.id, step: 'finished', status: 'failed', detail: { code: 'wrong_mode', message: 'This listing is already published: use an update.' } }) });
+  assert.equal(fail.status, 200);
+  ctx.w.state.snapshots = [snapshot()]; resetCaches();
+  const h = await history(ctx);
+  assert.equal(h.live, null, 'a failed job never makes it Live'); assert.equal(h.publishedOnWebsite, true);
+  const retry = await publishAs(ctx, 'update');
+  assert.equal(retry.status, 200, JSON.stringify(retry.json));
+  assert.equal(retry.json.existing, false); assert.equal(retry.json.job.kind, 'update'); assert.equal(retry.json.job.attempt, 1);
+  assert.equal(ctx.gh.dispatches.at(-1).body.inputs.mode, 'update');
+  assert.deepEqual((await jobRows(ctx.db)).map((j) => `${j.kind}:${j.status}`), ['publish:failed', 'update:dispatched'], 'the failed record stays as history; nothing was edited or invented');
+});
+
+test('IMPORTED PUBLICATION: an unreadable website does not change first publication, and permissions are unchanged', async () => {
+  const ctx = await imported();
+  for (const who of [EDITOR, VIEWER]) assert.equal((await publishAs(ctx, 'update', who)).status, 403);
+  const h = await history(ctx);
+  assert.equal(h.publishedOnWebsite, true);
+  const w2 = world(); w2.state.snapshots = []; const db2 = await database(); resetCaches();
+  const g2 = github(w2); const orig = g2.fetch;
+  g2.fetch = async (u, o) => (String(u).includes('/approved') ? { ok: false, status: 500 } : orig(u, o));
+  const read = await call(draftPublishRoute, w2, db2, ALI_N, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV, fetch: g2.fetch });
+  assert.equal(read.status, 200); assert.equal(read.json.publishedOnWebsite, null, 'unknown, not guessed');
 });

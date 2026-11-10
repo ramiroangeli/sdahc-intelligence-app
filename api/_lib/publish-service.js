@@ -9,6 +9,16 @@ import { photoStore } from './photo-store.js';
 import { promoteMedia, publicMediaConfigured, publicStore } from './public-media.js';
 import * as drafts from './drafts-repo.js';
 import { openDraft } from './draft-service.js';
+import { loadSnapshots } from './site.js';
+
+/**
+ * Is this listing already on the website (an approved snapshot exists)? true / false, or null when the website cannot be read.
+ * A listing can be published without any successful portal job (for example one imported from the website), so "Live" alone cannot decide
+ * between a first publication and an update. The website's approved snapshots are the evidence. A withdrawn listing is not "published" here.
+ */
+export async function approvedOnWebsite(cfg, id, fetchImpl) {
+  try { return (await loadSnapshots(cfg, { fetchImpl })).approved.has(id); } catch { return null; }
+}
 
 const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
 
@@ -35,6 +45,8 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   if (latest && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
 
   if (real && kind === 'publish' && await jobs.liveJob(db, id)) throw new HttpError(409, 'already_live', { reasons: ['This listing is already live. Publish your changes as an update.'] });
+  // refused before any image is copied or job recorded; the website job would refuse it later anyway (wrong_mode)
+  if (real && kind === 'publish' && await approvedOnWebsite(cfg, id, fetchImpl) === true) throw new HttpError(409, 'already_published', { reasons: ['This listing is already published on the website. Publish your changes as an update.'] });
   const attempt = (await jobs.countAttempts(db, id, draft.version, kind)) + 1;
   const jobId = randomUUID();
   const { payload, hash } = buildPayload({ jobId, view, draft, staff, kind });
@@ -81,5 +93,6 @@ export async function jobsFor({ cfg, db, id, fetchImpl, env }) {
   for (const j of list) out.push(jobView(jobs.isActive(j) ? await reconcile(j, { db, publish, repo: cfg.repo, fetchImpl }) : j));
   const live = await jobs.liveJob(db, id);
   const stuck = await jobs.mergedUnverified(db, id);
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
+  const publishedOnWebsite = live ? true : await approvedOnWebsite(cfg, id, fetchImpl);
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
 }
