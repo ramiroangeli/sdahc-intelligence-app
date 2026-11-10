@@ -12,6 +12,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { spawn } from 'node:child_process';
 import { draftPublishRoute, publishCallbackRoute, publishPayloadRoute, draftPhotoRoute, draftPhotosRoute, draftRoute, draftVerifyRoute, listRoute, meRoute, propertiesRoute } from '../api/_lib/routes.js';
@@ -50,6 +51,7 @@ const callbackSecret = 'dev-' + [...Array(40)].map(() => Math.random().toString(
 const websiteRepo = process.env.DEV_WEBSITE_REPO || null;
 const devFetch = async (url, opts = {}) => {
   const u = String(url);
+  if (/\/app\/installations\/.+\/access_tokens$/.test(u)) return { status: 201, ok: true, json: async () => ({ token: 'dev-installation-token-not-real', expires_at: new Date(Date.now() + 3600e3).toISOString(), permissions: { actions: 'write' }, repositories: [] }), headers: { get: () => null } };
   if (websiteRepo && /api\.github\.com\/repos\/.+\/dispatches/.test(u)) {
     const b = JSON.parse(opts.body).inputs;
     const child = spawn('node', ['scripts/listings-publish-job.mjs', '--job', b.job_id, '--public-id', b.public_id, '--mode', b.mode], { cwd: websiteRepo, stdio: 'inherit',
@@ -60,7 +62,9 @@ const devFetch = async (url, opts = {}) => {
   if (/actions\/workflows\/.+\/runs/.test(u)) return { ok: true, status: 200, json: async () => ({ workflow_runs: [] }) };
   return fetch(url, opts);
 };
-const publishEnv = { ...process.env, LISTINGS_GITHUB_DISPATCH_TOKEN: 'dev-not-a-real-token', LISTINGS_CALLBACK_SECRET: callbackSecret };
+// GitHub App credentials for the preview only: a key generated for this process, and a fake token endpoint in devFetch. Nothing real is used.
+const appKey = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const publishEnv = { ...process.env, LISTINGS_CALLBACK_SECRET: callbackSecret, LISTINGS_GITHUB_APP_ID: '1', LISTINGS_GITHUB_APP_INSTALLATION_ID: '1', LISTINGS_GITHUB_APP_PRIVATE_KEY: appKey.privateKey.export({ type: 'pkcs1', format: 'pem' }) };
 // the public media store is in memory here too: nothing leaves this machine
 const pubMem = new Map();
 const publicBlob = { put: async (p, b) => { pubMem.set(p, b); } };

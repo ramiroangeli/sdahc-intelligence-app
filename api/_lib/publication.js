@@ -73,24 +73,18 @@ export function buildPayload({ jobId, view, draft, staff, kind }) {
 export const scrub = (text, token) => String(text ?? '').split(token || '\u0000').join('[token]').replace(/\b(github_pat_|ghp_|gho_|ghs_|ghu_|ghr_)[A-Za-z0-9_]+/g, '[token]').replace(/Bearer\s+\S+/gi, 'Bearer [token]').replace(/\s+/g, ' ').trim().slice(0, 200);
 
 /** Turns GitHub's answer into one actionable sentence for staff, plus the exact status and (scrubbed) message for the administrator. */
-export function explainDispatch(status, ghMessage, accepted, mode = 'token') {
-  if (mode === 'app') {
-    if (status === 401) return 'GitHub did not accept the App token. The portal will ask for a new one on the next attempt; if this repeats, check the GitHub App credentials.';
-    if (status === 403) return 'The GitHub App does not have "Actions: Read and write" on the website repository, or the installation is suspended.';
-    if (status === 404) return 'The workflow or the repository was not found for the GitHub App. Check that the App is installed on the website repository and that publish-listing.yml is on the main branch.';
-  }
-  const needsWrite = /actions\s*=\s*write/i.test(accepted ?? '') || /not accessible by (personal access token|integration)/i.test(ghMessage ?? '');
-  if (status === 401) return 'GitHub says the access token is not valid (expired, revoked or mistyped). Create a new one and replace LISTINGS_GITHUB_DISPATCH_TOKEN.';
-  if (status === 403 && needsWrite) return 'The access token is valid but does not have "Actions: Read and write" on the website repository. Edit the token\'s permissions in GitHub (no new token is needed).';
+export function explainDispatch(status, ghMessage, accepted) {
+  const needsWrite = /actions\s*=\s*write/i.test(accepted ?? '') || /not accessible by integration/i.test(ghMessage ?? '');
+  if (status === 401) return 'GitHub did not accept the App token. The portal asks for a new one on the next attempt; if this repeats, check the GitHub App credentials.';
+  if (status === 403 && needsWrite) return 'The GitHub App does not have "Actions: Read and write" on the website repository, or the installation is suspended.';
   if (status === 403) return 'GitHub refused the request.';
-  if (status === 404) return 'The workflow or the repository was not found for this token. Check the token\'s repository selection and that publish-listing.yml is on the main branch.';
+  if (status === 404) return 'The workflow or the repository was not found for the GitHub App. Check that the App is installed on the website repository and that publish-listing.yml is on the main branch.';
   if (status === 422) return 'GitHub rejected the request (is the workflow on the main branch, and do its inputs match?).';
   return 'GitHub answered with an unexpected status.';
 }
 
-/** The credential for this call: the personal token (mode "token") or a short-lived GitHub App installation token limited to the website repo. */
+/** The credential for this call: a short-lived GitHub App installation token limited to the website repo. */
 async function credential(publish, repo, fetchImpl) {
-  if (publish.authMode !== 'app') return publish.githubToken;
   try { return (await installationToken(publish.githubApp, { repo, fetchImpl })).token; }
   catch (e) {
     if (e instanceof GithubAppError) throw new HttpError(502, 'dispatch_failed', { reason: e.reason, status: e.status ?? null });
@@ -114,7 +108,7 @@ export async function dispatchWorkflow({ publish, repo, ref, job, kind }, fetchI
   const accepted = res.headers?.get?.('x-accepted-github-permissions') ?? '';
   const github = scrub(message, token);
   // exact HTTP status and GitHub's scrubbed message travel with the failure (job history, audit log); the token and the Authorization header never do
-  throw new HttpError(502, 'dispatch_failed', { reason: `${explainDispatch(res.status, message, accepted, publish.authMode)} (GitHub HTTP ${res.status}${github ? `: ${github}` : ''}${accepted ? `; needs ${scrub(accepted, token)}` : ''})`, status: res.status });
+  throw new HttpError(502, 'dispatch_failed', { reason: `${explainDispatch(res.status, message, accepted)} (GitHub HTTP ${res.status}${github ? `: ${github}` : ''}${accepted ? `; needs ${scrub(accepted, token)}` : ''})`, status: res.status });
 }
 
 /** Finds the Actions run of a job by its title (the workflow names its run "publish <job id>"). Best effort. */

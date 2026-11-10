@@ -1,5 +1,5 @@
 // The one way to build a Listings endpoint. It enforces the method, then authorisation, and only then calls
-// `run`. A test (tests/route-guard.test.js) fails if any file under api/ serves a route without using it.
+// `run`. A test (tests/routes.test.js, "ROUTE GUARD") fails if any file under api/ serves a route without using it.
 import { authorise as realAuthorise } from './auth.js';
 import { ConfigError } from './config.js';
 import { HttpError, RawResponse, sendJson, sendRaw } from './http.js';

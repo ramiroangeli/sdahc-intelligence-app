@@ -5,9 +5,7 @@
 ## Order of work
 1. **Merge the website PR first** (it adds `.github/workflows/publish-listing.yml`; a workflow can only be started once it is on `main`).
 2. **Supabase**: run `supabase/migrations/listings_0004_publish_jobs.sql` in the SQL editor (one new table, reversible: `listings_0004_publish_jobs_rollback.sql`). Run its VERIFY queries.
-3. **Create the GitHub access token** the app uses to start the workflow (the only new credential):
-   GitHub > Settings > Developer settings > Fine-grained personal access tokens > Generate.
-   Resource owner `ramiroangeli`; Repository access: **Only select repositories > `sdahc-website`**; Permissions: **Actions: Read and write**, Metadata: Read-only. Nothing else. Choose an expiry and put the renewal date in a calendar.
+3. **GitHub App** (starts the workflow, and later opens and merges the publication pull request): see "GitHub App" in `docs/real-publication-setup.md`. There is no personal access token: the old `LISTINGS_GITHUB_DISPATCH_TOKEN` is no longer read.
 4. **Shared secret** (signs the job's reports; one value, set in two places). Do not paste it anywhere else:
    ```
    SECRET=$(openssl rand -hex 32)
@@ -16,13 +14,7 @@
    printf %s "$SECRET" | vercel env add LISTINGS_CALLBACK_SECRET preview --sensitive
    unset SECRET
    ```
-   **Common mistake: leaving Actions at "Read-only".** The token then reads the repository and the workflow but GitHub answers 403 `Resource not accessible by personal access token` when asked to start it. Fix: GitHub > Settings > Developer settings > Fine-grained personal access tokens > the token > Repository permissions > **Actions: Read and write** > Update. The token value does not change: nothing needs replacing in Vercel and nothing needs redeploying.
-   **Check it before using it** (starts nothing, never prints the token):
-   ```
-   LISTINGS_GITHUB_DISPATCH_TOKEN=<token> node scripts/check-github-dispatch-token.mjs
-   ```
-   It must print `"ok": true` and "OK: the token may start the workflow".
-5. **The access token in Vercel** (Sensitive): `vercel env add LISTINGS_GITHUB_DISPATCH_TOKEN production --sensitive` (and `preview`), paste the token when asked.
+5. **Check the App connection** (read only, starts nothing, never shows a token): signed in as an administrator, the portal answers `GET /api/listings/github-app-check` with a verdict ("APP TOKEN OK ...").
 6. **GitHub Actions secrets and variables for the website repository** (the repository has none today). The Notion token is the existing READ-ONLY website integration:
    ```
    gh secret set NOTION_TOKEN --repo ramiroangeli/sdahc-website            # paste the read-only token
@@ -44,15 +36,13 @@ A rehearsal of the whole pipeline on a developer machine (real Notion read, real
 ## What is not in this increment
 Writing the approved fields to Notion, copying images to the public store, the snapshot pull request, merging, deployment, the live check, updating Rutherford Grove, withdrawing. They come next and need the repository changes below.
 
-## GitHub repository state (checked 8 Nov 2026) and what the real publication will need
-| | Today | For the real publication |
-|---|---|---|
-| Branch protection / rulesets on `main` | none | protect `main`: pull request required, required status check, no force-push. The bot must be able to merge ITS OWN publication pull requests without a human review, and nothing else |
-| Actions default token | read only | the publication workflow requests `contents` and `pull-requests` write itself |
-| "Allow GitHub Actions to create and approve pull requests" | off | must be on for the workflow to open the pull request |
-| `docs/github-ruleset-main.json` (prepared earlier) | not applied | requires code-owner review on listing files, which blocks automatic merging. It needs a decision before the real publication |
-| Auto-merge | disabled | not needed if the workflow merges after its own checks pass |
-None of this is needed for a dry run.
+## GitHub repository state for real publication (as built)
+| | State |
+|---|---|
+| Rules on `main` (website) | ruleset `26822636`: pull request required, required check `site-checks`, squash only, no force-push, no deletion, **no bypass list** |
+| Who opens and merges the publication pull request | the GitHub App (its token, scoped to the website repository), never a person. Its pull request starts `site-checks` by itself, which is what satisfies the rule |
+| Actions default token | read only; the publication workflow asks for what it needs itself |
+| Auto-merge | not used: the job merges after its own checks pass |
 
 
 ## Simplifications applied after the first dry run (approved)

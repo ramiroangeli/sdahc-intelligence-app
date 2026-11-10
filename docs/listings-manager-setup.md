@@ -21,10 +21,16 @@ Address, Price, Yield, Description, Features, Listing Agent, Sharepoint Link and
 | `LISTINGS_STAFF_JSON` | allowlist, see below. **Sensitive.** Emails stay out of this public repo |
 | `NOTION_LISTINGS_TOKEN` | Notion integration with Read content only, shared with the Properties database only. Do not reuse the Deals integration |
 | `NOTION_PROPERTIES_DATA_SOURCE_ID` | the Properties data source id (as in the website `.env.listings`) |
+| `LISTINGS_DATABASE_URL` | the `listings_app` database role (see "Database" below). **Sensitive** |
+| `LISTINGS_CALLBACK_SECRET` | at least 32 characters; signs the publication job's reports. The same value is the website repository's Actions secret of the same name. **Sensitive** |
+| `LISTINGS_GITHUB_APP_ID`, `LISTINGS_GITHUB_APP_INSTALLATION_ID`, `LISTINGS_GITHUB_APP_PRIVATE_KEY` | the GitHub App "SDAHC Listings Publisher" (starts the publication workflow). The private key is a full PEM. **Sensitive.** See `docs/real-publication-setup.md` |
+| `PUBLIC_BLOB_STORE_ID` | the public image store (Production only), added by connecting the store with the prefix `PUBLIC_BLOB` |
+
+There is no personal GitHub token: `LISTINGS_GITHUB_DISPATCH_TOKEN` is not read by the code and can be deleted from Vercel.
 
 Optional: `LISTINGS_SITE_BASE_URL`, `LISTINGS_GITHUB_REPO`, `LISTINGS_GITHUB_REF`, `LISTINGS_GITHUB_READ_TOKEN`, `NOTION_API_VERSION`.
 
-If any of the first four is missing or invalid, every endpoint answers 503 and does nothing. Fail closed.
+If any of the first four is missing or invalid, every endpoint answers 503 and does nothing. Fail closed. If a publication variable is missing, publishing answers 503 and nothing is recorded.
 
 ```json
 [
