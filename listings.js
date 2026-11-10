@@ -681,6 +681,14 @@ function lsSchedulePoll() {
 }
 function lsRefreshReview() { const h = document.getElementById('ls-review-host'); if (h) h.replaceWith(reviewContent()); }
 
+/** A dry run that found the content identical to what is already published is not a failure: there is simply nothing to publish. */
+function jobNoChange(j) {
+  const s = (j.steps || []).find((x) => x.status === 'failed');
+  return j.status === 'failed' && !!j.error && j.error.code === 'engine_refused' && !!s && s.step === 'engine' && !!s.detail && s.detail.kind === 'unchanged' && !(s.detail.issues && s.detail.issues.length);
+}
+/** Nothing public changed since the version on the website, and Notion has not moved: no action is offered. */
+const lsNoChanges = () => !!(LS.jobs && LS.jobs.noChanges && LS.d && LS.d.notion && LS.d.notion.changed.length === 0 && !(LS.jobs.active));
+
 async function lsStartDryRun() {
   if (LS.jobBusy) return;
   LS.jobBusy = true; LS.jobFlash = null; lsRefreshReview();
@@ -690,11 +698,11 @@ async function lsStartDryRun() {
     await lsLoadJobs();
   } catch (e) {
     const b = e.body || {};
-    LS.jobFlash = { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
+    LS.jobFlash = e.status === 409 && b.error === 'no_changes' ? { ok: 'No changes to publish. This listing already matches what is on the website.' } : { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
       : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
-      : e.status === 409 && b.error === 'job_active' ? 'A publication job is already running for this listing.'
-      : e.status === 503 ? 'Publishing is not configured yet. An administrator needs to add the GitHub access token and the shared secret.'
-      : e.status === 502 ? 'GitHub could not be asked to start the job: ' + (b.reason || 'unknown reason') : e.status === 403 ? 'Only a Publisher can run this.' : 'Could not start the dry run (' + e.message + ').' };
+      : e.status === 409 && b.error === 'job_active' ? 'A publication is already running for this listing.'
+      : e.status === 503 ? 'Publishing is not set up correctly. An administrator needs to check the publishing settings.'
+      : e.status === 502 ? 'The check could not be started. Nothing was published. Try again shortly, and if it keeps happening ask an administrator.' : e.status === 403 ? 'Only a Publisher can run this.' : 'The check could not be started. Try again, and if it keeps happening ask an administrator.' };
     await lsLoadJobs().catch(() => {});
   }
   LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
@@ -715,13 +723,13 @@ async function lsStartPublish() {
     const b = e.body || {};
     LS.jobFlash = { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
       : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
-      : e.status === 409 && b.error === 'job_active' ? 'A publication job is already running for this listing.'
+      : e.status === 409 && b.error === 'job_active' ? 'A publication is already running for this listing.'
       : e.status === 409 && b.error === 'already_published' ? 'This listing is already published on the website. Reload: the button now publishes your changes as an update.'
-      : e.status === 409 && b.error === 'already_live' ? 'This listing is already live. Reload: the button now publishes your changes as an update.'
-      : (b.error === 'media_failed') ? 'The images could not be prepared for the public site: ' + (b.reason || 'unknown reason') + ' Nothing has been published.'
-      : e.status === 503 && b.error === 'public_media_not_configured' ? 'Publishing is not fully set up yet: the public image store is not connected. An administrator needs to finish the setup.'
-      : e.status === 503 ? 'Publishing is not configured yet. An administrator needs to add the GitHub access token and the shared secret.'
-      : e.status === 502 ? 'GitHub could not be asked to start the job: ' + (b.reason || 'unknown reason') : e.status === 403 ? 'Only a Publisher can publish.' : 'Could not start publishing (' + e.message + ').' };
+      : e.status === 409 && b.error === 'already_live' ? 'This listing is already live. Reload the page: the button will publish your changes as an update.'
+      : (b.error === 'media_failed') ? 'The photographs could not be prepared for the website. Nothing has been published. Try again, and if it keeps happening ask an administrator.'
+      : e.status === 503 && b.error === 'public_media_not_configured' ? 'Publishing is not set up correctly: the public image store is not connected. An administrator needs to check the publishing settings.'
+      : e.status === 503 ? 'Publishing is not set up correctly. An administrator needs to check the publishing settings.'
+      : e.status === 502 ? 'The publication could not be started. Nothing was published. Try again shortly, and if it keeps happening ask an administrator.' : e.status === 403 ? 'Only a Publisher can publish.' : 'The publication could not be started. Try again, and if it keeps happening ask an administrator.' };
     await lsLoadJobs().catch(() => {});
   }
   LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
@@ -761,17 +769,19 @@ function reviewContent() {
     lsEl('h3', { text: 'Commercial verification and advertising sign-off' }),
     openItems.length ? lsEl('ul', { class: 'ls-ver' }, openItems.map((i) => verifyItem(i))) : lsEl('div', { class: 'ls-sub', text: 'Nothing flagged.' }),
     stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').length ? lsEl('div', { class: 'ls-blocks', id: 'ls-signoff' }, lsEl('strong', { text: 'Advertising sign-off' }), lsEl('ul', null, stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').map((b) => lsEl('li', { text: b.message })))) : null);
+  const nochg = lsNoChanges();
   const dryCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-dry' },
-    lsEl('h3', { text: 'Dry run' }),
-    lsEl('p', { class: 'ls-sub', text: 'Runs the website\'s own publication checks on this exact content: the engine, the test suite, a production build and the privacy scan. Nothing is published, Notion is not changed and no image becomes public.' }),
-    !startable ? lsEl('ul', { class: 'ls-ferr', id: 'ls-dry-reasons' }, pf.map((m) => lsEl('li', { text: m }))) : null,
+    lsEl('h3', { text: 'Dry run (optional)' }),
+    lsEl('p', { class: 'ls-sub', text: 'A dry run is an optional rehearsal: you can publish without running one. It runs the website\'s own checks on this exact content (the publication rules, the test suite, a test build and the privacy scan). Nothing is published, the property record is not changed and no photograph becomes public.' }),
+    nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-dry-nochanges', role: 'status' }, 'No changes to publish. This listing already matches what is on the website, so there is nothing to check.') : null,
+    !nochg && !startable ? lsEl('ul', { class: 'ls-ferr', id: 'ls-dry-reasons' }, pf.map((m) => lsEl('li', { text: m }))) : null,
     LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
     LS.jobErr ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: 'The job history could not be read right now.' }) : null,
-    jobs && !jobs.configured ? lsEl('div', { class: 'ls-banner', text: 'Publishing is not configured yet: an administrator needs to add the GitHub access token and the shared secret.' }) : null,
-    ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can run a dry run.' }) : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-dry-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: lsStartDryRun, text: LS.jobBusy ? 'Starting...' : active ? 'A job is running...' : 'Run dry run' }),
+    jobs && !jobs.configured ? lsEl('div', { class: 'ls-banner', text: 'Publishing is not set up correctly: an administrator needs to check the publishing settings.' }) : null,
+    ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can run a dry run.' }) : nochg ? null : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-dry-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: lsStartDryRun, text: LS.jobBusy ? 'Starting...' : active ? 'A job is running...' : 'Run dry run' }),
     active ? lsEl('div', { class: 'ls-sub', text: 'This keeps running on the server if you close the page.' }) : null,
     latest ? jobTimeline(latest) : null,
-    jobs && jobs.jobs.length > 1 ? lsEl('details', { class: 'ls-jobs-older' }, lsEl('summary', { text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: j.kind.replace('_', ' ') + ' v' + j.draftVersion + ' attempt ' + j.attempt + ': ' + j.status + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null);
+    jobs && jobs.jobs.length > 1 ? lsEl('details', { class: 'ls-jobs-older' }, lsEl('summary', { text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: (j.kind === 'dry_run' ? 'dry run' : j.kind) + ', version ' + j.draftVersion + ': ' + (jobNoChange(j) ? 'no changes' : j.status === 'failed' ? 'did not complete' : j.status) + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null);
   const live = jobs && jobs.live; const stuck = jobs && jobs.mergedUnverified;
   const realActive = !!(active && isReal(active));
   const onSite = !live && !!(jobs && jobs.publishedOnWebsite);
@@ -780,17 +790,18 @@ function reviewContent() {
     lsEl('h3', { text: live ? 'Live on the website' : onSite ? 'Publish update' : 'Approve and publish' }),
     stuck && !(active && isReal(active)) ? lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'Merged, not yet confirmed live. The last publication merged into the website but the live page could not be verified. It is not shown as Live. Use the button below to re-check it.') : null,
     live ? lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Verified on the website ', when(live.since), live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open the live page' })] : null) : null,
-    onSite ? lsEl('div', { class: 'ls-banner', id: 'ls-on-website', role: 'status' }, 'This listing is already on the website. Publishing sends your saved changes as an update and keeps the existing page address. It shows as Live here once the update has been checked.') : null,
+    onSite && !nochg ? lsEl('div', { class: 'ls-banner', id: 'ls-on-website', role: 'status' }, 'This listing is already on the website. Publishing sends your saved changes as an update and keeps the existing page address. It shows as Live here once the update has been checked.') : null,
     lsEl('p', { class: 'ls-sub', text: live || onSite ? 'Changes saved after publishing are not public until you publish an update. The live page keeps showing the last verified version until the update has been checked.'
       : 'Publishing makes this exact saved version public. The images are copied to the public store, a pull request with only this listing is checked and merged, and the listing shows as Live here only after the live page, its images and the catalogue have been checked. If anything fails, the current website is left untouched.' }),
-    ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
+    nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-no-changes', role: 'status' }, 'No changes to publish. This listing already matches what is on the website. Edit and save the draft when something needs to change.')
+      : ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
       : LS.confirmPublish ? lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm publication' },
         lsEl('p', null, lsEl('strong', { text: live || onSite ? 'Publish this version as an update to the live listing?' : 'Publish this listing to the live website?' }), ' It will be visible to the public once checked.'),
         lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-confirm', onclick: lsStartPublish, text: 'Yes, publish' }), ' ',
         lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-publish-cancel', onclick: () => { LS.confirmPublish = false; lsRefreshReview(); }, text: 'Cancel' }))
       : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: () => { LS.confirmPublish = true; lsRefreshReview(); },
         text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'A job is running.' : verb }),
-    !ro && !startable ? lsEl('div', { class: 'ls-sub', text: 'Finish the items above first.' }) : null);
+    !ro && !nochg && !startable ? lsEl('div', { class: 'ls-sub', text: 'Finish the items above first.' }) : null);
   return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' },
     lsEl('div', { class: 'ls-banner' }, 'Review the final listing, optionally run the dry run, then publish. This screen shows the saved draft.'),
     lsEl('ul', { class: 'ls-check ls-rv-check' }, checklist.map(([t, ok]) => lsEl('li', { class: ok ? 'ok' : 'no' }, lsEl('span', { 'aria-hidden': 'true', text: ok ? '✓' : '○' }), ' ', t))),
@@ -811,9 +822,12 @@ function jobTimeline(j) {
   });
   const res = j.result; const issues = (failedStep && failedStep.detail && failedStep.detail.issues) || [];
   const checks = (res && res.checks) || (failedStep && failedStep.detail && failedStep.detail.checks) || [];
+  if (jobNoChange(j)) return lsEl('div', { class: 'ls-job', id: 'ls-job', 'data-status': 'no_changes' },
+    lsEl('div', null, badge('No changes', 'ls-badge-muted'), ' ', lsEl('span', { class: 'ls-sub', text: 'Version ' + j.draftVersion + ', checked by ' + j.requestedBy.split('@')[0] + ' ' + when(j.createdAt) })),
+    lsEl('div', { class: 'ls-banner', role: 'status' }, 'No changes to publish. This version is identical to what is on the website, so there was nothing to check.'));
   return lsEl('div', { class: 'ls-job', id: 'ls-job', 'data-status': j.status },
     lsEl('div', null, badge(j.status === 'succeeded' ? (real ? (j.result && j.result.live ? 'Live' : 'Finished') : 'Dry run passed') : j.status === 'failed' ? 'Failed' : j.status === 'cancelled' ? 'Cancelled' : (real ? 'Publishing' : 'Running'), j.status === 'succeeded' ? 'ls-badge-live' : j.status === 'failed' ? 'ls-badge-bad' : 'ls-badge-warn'),
-      ' ', lsEl('span', { class: 'ls-sub', text: 'v' + j.draftVersion + ', attempt ' + j.attempt + ', started by ' + j.requestedBy.split('@')[0] + ' ' + when(j.createdAt) }),
+      ' ', lsEl('span', { class: 'ls-sub', text: 'Version ' + j.draftVersion + ', started by ' + j.requestedBy.split('@')[0] + ' ' + when(j.createdAt) }),
       j.runUrl && /^https:\/\/github\.com\//.test(j.runUrl) ? [' ', lsEl('a', { class: 'ls-link', href: j.runUrl, target: '_blank', rel: 'noopener noreferrer', text: 'GitHub run' })] : null),
     lsEl('ol', { class: 'ls-tl-list' }, rows),
     j.status === 'succeeded' && !real ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
@@ -821,16 +835,33 @@ function jobTimeline(j) {
     j.status === 'failed' && real && res && res.merged ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, 'The change was merged into the website, but the live page has not been confirmed. The listing is not shown as Live. Press publish again to re-check: nothing is redone.') : null,
     j.status === 'failed' && real && !(res && res.merged) ? lsEl('div', { class: 'ls-banner' }, 'Nothing was merged: the website that visitors see is unchanged. You can try again; repeating is safe.') : null,
     j.error ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, errText(j.error)) : null,
+    j.error ? lsEl('details', { class: 'ls-tech' }, lsEl('summary', { text: 'Technical details (for an administrator)' }), lsEl('div', { class: 'ls-sub', text: 'Code: ' + j.error.code + (j.attempt > 1 ? ', attempt ' + j.attempt : '') + (j.error.message ? '. ' + j.error.message : '') })) : null,
     issues.length ? lsEl('ul', { class: 'ls-ferr ls-job-issues' }, issues.map((m) => lsEl('li', { text: plainIssue(m) }))) : null,
     checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : (real ? 'Problem: ' : 'Would stop: ')) + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,
     !real && res && res.wouldBlock && res.wouldBlock.length ? lsEl('div', { class: 'ls-banner' }, 'A real publication would currently stop on: ' + res.wouldBlock.map((x) => x.replace(/_/g, ' ')).join(', ') + '.') : null);
 }
+/* Plain words for staff. The technical code and GitHub's message stay on the job (and in the audit log) and are shown under "Technical details". */
 const ERR_TEXT = {
-  dispatch_failed: 'GitHub could not start the job.', workflow_ended: 'The GitHub run ended without reporting a result.', no_report: 'The job finished but its result never reached the app.', timed_out: 'The job did not finish in time.',
-  engine_refused: 'The website publication engine would not publish this content.', parity_failed: 'The proposed page differs from what was approved.', tests_failed: 'The website test suite failed.', build_failed: 'The build or the privacy scan failed.',
-  media_failed: 'The images could not be prepared for the public store.', media_missing: 'An approved image is not on the public store.', checks_failed: 'The required website checks did not pass, so nothing was merged.',
-  merge_refused: 'GitHub\'s branch rules did not allow the merge, so nothing was published.', deploy_failed: 'The production deployment did not succeed.', verify_failed: 'The live website does not show the listing correctly yet.',
-  wrong_mode: 'This listing needs a different kind of publication (first publication or update).', unexpected_files: 'The publication would have changed more than this listing, so it was stopped.',
-  not_configured: 'The job is missing configuration.', manifest_invalid: 'The photograph list is not valid.', property_not_found: 'The property was not found in Notion.', mode_not_enabled: 'This mode is not enabled.', payload_mismatch: 'The job did not match the request.',
+  dispatch_failed: 'The publication could not be started. Nothing was published. Try again shortly.',
+  workflow_ended: 'The publication stopped before it reported back. Try again: repeating is safe.',
+  no_report: 'The publication finished, but its result did not reach this page. Press the publish button again to check it: nothing is repeated.',
+  timed_out: 'The publication took too long and was stopped. Try again: repeating is safe.',
+  engine_refused: 'The website did not accept this content for publication. See the points below.',
+  parity_failed: 'The page the website prepared did not match what you approved, so nothing was published.',
+  tests_failed: 'The website\'s own safety checks failed, so nothing was published. An administrator needs to look at this.',
+  build_failed: 'The website could not be built with this listing, or the privacy check found a problem. Nothing was published.',
+  media_failed: 'The photographs could not be prepared for the website. Nothing was published. Try again.',
+  media_missing: 'An approved photograph was not found on the website\'s image store. Nothing was published. Try again.',
+  checks_failed: 'The website\'s required checks did not pass, so nothing was published.',
+  merge_refused: 'The website\'s protection rules blocked the change, so nothing was published. An administrator needs to look at this.',
+  deploy_failed: 'The website did not finish updating. Press the publish button again to check it.',
+  verify_failed: 'The change reached the website, but the live page does not show it correctly yet. Press the publish button again in a few minutes to check it.',
+  wrong_mode: 'The portal asked for the wrong kind of publication for this listing. Reload the page and try again.',
+  unexpected_files: 'The publication would have changed more than this listing, so it was stopped. Nothing was published. An administrator needs to look at this.',
+  not_configured: 'Publishing is not set up correctly. An administrator needs to check the publishing settings.',
+  manifest_invalid: 'The photograph list could not be read. Check the photographs in the draft and try again.',
+  property_not_found: 'The property record could not be found. An administrator needs to look at this.',
+  mode_not_enabled: 'This action is not available.',
+  payload_mismatch: 'The request did not match what was approved, so nothing was published. Reload the page and try again.',
 };
-const errText = (e) => (ERR_TEXT[e.code] || 'The job failed.') + (e.message ? ' ' + e.message : '');
+const errText = (e) => ERR_TEXT[e.code] || 'The publication did not complete. Try again, and if it keeps happening ask an administrator.';
