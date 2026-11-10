@@ -12,12 +12,13 @@ import { photoReadiness, photoView, photosForRules, streetOf } from './photos.js
 const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
 
 const sameContent = (a, b) => ['title', 'description', 'publicAddress', 'pricingMode', 'displayPrice', 'featured'].every((k) => (a?.[k] ?? '') === (b?.[k] ?? ''));
-const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
-const needNotion = (cfg) => { if (!cfg.notion) throw new HttpError(503, 'notion_not_configured'); return cfg.notion; };
+export const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
+export const needNotion = (cfg) => { if (!cfg.notion) throw new HttpError(503, 'notion_not_configured'); return cfg.notion; };
 
-async function context(cfg, prop, { fetchImpl }) {
+export async function context(cfg, prop, { fetchImpl }) {
   const [snaps, comp] = await Promise.all([loadSnapshots(cfg, { fetchImpl }).catch(() => null), loadCompliance(cfg, { fetchImpl })]);
-  const taken = new Set(snaps ? [...snaps.approved.values()].map((s) => s.slug) : []);
+  // a slug already used by ANOTHER listing is taken; the listing's own published slug is not (otherwise its draft would preview a suffixed address)
+  const taken = new Set(snaps ? [...snaps.approved.values()].filter((s) => s.listingId !== prop.facts.id).map((s) => s.slug) : []);
   return {
     publicId: prop.facts.id, internal: prop.internal, crmState: prop.facts.state,
     designCategories: prop.facts.designCategories.map((d) => DESIGN_TO_WEBSITE[d]).filter(Boolean), buildType: prop.facts.buildType,

@@ -64,6 +64,22 @@ export async function loadSnapshots(cfg, { fetchImpl = fetch, now = Date.now, tt
 }
 export const clearSnapshotCache = () => { cache = null; };
 
+/**
+ * The ONE approved snapshot of a listing, in full (content, photographs and content hash), read from the website repository. Used only to adopt a
+ * listing that is already published. Looks at <slug>.json first (the name the publication job always writes), then at every approved file.
+ * Returns null when no approved file carries that listing id. Never trusted: the caller checks the hash and the schema.
+ */
+export async function loadApprovedSnapshot(cfg, listingId, { fetchImpl = fetch, slug = null } = {}) {
+  const files = await listDir(cfg, 'src/data/listings/approved', fetchImpl);
+  const ordered = [...files.filter((f) => slug && f.name === `${slug}.json`), ...files.filter((f) => !(slug && f.name === `${slug}.json`))];
+  for (const f of ordered) {
+    const raw = await readJson(cfg, f, fetchImpl);
+    if (raw?.listingId === listingId) return raw;
+  }
+  return null;
+}
+
+
 export const listingUrl = (cfg, slug) => (SLUG_RE.test(slug) ? `${cfg.siteBase}/opportunities/${slug}/` : null);
 
 /** live: 200. not_live: 404/410. unknown: anything else, or the request failed. */

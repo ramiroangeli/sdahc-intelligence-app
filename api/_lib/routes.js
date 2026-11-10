@@ -2,6 +2,7 @@
 import { loadDataConfig } from './config.js';
 import { draftsConfigured, getDb } from './db.js';
 import { createDraftFor, draftSummary, openDraft, pickerFor, saveDraftFor, verifyDraftFor } from './draft-service.js';
+import { importPublishedFor } from './import-published.js';
 import { listDrafts, discardDraft } from './drafts-repo.js';
 import { audit } from './audit.js';
 import { buildListings } from './listings-service.js';
@@ -57,6 +58,19 @@ export const draftRoute = guardedRoute({
     const actor = actorOf(session);
     if (req.method === 'GET') return openDraft({ ...base, id: queryOf(req).id });
     const body = await readJson(req);
+    if (req.method === 'POST' && body?.importPublished === true) {
+      // adopting an already published listing is a Publisher's decision (and needs Editor to hold the draft): same endpoint, no new function
+      const env = deps.env ?? process.env;
+      try {
+        if (!hasCapability(session.staff, C.PUBLISH)) throw new HttpError(403, 'forbidden');
+        const out = await importPublishedFor({ ...base, propertyId: body?.propertyId, actor, deps, env });
+        audit({ action: out.alreadyImported ? 'listings.draft.import.existing' : 'listings.draft.import', outcome: 'ok', actor, detail: { id: out.draft.id, ...(out.imported ? { fromVersion: out.imported.fromVersion, photos: out.imported.photos, files: out.imported.files } : {}) } });
+        return out;
+      } catch (e) {
+        audit({ action: 'listings.draft.import', outcome: 'failed', actor, detail: { id: typeof body?.propertyId === 'string' ? body.propertyId : null, code: e?.code ?? 'error', status: e?.status ?? null } });
+        throw e;
+      }
+    }
     if (req.method === 'POST') {
       const out = await createDraftFor({ ...base, propertyId: body?.propertyId, actor });
       audit({ action: 'listings.draft.create', outcome: 'ok', actor, detail: { id: out.draft.id } });
