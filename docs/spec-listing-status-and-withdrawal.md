@@ -1,6 +1,6 @@
 # Listing status and withdrawal: functional specification
 
-Status: **for review. Nothing in this document is built.** Prepared 10 Nov 2026 from the code of both repositories at their `main`.
+Status: **for review. Nothing in this document is built, and it is not yet approved.** Prepared 10 Nov 2026 from the code of both repositories at their `main`. Revised 10 Nov 2026 after review: **withdrawal reasons are private and are never committed to the public website repository** (sections 4, 6, 7 and 9).
 
 ## 1. Summary
 
@@ -22,7 +22,7 @@ Two ideas drive the design:
 | A passed `listingEndDate` hides the listing, but only when the site is next built (the site is static) | `versioning.ts` `resolveListing` |
 | The database already allows the job kind `withdraw` (check constraint), but not `reinstate`. The app has no code for either | migration 0004, `ENABLED_KINDS` |
 | The app never deletes from the public image store. After a withdrawal the image files stay reachable by URL | `public-media.js` |
-| The withdrawal reason is committed to a **public** repository (max 120 characters, no personal data) | runbook 6 |
+| Today the command-line withdrawal commits a free-text reason and a person's name to the **public** website repository (limited to 120 characters). This is the behaviour the portal must **not** copy | `listings-sync.mjs`, `schema.ts` `Withdrawal` |
 
 ## 3. Definitions and states
 
@@ -50,6 +50,7 @@ Two ideas drive the design:
 - Withdrawn is derived from the website itself (the `withdrawn/` folder, which the portal already reads), and Live from verified jobs, as today.
 - **Notion is not written.** If the CRM disagrees with the website (for example Notion says Under offer, the website says Available) the portal shows a neutral, read-only line: "The CRM says Under offer; the website says Available." It is information, never an error and never a block.
 - Existing listings (Sheppard Street, Rutherford Grove) are already portal-managed: their current website status is the starting value.
+- **Privacy boundary (required).** The website repository, its pull requests, commit messages, Actions logs and the deployed site are public. A withdrawal reason, and the name of the person who withdrew, therefore **never leave the Listings Manager**. They live only in the private operational audit trail (section 7). The public side learns only that the listing is withdrawn, when, and by "SDA Home Choices".
 
 ## 5. The four actions
 
@@ -71,14 +72,14 @@ Principle: the more public and the less reversible, the more deliberate the step
 
 **Tier 3, Withdraw.** Publisher only, and always:
 1. The screen lists what will disappear (page address, catalogue entry, sitemap entry) and what will not (photographs stay reachable by URL; search engines may cache).
-2. A **reason is required**, short, with no names, phone numbers, emails or amounts, because it is written to a public repository. The portal checks these rules with the same privacy checks used for descriptions.
+2. A **reason is required** (free text, up to 300 characters). It is stored **only in the private audit trail** and is shown only to Publishers and Administrators in the portal. It is never sent to GitHub or the website. Because it is private it may be candid, but the screen still says not to paste personal data that is not needed.
 3. The person **types the property's public address** to confirm (the pattern used for destructive actions elsewhere).
 4. It runs through the normal lifecycle (pull request, required check, merge, deployment) and shows as Withdrawn only after the website returns 404 for the page and the sitemap and catalogue no longer list it.
 5. Two-person rule: **recommended off by default**, because it blocks an urgent takedown when only one Publisher is available. If you want it, the second Publisher approves in the portal before the job starts (decision 1).
 
 **Tier 3, Reinstate.** Publisher only. Typed address. Because content, compliance or photographs may have changed since, it runs the full publication checks. It returns at the status chosen on the screen (default: Available).
 
-Everything is recorded: who, when, the version and the reason, in the job record and the audit log; the withdrawal file itself carries the public-safe reason. There is no "delete" for listings.
+Everything is recorded **privately**: who, when, the version and the reason, in the private audit trail and the job record. The public withdrawal file carries no reason and no person's name. There is no "delete" for listings.
 
 ## 7. Technical design (smallest change)
 
@@ -89,11 +90,19 @@ Reuses the proven path: portal freezes a payload, copies nothing new for status 
 - Website job: apply the payload's status and end date; accept the engine's `status` kind as a valid `update` (today it answers `wrong_mode`). Parity check gains the two fields.
 
 **Withdraw and reinstate.**
-- Job kind `withdraw` already exists in the database. The payload carries `action: "withdraw" | "reinstate"` and the reason. Using one kind for both avoids a migration. The alternative is a small migration widening the check to add `reinstate`, which needs your approval (decision 5).
-- Website job (new branch of the same script): withdraw writes `withdrawn/<id>.json` (the same file the CLI writes) in a one-file pull request; reinstate removes it. The job verifies the page returns 404, the sitemap and catalogue do not list it (and the opposite for reinstate), using the existing live-verification helpers. The CLI stays as the emergency path.
+- Job kind `withdraw` already exists in the database. The payload carries `action: "withdraw" | "reinstate"` and **no reason**. Using one kind for both avoids a migration. The alternative is a small migration widening the check to add `reinstate`, which needs your approval (decision 5).
+- Website job (new branch of the same script): withdraw writes `withdrawn/<id>.json` in a one-file pull request, with only the listing id, the time, `withdrawnBy: "SDA Home Choices"` and the fixed neutral reason `"withdrawn"` (the file format is unchanged, so the build and `check:withdrawal` keep working); reinstate removes it. The job verifies the page returns 404, the sitemap and catalogue do not list it (and the opposite for reinstate), using the existing live-verification helpers. The CLI stays as the emergency path.
 - Reinstate runs the existing publication engine and checks.
 
 **Portal state and screens.** The review screen gains a "Listing status" card (segmented choice, optional end date) and, separately and visually distinct, "Withdraw this listing". Withdrawn listings show "Withdrawn" with a "Reinstate" action. Editing a withdrawn draft is allowed; publishing is blocked until it is reinstated. No redesign: these are new cards in the existing layout.
+
+**Where the private reason lives (decision 6).** It must be durable, private and append-only, and must not travel with the job payload (the website job downloads the payload, and the website is public). Two options:
+- **Recommended: a private `listings.audit_log` table** (the app's audit module was designed for it). Append-only like the draft history: columns for time, actor, action (status change, withdraw, reinstate), listing, draft version, job id, reason. The same grants and row-level security as the other `listings` tables, no delete. This needs **a migration, which needs your explicit approval**.
+- **Interim without a migration:** record the reason as a staff note on the draft (the draft's private `notes` and history, already durable and versioned), created as already resolved so it does not block publication. Weaker (mixed with verification notes), but private.
+
+**Nothing reaches a public surface.** The reason is excluded from: the workflow dispatch inputs (already only the job id, listing id and mode), the signed payload the website job downloads, the pull request title and body, the commit message, the withdrawn file, the job's step names and callback details, the Actions log, and the audit lines written to the function log. The portal shows it only to Publishers and Administrators.
+
+**The emergency command-line path** (`npm run listings:withdraw`) currently commits a free-text reason and a name to the public repository. The same rule should apply there: change it to write the neutral file and print a reminder to record the reason privately. This is a small website change in the same slice as withdrawal.
 
 **Not changed.** Notion (never written), the ruleset, the GitHub App permissions (already contents and pull requests write), the 12-function limit (new actions use the existing publish endpoint).
 
@@ -103,8 +112,9 @@ Identical to publication: a failure before the merge changes nothing and can be 
 
 ## 9. Testing plan
 
-- Unit and flow tests against the fake GitHub, Notion and database for: each state transition and the transitions that must be refused (publish while withdrawn, reinstate while public, withdraw twice); Publisher only; Editors and Viewers refused; the reason's privacy checks; typed-address confirmation; idempotency (two clicks, two tabs); stale tab (version check); failure injection at each job step; Live and Withdrawn only after verification.
-- Website tests: the job's new branches (status kind accepted for update, withdraw and reinstate pull requests touching exactly one file, parity on the new fields), and the existing `check:withdrawal` run on the built output.
+- Unit and flow tests against the fake GitHub, Notion and database for: each state transition and the transitions that must be refused (publish while withdrawn, reinstate while public, withdraw twice); Publisher only; Editors and Viewers refused; the reason is required, length-limited and stored privately; typed-address confirmation; idempotency (two clicks, two tabs); stale tab (version check); failure injection at each job step; Live and Withdrawn only after verification.
+- Privacy tests (both repositories): a sentinel reason string is entered in a withdrawal and a test proves it does not appear in the dispatch request, the payload served to the website job, the pull request title or body, the commit message, the withdrawn file, any job step or callback, or any log line; and that it does appear in the private audit record.
+- Website tests: the job's new branches (status kind accepted for update, withdraw and reinstate pull requests touching exactly one file with the neutral reason, parity on the new fields), and the existing `check:withdrawal` run on the built output.
 - No real listing is withdrawn or changed in testing. The first real use is on a listing you choose, with you watching.
 
 ## 10. Effort and risk
@@ -124,6 +134,7 @@ Recommended order: 1, then 2, then 3. Each is its own pull request in each repos
 3. **Public photographs on withdrawal:** leave them reachable by URL (current rule: the app never deletes), or add an explicit Administrator "remove public photographs" step after a withdrawal?
 4. **End dates:** (a) store the date and take effect at the next deployment only (simplest), (b) also show a portal reminder "ended but still live" (recommended), or (c) add a scheduled daily rebuild (new infrastructure, not recommended now).
 5. **Reinstate job kind:** reuse `withdraw` with an `action` field (no migration, recommended) or widen the database check with a migration?
-6. **Who may change status:** Publishers only (recommended), or may an Editor also move Available and Under offer?
-7. **Sold wording:** confirm what the public page and the enquiry form should do for a Sold listing (this is a website decision; the portal only sets the status).
-8. **Reason text:** is a free-text reason acceptable (checked for personal data), or should it be a short list (vendor request, sold elsewhere, error, compliance)?
+6. **Private audit trail:** a new append-only `listings.audit_log` table with a migration (recommended, needs your approval), or the interim draft-note approach?
+7. **Who may change status:** Publishers only (recommended), or may an Editor also move Available and Under offer?
+8. **Sold wording:** confirm what the public page and the enquiry form should do for a Sold listing (this is a website decision; the portal only sets the status).
+9. **Reason format:** free text, private (recommended, up to 300 characters), or a short list (vendor request, sold elsewhere, error, compliance) plus an optional private note?
