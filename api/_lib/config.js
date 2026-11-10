@@ -66,24 +66,21 @@ export function loadDataConfig(env = process.env) {
 
 /**
  * What publication jobs need. All server-side secrets. Missing or weak means publishing answers 503 and does nothing.
- * How the portal proves itself to GitHub when it starts the workflow: LISTINGS_GITHUB_AUTH=token (default, the personal token, kept until the
- * App is proven) or =app (the GitHub App: LISTINGS_GITHUB_APP_ID, LISTINGS_GITHUB_APP_INSTALLATION_ID, LISTINGS_GITHUB_APP_PRIVATE_KEY).
+ * The portal proves itself to GitHub with the GitHub App ("SDAHC Listings Publisher"): LISTINGS_GITHUB_APP_ID, LISTINGS_GITHUB_APP_INSTALLATION_ID and
+ * LISTINGS_GITHUB_APP_PRIVATE_KEY. There is no personal access token path: LISTINGS_GITHUB_DISPATCH_TOKEN is never read.
+ * LISTINGS_GITHUB_AUTH is no longer a switch. It may still be set to "app" (the value Production already has); anything else fails closed so a
+ * stale "token" setting can never be mistaken for a working configuration.
  */
 export function loadPublishConfig(env = process.env) {
-  const authMode = (val(env, 'LISTINGS_GITHUB_AUTH') || 'token').toLowerCase();
-  if (!['token', 'app'].includes(authMode)) throw new ConfigError('LISTINGS_GITHUB_AUTH must be "token" or "app"');
-  const githubToken = val(env, 'LISTINGS_GITHUB_DISPATCH_TOKEN');
+  const legacy = val(env, 'LISTINGS_GITHUB_AUTH').toLowerCase();
+  if (legacy && legacy !== 'app') throw new ConfigError('LISTINGS_GITHUB_AUTH is no longer used: GitHub App authentication is the only method. Remove it or set it to "app".');
   const callbackSecret = val(env, 'LISTINGS_CALLBACK_SECRET');
   const missing = [];
-  if (authMode === 'token' && !githubToken) missing.push('LISTINGS_GITHUB_DISPATCH_TOKEN');
   if (callbackSecret.length < 32) missing.push('LISTINGS_CALLBACK_SECRET (at least 32 characters)');
+  const githubApp = loadAppConfig(env);
+  if (!githubApp) missing.push('LISTINGS_GITHUB_APP_ID, LISTINGS_GITHUB_APP_INSTALLATION_ID, LISTINGS_GITHUB_APP_PRIVATE_KEY');
   if (missing.length) throw new ConfigError(`missing configuration: ${missing.join(', ')}`);
-  let githubApp = null;
-  if (authMode === 'app') {
-    githubApp = loadAppConfig(env);
-    if (!githubApp) throw new ConfigError('missing configuration: LISTINGS_GITHUB_APP_ID, LISTINGS_GITHUB_APP_INSTALLATION_ID, LISTINGS_GITHUB_APP_PRIVATE_KEY');
-  }
   const workflow = val(env, 'LISTINGS_PUBLISH_WORKFLOW') || 'publish-listing.yml';
   if (!/^[\w.-]+\.ya?ml$/.test(workflow)) throw new ConfigError('LISTINGS_PUBLISH_WORKFLOW must be a workflow file name');
-  return { authMode, githubToken: authMode === 'token' ? githubToken : '', githubApp, callbackSecret, workflow };
+  return { githubApp, callbackSecret, workflow };
 }

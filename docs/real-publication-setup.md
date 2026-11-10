@@ -4,12 +4,13 @@ Do these in order. Each step says what it changes and how to confirm it.
 
 ## 1. Website repository (ramiroangeli/sdahc-website)
 1. Merge the website pull request that adds `ci.yml` and the publish/update modes. It must be on `main` before anything below.
-2. Settings > Actions > General > Workflow permissions: leave "Read repository contents and packages permissions". Tick **Allow GitHub Actions to create and approve pull requests**, then Save. (The publish workflow declares its own narrow permissions; this tick only lets its token open the pull request.)
+2. Settings > Actions > General > Workflow permissions: leave "Read repository contents and packages permissions". (The publish workflow declares its own narrow permissions, and the publication pull request is opened by the GitHub App, so "Allow GitHub Actions to create and approve pull requests" is not needed.)
 3. Optional, Settings > Secrets and variables > Actions > Variables: `LISTINGS_SITE_URL` = `https://sdahomechoices.com.au` (this is already the default).
 4. Apply the branch rules (after step 1): Settings > Rules > Rulesets > New ruleset > Import a ruleset > choose `docs/github-ruleset-main.json`, or from a terminal logged in as the owner:
    `gh api -X POST repos/ramiroangeli/sdahc-website/rulesets --input docs/github-ruleset-main.json`
    Result: `main` needs a pull request with the check `site-checks` passing, allows squash merges only, blocks force pushes and deletion, and has **no bypass list**. From then on even the owner changes `main` only through a pull request (open a pull request, wait for `site-checks`, merge).
-   Pull requests opened by the existing `listings-sync` workflow do not start `site-checks` by themselves (GitHub does not start workflows for the workflow token): run Actions > CI > Run workflow on that branch, then merge.
+   Pull requests opened with the workflow token never start `site-checks` by themselves (GitHub does not start workflows for that token). That is why publication uses the GitHub App below: its pull request starts the check normally. A manual run of the CI workflow never satisfies the rule.
+5. Optional: Settings > General > Pull Requests > tick **Automatically delete head branches**, so a merged publication branch does not linger.
 
 ## 2. Public image store connection (Vercel, project sdahc-intelligence-app)
 The public store `sdahc-website-blob` is connected only to the website. Connect it to the app as a SECOND store, next to the private one, without touching the private store's `BLOB_STORE_ID`:
@@ -20,8 +21,33 @@ The public store `sdahc-website-blob` is connected only to the website. Connect 
 5. Redeploy production (Deployments > latest > Redeploy) so the variable reaches the functions.
 6. Confirm: `vercel env pull .env.check --environment=production && node --env-file=.env.check scripts/check-public-blob.mjs --write` (from the app folder) should print `READ OK` and `WRITE OK`. Delete `.env.check` afterwards.
 
-## 3. App
-Merge the app pull request. It deploys to production on merge. `LISTINGS_GITHUB_DISPATCH_TOKEN` and `LISTINGS_CALLBACK_SECRET` stay as they are.
+## 3. GitHub App ("SDAHC Listings Publisher")
+One App does everything the workflow and the portal need on GitHub. It replaces the former personal access token, which no longer exists in the code.
+1. Create it under the owner account (Settings > Developer settings > GitHub Apps). Webhook: off. Repository permissions, nothing else: **Actions: Read and write**, **Contents: Read and write**, **Pull requests: Read and write**, **Checks: Read-only**, **Deployments: Read-only**, Metadata: Read-only.
+2. Install it on **only** `ramiroangeli/sdahc-website` (Only select repositories).
+3. Website repository, Actions secrets: `LISTINGS_APP_ID` (the App id) and `LISTINGS_APP_PRIVATE_KEY` (the full PEM including the BEGIN and END lines). The workflow uses them to open and merge the publication pull request.
+4. Vercel project, Production, Sensitive: `LISTINGS_GITHUB_APP_ID`, `LISTINGS_GITHUB_APP_INSTALLATION_ID` and `LISTINGS_GITHUB_APP_PRIVATE_KEY` (full PEM; escaped `\n` and base64 are also accepted). The portal uses them to start the workflow with a short-lived token limited to the website repository.
+5. Check it: signed in as an administrator, open `/api/listings/github-app-check` from the portal. It starts nothing and never shows a token.
+6. `LISTINGS_GITHUB_AUTH` is no longer a switch. It may stay set to `app`; any other value stops publishing with a clear configuration error. `LISTINGS_GITHUB_DISPATCH_TOKEN` is ignored and can be deleted.
+
+## 4. App
+Merge the app pull request. It deploys to production on merge.
+
+## 5. Protect `main` in this app repository (proposed, apply deliberately)
+Pushing to `main` of this repository deploys to production, where the publication credentials live, so `main` should only change through a reviewed pull request whose `test` check passed. `docs/github-ruleset-main.json` is the exact ruleset (the same shape as the website's):
+- pull request required (no approval count, so a single owner can still merge), required check `test` (the job in `.github/workflows/test.yml`), force-push and deletion blocked, merge or squash allowed, **no bypass list**;
+- normal work is unchanged: open a pull request, wait about two minutes for `test`, merge, and Vercel deploys as it does today. Vercel's own preview check is not required;
+- apply: `gh api -X POST repos/ramiroangeli/sdahc-intelligence-app/rulesets --input docs/github-ruleset-main.json`; remove: Settings > Rules > Rulesets > delete;
+- it also stops a direct push from editing `.github/workflows/sync.yml`, which runs with the Supabase service key.
+
+## Maintenance obligations
+| Item | Where | Expires | Action |
+|---|---|---|---|
+| GitHub App private key | App settings, Actions secret, Vercel | does not expire | rotate if it may have been exposed: generate a new key, replace both secrets, delete the old key |
+| `LISTINGS_CALLBACK_SECRET` | Vercel and website Actions | does not expire | rotate by setting both places to the same new value |
+| Microsoft sign-in (Azure client secret) | Supabase Auth > Azure provider | has an expiry date set in Azure | note the date in a calendar; sign-in stops for everyone when it lapses |
+| Staff access | `LISTINGS_STAFF_JSON` in Vercel | n/a | edit the list and redeploy to add or remove someone |
+
 
 ## What each part can and cannot do
 - The app copies only `lst_xxxxxxxxxx/<hash>-<width>.webp` and `lst_xxxxxxxxxx/manifest.json` to the public store (enforced in `api/_lib/public-media.js`); it never deletes there.
