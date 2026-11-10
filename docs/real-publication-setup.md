@@ -33,6 +33,13 @@ One App does everything the workflow and the portal need on GitHub. It replaces 
 ## 4. App
 Merge the app pull request. It deploys to production on merge.
 
+## 5. Protect `main` in this app repository (proposed, apply deliberately)
+Pushing to `main` of this repository deploys to production, where the publication credentials live, so `main` should only change through a reviewed pull request whose `test` check passed. `docs/github-ruleset-main.json` is the exact ruleset (the same shape as the website's):
+- pull request required (no approval count, so a single owner can still merge), required check `test` (the job in `.github/workflows/test.yml`), force-push and deletion blocked, merge or squash allowed, **no bypass list**;
+- normal work is unchanged: open a pull request, wait about two minutes for `test`, merge, and Vercel deploys as it does today. Vercel's own preview check is not required;
+- apply: `gh api -X POST repos/ramiroangeli/sdahc-intelligence-app/rulesets --input docs/github-ruleset-main.json`; remove: Settings > Rules > Rulesets > delete;
+- it also stops a direct push from editing `.github/workflows/sync.yml`, which runs with the Supabase service key.
+
 ## Maintenance obligations
 | Item | Where | Expires | Action |
 |---|---|---|---|
