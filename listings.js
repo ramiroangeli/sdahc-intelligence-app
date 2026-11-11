@@ -144,46 +144,69 @@ function paintList(root) {
     lsEl('div', { class: 'ls-foot', text: 'Generated ' + new Date(d.generatedAt).toLocaleString('en-AU') + '.' })));
 }
 
-/* ------------------------------------------------------------------ property picker */
+/* ------------------------------------------------------------------ Add listing */
+/* One entry point. Search runs on the server across EVERY property in the CRM and pages through the matches. Each match says what will happen:
+   a new property starts a draft, one with a draft opens it, one that is already live is brought in automatically, a withdrawn one is unavailable. */
+const PICKER_KIND = {
+  new: ['New listing', 'ls-badge-draft'], draft: ['Has a draft: it will open', 'ls-badge-notion'], live: ['Already live: it will be brought in', 'ls-badge-live'], withdrawn: ['Withdrawn: cannot be added', 'ls-badge-bad'],
+};
+const lsCanBringIn = () => !!(LS.me && LS.me.canEdit && LS.me.canPublish);
+/** Can this match be chosen, and why not. Pure. */
+function lsPickerChoice(p, me) {
+  if (p.kind === 'withdrawn') return { ok: false, why: 'This property was withdrawn from public marketing. It cannot be added again here: ask an administrator.' };
+  if (p.unnamed) return { ok: false, why: 'This CRM record has no address yet. Add one in the CRM first.' };
+  if (p.kind === 'live' && !(me && me.canEdit && me.canPublish)) return { ok: false, why: 'This property is already live. A Publisher with edit access needs to bring it in.' };
+  return { ok: true, why: p.kind === 'draft' ? 'This property already has a draft. Continuing opens it.' : p.kind === 'live' ? 'This property is already on the website. Continuing opens its details so you can edit it and publish changes. Nothing on the website changes until you publish.' : 'Continuing starts a draft. Nothing goes on the website until you publish.' };
+}
+async function lsFetchPicker(append) {
+  const offset = append && LS.picker ? LS.picker.items.length : 0;
+  const q = '/api/listings/properties?q=' + encodeURIComponent(LS.pickerQ) + '&offset=' + offset + '&limit=25';
+  const r = await lsApi('GET', q);
+  LS.picker = { items: (append && LS.picker ? LS.picker.items : []).concat(r.properties), total: r.total, hasMore: r.hasMore };
+}
 async function lsLoadPicker() {
-  LS.pickerError = null; LS.picker = LS.picker || null; lsPaint();
-  try { if (!LS.me) LS.me = await lsApi('GET', '/api/listings/me'); LS.picker = (await lsApi('GET', '/api/listings/properties?q=' + encodeURIComponent(LS.pickerQ))).properties; } catch (e) { LS.pickerError = e.status || 0; }
+  LS.pickerError = null; LS.picked = null; lsPaint();
+  try { if (!LS.me) LS.me = await lsApi('GET', '/api/listings/me'); await lsFetchPicker(false); } catch (e) { LS.pickerError = e.status || 0; }
   lsPaint();
+}
+async function lsPickerMore() {
+  try { await lsFetchPicker(true); } catch (e) { LS.pickerError = e.status || 0; }
+  lsPaint();
+}
+/** What the single Continue button does for the chosen match. */
+function lsPickerContinue() {
+  const p = LS.picker && LS.picker.items.find((x) => x.id === LS.picked);
+  if (!p || !lsPickerChoice(p, LS.me).ok) return;
+  if (p.kind === 'draft') lsGo('#/listings/draft/' + p.id); else lsCreate(p.id, p.kind === 'live');
 }
 
 function paintPicker(root) {
   if (LS.pickerError) { root.append(errorPanel(LS.pickerError, lsLoadPicker)); return; }
-  const search = lsEl('input', { type: 'search', class: 'ls-input', id: 'ls-search', placeholder: 'Search the CRM by address', value: LS.pickerQ, 'aria-label': 'Search properties',
-    oninput: (e) => { LS.pickerQ = e.target.value; clearTimeout(lsTimer); lsTimer = setTimeout(async () => { try { LS.picker = (await lsApi('GET', '/api/listings/properties?q=' + encodeURIComponent(LS.pickerQ))).properties; } catch (x) { LS.pickerError = x.status || 0; } lsPaintKeepFocus(); }, 350); } });
-  const rows = (LS.picker || []).map((p) => {
-    const asking = LS.confirm === p.id;
-    const canAdopt = p.onWebsite && !p.hasDraft && LS.me && LS.me.canEdit && LS.me.canPublish;
-    const action = canAdopt ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.confirm = p.id; lsPaint(); }, text: 'Import published listing' })
-      : p.onWebsite && p.hasDraft ? lsEl('a', { class: 'btn btn-secondary btn-sm', href: '#/listings/draft/' + p.id, text: 'Open draft' })
-      : p.onWebsite ? badge('Already on website', 'ls-badge-live')
-      : p.hasDraft ? lsEl('a', { class: 'btn btn-secondary btn-sm', href: '#/listings/draft/' + p.id, text: 'Open draft' })
-      : lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => { LS.confirm = p.id; lsPaint(); }, text: 'Create draft' });
-    const tr = lsEl('tr', null,
-      lsEl('td', null, lsEl('div', { class: 'ls-name', text: p.name }), lsEl('div', { class: 'ls-sub', text: [p.state, p.designCategories.join(', '), p.buildType].filter(Boolean).join(' · ') })),
-      lsEl('td', null, badge(p.notionStatus, 'ls-badge-notion')), lsEl('td', null, action));
-    if (!asking) return [tr];
-    return [tr, lsEl('tr', { class: 'ls-confirm-row' }, lsEl('td', { colspan: '3' }, lsEl('div', { class: 'ls-confirm' },
-      lsEl('strong', { text: (p.onWebsite ? 'Import the published listing for ' : 'Create a website draft for ') + p.name + '?' }),
-      lsEl('span', { text: p.onWebsite ? ' This copies the listing exactly as it is on the website, with its photographs, into a draft you can then edit and publish as an update. The website and the Notion record are not changed.' : ' Check the house or unit number: a neighbouring property may look the same. The Notion record is not changed.' }),
-      lsEl('div', { class: 'ls-actions' },
-        lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-confirm-create', onclick: () => lsCreate(p.id, p.onWebsite), text: p.onWebsite ? 'Yes, import it' : 'Yes, create draft' }),
-        lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.confirm = null; lsPaint(); }, text: 'Cancel' })))))];
+  const pk = LS.picker; const items = pk ? pk.items : [];
+  const chosen = items.find((x) => x.id === LS.picked) || null; const choice = chosen ? lsPickerChoice(chosen, LS.me) : null;
+  const search = lsEl('input', { type: 'search', class: 'ls-input', id: 'ls-search', placeholder: 'Start typing an address, for example 12 Wattle', value: LS.pickerQ, 'aria-label': 'Search properties in the CRM', autocomplete: 'off',
+    oninput: (e) => { LS.pickerQ = e.target.value; clearTimeout(lsTimer); lsTimer = setTimeout(async () => { try { await lsFetchPicker(false); LS.picked = null; } catch (x) { LS.pickerError = x.status || 0; } lsPaintKeepFocus(); }, 300); } });
+  const rows = items.map((p) => {
+    const c = lsPickerChoice(p, LS.me); const [label, cls] = PICKER_KIND[p.kind] || PICKER_KIND.new;
+    return lsEl('label', { class: 'ls-pick' + (LS.picked === p.id ? ' picked' : '') + (c.ok ? '' : ' off') },
+      lsEl('input', { type: 'radio', name: 'ls-pick', value: p.id, checked: LS.picked === p.id, disabled: !c.ok, onchange: () => { LS.picked = p.id; lsPaint(); } }),
+      lsEl('span', { class: 'ls-pick-main' }, lsEl('span', { class: 'ls-name', text: p.name }), lsEl('span', { class: 'ls-sub', text: [p.state, p.designCategories.join(', '), p.buildType].filter(Boolean).join(' · ') })),
+      badge(p.unnamed ? 'No address in the CRM' : label, p.unnamed ? 'ls-badge-muted' : cls));
   });
   root.append(lsEl('div', { class: 'panel' },
     lsEl('div', { class: 'panel-head' }, lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: 'Add listing' }),
-      lsEl('div', { class: 'panel-sub', text: 'Choose a property from the CRM. The CRM is never changed, and nothing goes on the website until you publish.' }))),
-    lsEl('div', { class: 'ls-pad' }, search),
+      lsEl('div', { class: 'panel-sub', text: 'Which property is this listing for? Properties come from the CRM. The CRM is never changed, and nothing goes on the website until you publish.' }))),
+    lsEl('div', { class: 'ls-pad' }, lsEl('label', { class: 'ls-label', for: 'ls-search', text: 'Search by address' }), search),
     LS.flash ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: LS.flash }) : null,
-    LS.picker == null ? lsEl('div', { class: 'ls-state', text: 'Loading properties...' })
-      : LS.picker.length === 0 ? lsEl('div', { class: 'ls-state', text: 'No properties match.' })
-      : lsEl('div', { class: 'table-wrap' }, lsEl('table', { class: 'deals-table ls-table' },
-          lsEl('thead', null, lsEl('tr', null, ['Property (CRM address)', 'CRM status', ''].map((h) => lsEl('th', { scope: 'col', text: h })))),
-          lsEl('tbody', null, rows)))));
+    pk == null ? lsEl('div', { class: 'ls-state', text: 'Loading properties...' })
+      : items.length === 0 ? lsEl('div', { class: 'ls-state', text: LS.pickerQ ? 'No property in the CRM matches "' + LS.pickerQ + '".' : 'There are no properties in the CRM yet.' })
+      : lsEl('div', { class: 'ls-pad' },
+        lsEl('div', { class: 'ls-sub', id: 'ls-pick-count', text: 'Showing ' + items.length + ' of ' + pk.total + (LS.pickerQ ? ' matches' : ' properties in the CRM. Type to search all of them.') }),
+        lsEl('div', { class: 'ls-picks', role: 'radiogroup', 'aria-label': 'Properties' }, rows),
+        pk.hasMore ? lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-pick-more', onclick: lsPickerMore, text: 'Show more' }) : null,
+        chosen ? lsEl('div', { class: 'ls-banner' + (choice.ok ? '' : ' ls-banner-bad'), id: 'ls-pick-note', role: 'status', text: choice.why }) : null,
+        lsEl('div', { class: 'ls-actions ls-step-footer' }, lsEl('a', { class: 'btn btn-secondary', href: '#/listings', text: 'Cancel' }),
+          lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-pick-go', disabled: !(chosen && choice.ok), onclick: lsPickerContinue, text: 'Continue' })))));
 }
 
 async function lsCreate(propertyId, adopt) {

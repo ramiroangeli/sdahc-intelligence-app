@@ -190,7 +190,7 @@ test('IMPORT: no additional Vercel function (the Hobby plan allows 12), and the 
   const handlers = readdirSync('api', { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== '_lib').flatMap((d) => readdirSync(`api/${d.name}`).filter((f) => f.endsWith('.js')));
   assert.equal(handlers.length, 12, handlers.join());
   const ui = readFileSync('listings.js', 'utf8');
-  assert.match(ui, /Import published listing/); assert.match(ui, /importPublished: true/);
+  assert.match(ui, /brought in/); assert.match(ui, /importPublished: true/);
   for (const re of [/blob\.vercel-storage/, /listings-staging/, /LISTINGS_GITHUB/, /ghp_|github_pat_/]) assert.ok(!re.test(ui), String(re));
   assert.ok(PAGE_RG);
 });
