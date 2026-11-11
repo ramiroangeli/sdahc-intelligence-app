@@ -48,7 +48,7 @@ export const meRoute = guardedRoute({
 /** Property picker: Notion Properties that can start a draft. Editors only. */
 export const propertiesRoute = guardedRoute({
   capability: C.EDIT,
-  run: async ({ req, deps }) => ({ properties: await pickerFor({ cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), q: queryOf(req).q }) }),
+  run: async ({ req, deps }) => { const q = queryOf(req); return pickerFor({ cfg: dataCfg(deps), db: getDb(deps), fetchImpl: f(deps), q: q.q, offset: q.offset, limit: q.limit }); },
 });
 
 /** One draft. Read: any staff. Create, save, discard: Editors. */

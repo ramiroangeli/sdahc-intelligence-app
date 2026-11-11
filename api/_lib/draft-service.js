@@ -149,23 +149,42 @@ export async function verifyDraftFor({ cfg, db, body, actor, fetchImpl, caps }) 
   return view({ draft: saved, prop, ctx, history, ...caps });
 }
 
-export async function pickerFor({ cfg, db, fetchImpl, q }) {
+export const PICKER_PAGE = 25;
+export const PICKER_MAX = 50;
+/**
+ * Add listing: search EVERY property in the CRM on the server (all pages of Notion are read and cached briefly), and page through the matches.
+ * Each match says what Add listing would do: 'new' (create a draft), 'draft' (open the existing draft), 'live' (already on the website: bring it in)
+ * or 'withdrawn' (unavailable). Every word typed must appear in the address, in any order. Matches that start with what was typed come first.
+ * Returns { properties, total, offset, limit, hasMore }: the screen never shows only "the first 100".
+ */
+export async function pickerFor({ cfg, db, fetchImpl, q, offset = 0, limit = PICKER_PAGE }) {
   const [rows, snaps, drafts] = await Promise.all([
     listAllProperties(needNotion(cfg), { fetchImpl }),
     loadSnapshots(cfg, { fetchImpl }).catch(() => null),
     repo.listDrafts(db).catch(() => []),
   ]);
-  const term = String(q ?? '').trim().toLowerCase().slice(0, 80);
+  const words = String(q ?? '').trim().toLowerCase().slice(0, 80).split(/\s+/).filter(Boolean);
   const draftIds = new Set(drafts.map((d) => d.public_id));
-  return rows
-    .filter((r) => !term || r.fullName.toLowerCase().includes(term))
-    .map((r) => ({
-      id: r.id, name: r.fullName, state: r.state, designCategories: r.designCategories, buildType: r.buildType, notionStatus: r.webStatus,
-      onWebsite: snaps ? snaps.approved.has(r.id) || snaps.withdrawn.has(r.id) : null,
-      hasDraft: draftIds.has(r.id),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, 100);
+  const start = Math.max(0, Number.isInteger(+offset) ? +offset : 0);
+  const size = Math.min(PICKER_MAX, Math.max(1, Number.isInteger(+limit) ? +limit : PICKER_PAGE));
+  const unnamed = (r) => r.fullName === '(untitled)';
+  const all = rows
+    .filter((r) => words.every((w) => r.fullName.toLowerCase().includes(w)))
+    .map((r) => {
+      const approved = snaps ? snaps.approved.has(r.id) : false;
+      const withdrawn = snaps ? snaps.withdrawn.has(r.id) : false;
+      const hasDraft = draftIds.has(r.id);
+      return {
+        id: r.id, name: r.fullName, state: r.state, designCategories: r.designCategories, buildType: r.buildType, notionStatus: r.webStatus,
+        onWebsite: snaps ? approved || withdrawn : null, hasDraft, unnamed: unnamed(r),
+        kind: withdrawn ? 'withdrawn' : hasDraft ? 'draft' : approved ? 'live' : 'new',
+      };
+    });
+  const lead = words.length ? words[0] : '';
+  const rank = (p) => (p.unnamed ? 3 : p.name.toLowerCase().startsWith(lead) ? 0 : p.name.toLowerCase().includes(' ' + lead) ? 1 : 2);
+  all.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  const page = all.slice(start, start + size);
+  return { properties: page, total: all.length, offset: start, limit: size, hasMore: start + size < all.length };
 }
 
 /** Light summary for the dashboard. No Notion call. */

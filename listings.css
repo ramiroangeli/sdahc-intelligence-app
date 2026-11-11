@@ -217,3 +217,10 @@ textarea.ls-input { resize: vertical; line-height: 1.5; }
 .ls-tech-box { margin-top: 16px; }
 .ls-tech-box > summary { cursor: pointer; color: var(--ink-mute); font-size: 13px; }
 .ls-publish-action { margin-top: 14px; }
+/* Add listing */
+.ls-picks { display: flex; flex-direction: column; margin: 10px 0; border: 1px solid var(--panel-border); border-radius: var(--radius-sm); overflow: hidden; }
+.ls-pick { display: grid; grid-template-columns: 24px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--panel-border); cursor: pointer; background: var(--panel); }
+.ls-pick:first-child { border-top: 0; }
+.ls-pick.picked { background: #EAF3FD; }
+.ls-pick.off { opacity: .6; cursor: not-allowed; }
+.ls-pick-main { display: flex; flex-direction: column; gap: 2px; }
