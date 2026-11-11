@@ -13,7 +13,7 @@ import * as jobs from './jobs-repo.js';
 import { canonical } from './photos.js';
 import { signedHeaders } from './signing.js';
 
-export const ENABLED_KINDS = ['dry_run', 'publish', 'update']; // 'withdraw' arrives in a later increment
+export const ENABLED_KINDS = ['dry_run', 'publish', 'update']; // 'withdraw' has its own service (withdrawal.js): it carries no listing content
 export const REAL_KINDS = ['publish', 'update'];
 const STEP_NAMES = ['started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'media', 'pull_request', 'checks', 'merge', 'deploy', 'verify', 'finished'];
 const EVENT_STATUSES = ['running', 'ok', 'failed', 'succeeded'];
@@ -135,7 +135,7 @@ export async function reconcile(job, { db, publish, repo, fetchImpl, now = Date.
   if (!jobs.isActive(job)) return job;
   const age = now - new Date(job.updated_at).getTime();
   const created = now - new Date(job.created_at).getTime();
-  const limit = REAL_KINDS.includes(job.kind) ? 40 : 25;
+  const limit = job.kind === 'dry_run' ? 25 : 40;   // publish, update and withdraw all merge and deploy
   if (created > limit * MIN) return (await jobs.failJob(db, job.id, 'timed_out', `The job did not finish within ${limit} minutes.`)) ?? job;
   if (age < 2 * MIN || !publish) return job;
   const run = await findRun({ publish, repo }, job.id, fetchImpl);
@@ -170,6 +170,7 @@ export function sanitiseEvent(body) {
   if (typeof d.dryRun === 'boolean') detail.dryRun = d.dryRun;
   if (typeof d.live === 'boolean') detail.live = d.live;
   if (typeof d.merged === 'boolean') detail.merged = d.merged;
+  if (typeof d.withdrawn === 'boolean') detail.withdrawn = d.withdrawn;
   if (Number.isInteger(d.number)) detail.number = d.number;
   if (typeof d.sha === 'string' && /^[a-f0-9]{40}$/.test(d.sha)) detail.sha = d.sha;
   if (typeof d.mergeCommit === 'string' && /^[a-f0-9]{40}$/.test(d.mergeCommit)) detail.mergeCommit = d.mergeCommit;

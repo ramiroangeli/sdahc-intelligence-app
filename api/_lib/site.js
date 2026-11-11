@@ -35,6 +35,8 @@ export function pickSnapshot(raw) {
     listingId: raw.listingId,
     slug,
     title: typeof raw.content.title === 'string' ? raw.content.title : slug,
+    // the PUBLIC address as visitors read it (already public in the website repository); used for the typed confirmation of a withdrawal
+    address: raw.content.address && typeof raw.content.address.street === 'string' ? `${raw.content.address.street}, ${raw.content.address.suburb} ${raw.content.address.state} ${raw.content.address.postcode}` : null,
     version: raw.version,
     commercialStatus: raw.commercialStatus,
     approvedAt: typeof raw.approvedAt === 'string' ? raw.approvedAt : null,

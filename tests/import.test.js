@@ -343,7 +343,7 @@ test('NO CHANGES: Viewers and Editors still cannot start anything, and a new lis
 function uiBrowser() {
   const ctx = { window: { addEventListener() {}, __lsPhotoTimings: [] }, document: { getElementById: () => null, createElement: () => ({}), body: { append() {} }, querySelectorAll: () => [], querySelector: () => null }, console, URL, performance, setTimeout, clearTimeout };
   vm.createContext(ctx);
-  vm.runInContext(`${readFileSync('listings.js', 'utf8')}\n;globalThis.__u = { jobNoChange, errText, ERR_TEXT, lsNoChanges, lsStatusChange, lsStatusFields, LS };`, ctx);
+  vm.runInContext(`${readFileSync('listings.js', 'utf8')}\n;globalThis.__u = { jobNoChange, errText, ERR_TEXT, lsNoChanges, lsStatusChange, lsStatusFields, lsWithdrawReady, lsWithdrawn, lsWithdrawUnconfirmed, LS };`, ctx);
   return ctx.__u;
 }
 const noChangeJob = (over = {}) => ({ status: 'failed', kind: 'dry_run', error: { code: 'engine_refused', message: 'the engine would not publish this listing (unchanged, 0 issue(s))' }, steps: [{ step: 'requested', status: 'ok' }, { step: 'engine', status: 'failed', detail: { kind: 'unchanged', issues: [] } }], ...over });
@@ -469,4 +469,187 @@ test('UI: the status choice is a change only when it differs from the website, i
   const src = readFileSync('listings.js', 'utf8');
   assert.match(src, /Publish status change/); assert.match(src, /id: 'ls-sold-confirm'/); assert.match(src, /disabled: sc === 'sold' && !LS\.soldConfirmed/);
   assert.match(src, /LS\.statusChoice = null; LS\.soldConfirmed = false;/, 'the choice never survives a change of page');
+});
+
+// ---- Withdrawal: private reasons and audit trail, typed address, single Publisher, nothing private reaches the website ----
+const ADDR = 'Rutherford Grove, Armstrong Creek VIC 3217';
+const SENT = 'PRIVATE-REASON-4f9a-sentinel';
+const withdrawWith = (ctx, extra = {}, who = ALI_N, db = ctx.db) => call(draftPublishRoute, ctx.w, db, who, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, mode: 'withdraw', confirmAddress: ADDR, reason: SENT, ...extra } });
+const auditRows = (db) => db.unsafe('select * from listings.audit_log order by id');
+const tombstone = (ctx) => { ctx.w.state.withdrawn = [{ listingId: ID_RG, withdrawnAt: '2026-11-11T05:00:00.000Z', withdrawnBy: 'SDA Home Choices', reason: 'withdrawn' }]; resetCaches(); };
+const historyAs = async (ctx, who) => (await call(draftPublishRoute, ctx.w, ctx.db, who, { url: `/api/listings/draft-publish?id=${ID_RG}`, env: PUBLISH_ENV, fetch: ctx.gh.fetch }));
+const cb = (ctx, jobId, step, status, detail) => callSigned(publishCallbackRoute, ctx.db, { method: 'POST', url: '/api/listings/publish-callback', secret: SECRET, body: JSON.stringify({ jobId, step, status, ...(detail ? { detail } : {}) }) });
+const nothingStarted = async (ctx) => { assert.equal((await jobRows(ctx.db)).length, 0, 'no job'); assert.equal(ctx.gh.dispatches.length, 0, 'no dispatch'); assert.equal((await auditRows(ctx.db)).length, 0, 'no audit row'); };
+
+test('WITHDRAWAL: a Publisher withdraws a published listing: one job, a private audit row with the reason and the actor, a payload with nothing private, no image or content work', async () => {
+  const ctx = await imported();
+  const r = await withdrawWith(ctx);
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.job.kind, 'withdraw'); assert.equal(r.json.existing, false);
+  assert.equal(ctx.gh.dispatches.length, 1); assert.equal(ctx.gh.dispatches[0].body.inputs.mode, 'withdraw');
+  const p = await payloadOfJob(ctx, r.json.job.id);
+  assert.deepEqual(Object.keys(p).sort(), ['action', 'at', 'authority', 'jobId', 'mode', 'publicId', 'version'], 'only these keys: no content, no reason, no person');
+  assert.equal(p.action, 'withdraw'); assert.equal(p.publicId, ID_RG);
+  const rows = await auditRows(ctx.db);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].action, 'withdraw'); assert.equal(rows[0].reason, SENT); assert.equal(rows[0].actor_email, 'ali@sdahomechoices.com.au');
+  assert.equal(rows[0].job_id, r.json.job.id); assert.equal(rows[0].public_id, ID_RG); assert.equal(rows[0].draft_version, 1);
+  assert.equal(ctx.w.publicBlob.mem.size, 0, 'no public image is written or removed');
+  assert.equal((await ctx.db.unsafe('select count(*)::int n from listings.drafts'))[0].n, 1, 'the draft is untouched');
+});
+
+test('WITHDRAWAL PRIVACY: the reason never reaches GitHub, the payload, the job record, any log or any response except a Publisher\'s history; Editors and Viewers never see it', async () => {
+  const lines = []; setAuditSink((l) => lines.push(l));
+  const ctx = await imported();
+  const r = await withdrawWith(ctx);
+  assert.equal(r.status, 200);
+  for (const [step, status, detail] of [['started', 'running'], ['payload', 'ok'], ['engine', 'ok', { kind: 'withdraw', slug: 'rutherford-grove-armstrong-creek-vic' }], ['build', 'ok'], ['pull_request', 'ok', { number: 70, url: 'https://github.com/o/r/pull/70', files: 1 }], ['checks', 'ok'], ['merge', 'ok', { sha: 'a'.repeat(40) }]]) await cb(ctx, r.json.job.id, step, status, detail);
+  await cb(ctx, r.json.job.id, 'finished', 'failed', { code: 'verify_failed', message: 'the live site still shows the listing', merged: true });
+  const everywhere = JSON.stringify([ctx.gh.dispatches, await ctx.db.unsafe('select * from listings.publish_jobs'), await ctx.db.unsafe('select * from listings.drafts'), await ctx.db.unsafe('select * from listings.draft_history'), ctx.w.calls, lines, r.raw]);
+  assert.ok(!everywhere.includes(SENT), 'the reason appears nowhere but the private audit trail');
+  assert.ok((await auditRows(ctx.db))[0].reason === SENT, 'and it is there');
+  for (const who of [VIEWER, EDITOR]) { const h = await historyAs(ctx, who); assert.equal(h.status, 200); assert.ok(!h.raw.includes(SENT) && !('audit' in h.json), 'viewers and editors get no audit trail'); }
+  const pub = await historyAs(ctx, ALI_N);
+  assert.ok('audit' in pub.json && pub.json.audit[0].reason === SENT && pub.json.audit[0].by === 'ali@sdahomechoices.com.au', 'a Publisher sees the private record');
+  assert.ok(!JSON.stringify(ctx.gh.dispatches).includes('ali@'), 'no person reaches GitHub either');
+});
+
+test('WITHDRAWAL: the typed address must match the public address (case and spacing ignored); a wrong or missing address changes nothing', async () => {
+  const ctx = await imported();
+  for (const bad of [undefined, '', 'Rutherford Grove', 'rutherford grove, armstrong creek vic 3218', '5/50 Rutherford Grove, Armstrong Creek VIC 3217']) {
+    const r = await withdrawWith(ctx, { confirmAddress: bad });
+    assert.equal(r.status, 409, String(bad)); assert.equal(r.json.error, 'address_mismatch');
+  }
+  await nothingStarted(ctx);
+  const ok = await withdrawWith(ctx, { confirmAddress: '  rutherford GROVE ,Armstrong   Creek vic 3217 ' });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+});
+
+test('WITHDRAWAL: the reason is required and at most 300 characters; nothing is recorded otherwise', async () => {
+  const ctx = await imported();
+  for (const [reason, code, status] of [[undefined, 'reason_required', 400], ['', 'reason_required', 400], ['   ', 'reason_required', 400], ['x'.repeat(301), 'invalid_reason', 400]]) {
+    const r = await withdrawWith(ctx, { reason }); assert.equal(r.status, status, String(reason).slice(0, 10)); assert.equal(r.json.error, code);
+  }
+  await nothingStarted(ctx);
+  assert.equal((await withdrawWith(ctx, { reason: 'x'.repeat(300) })).status, 200);
+});
+
+test('WITHDRAWAL PERMISSIONS: only a Publisher (Editors, Viewers and anonymous callers are refused before anything is read); a Publisher without Editor may withdraw', async () => {
+  const ctx = await imported();
+  for (const who of [EDITOR, VIEWER]) assert.equal((await withdrawWith(ctx, {}, who)).status, 403);
+  assert.equal((await call(draftPublishRoute, ctx.w, ctx.db, ALI_N, { method: 'POST', headers: { authorization: '' }, fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, mode: 'withdraw', confirmAddress: ADDR, reason: SENT } })).status, 401);
+  await nothingStarted(ctx);
+  assert.equal((await withdrawWith(ctx, {}, PUBLISHER)).status, 200);
+});
+
+test('WITHDRAWAL GUARDS: only a published listing that has a draft and is not already withdrawn; an unreadable website stops it; nothing is recorded', async () => {
+  const ctx = await imported();
+  tombstone(ctx);
+  const again = await withdrawWith(ctx); assert.equal(again.status, 409); assert.equal(again.json.error, 'already_withdrawn');
+  await nothingStarted(ctx);
+  const w2 = world(); const db2 = await database(); resetCaches(); const gh2 = github(w2);
+  const noDraft = await call(draftPublishRoute, w2, db2, ALI_N, { method: 'POST', fetch: gh2.fetch, env: PUBLISH_ENV, body: { id: ID_RG, mode: 'withdraw', confirmAddress: ADDR, reason: SENT } });
+  assert.equal(noDraft.json.error, 'draft_required');
+  const ctx2 = await imported(); const down = ctx2.gh.fetch; ctx2.gh.fetch = async (u, o) => (String(u).includes('/approved') ? { ok: false, status: 500 } : down(u, o)); resetCaches();
+  assert.equal((await withdrawWith(ctx2)).status, 503);
+  await nothingStarted(ctx2);
+  const ctx3 = await imported(); ctx3.w.state.snapshots = []; resetCaches();
+  assert.equal((await withdrawWith(ctx3)).json.error, 'not_published');
+  await nothingStarted(ctx3);
+});
+
+test('WITHDRAWAL: while a listing is withdrawn it cannot be published, updated, re-statused or rehearsed, and nothing is recorded', async () => {
+  const ctx = await imported(); tombstone(ctx);
+  for (const [mode, extra] of [['update', {}], ['publish', {}], ['dry_run', {}], ['update', { commercialStatus: 'sold', expectedStatus: 'available' }]]) {
+    const r = await publishWith(ctx, mode, extra); assert.equal(r.status, 409, mode); assert.equal(r.json.error, 'withdrawn');
+  }
+  assert.equal((await jobRows(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0);
+});
+
+test('WITHDRAWAL IDEMPOTENCY: two clicks (or two tabs) leave one job, one audit row and one dispatch; a second withdrawal cannot start while any job runs', async () => {
+  const ctx = await imported();
+  const [a, b] = await Promise.all([withdrawWith(ctx), withdrawWith(ctx)]);
+  assert.ok([a, b].every((r) => r.status === 200), 'both clicks get an answer: the job that won');
+  assert.equal([a, b].filter((r) => r.json.existing === false).length, 1, 'exactly one created it');
+  assert.equal((await jobRows(ctx.db)).length, 1); assert.equal((await auditRows(ctx.db)).length, 1); assert.equal(ctx.gh.dispatches.length, 1);
+  const third = await withdrawWith(ctx); assert.equal(third.status, 200); assert.equal(third.json.existing, true);
+  assert.equal((await auditRows(ctx.db)).length, 1, 'repeating a running withdrawal records nothing more');
+  const ctx2 = await imported(); await save(ctx2, { title: 'Established Improved Liveability SDA Investment, x' });
+  const u = await publishWith(ctx2, 'update'); assert.equal(u.status, 200);
+  assert.equal((await withdrawWith(ctx2)).json.error, 'job_active', 'a publication is running: no withdrawal on top of it');
+  await live(ctx2, u.json.job.id, 2);
+});
+
+test('WITHDRAWAL FAILURE: without the private audit record nothing is dispatched; a dispatch failure fails the job safely and can be retried', async () => {
+  const ctx = await imported();
+  const bad = { ...ctx.db, unsafe: async (q, p) => { if (/insert into listings\.audit_log/.test(q)) throw new Error('database down'); return ctx.db.unsafe(q, p); } };
+  const r = await withdrawWith(ctx, {}, ALI_N, bad);
+  assert.equal(r.status, 500); assert.equal(r.json.error, 'audit_failed');
+  assert.equal(ctx.gh.dispatches.length, 0);
+  assert.deepEqual((await jobRows(ctx.db)).map((j) => `${j.kind}:${j.status}`), ['withdraw:failed']);
+  assert.ok(!r.raw.includes(SENT));
+  const ctx2 = await imported(); ctx2.gh.status = 422;
+  const d = await withdrawWith(ctx2); assert.equal(d.status, 502); assert.equal(d.json.error, 'dispatch_failed');
+  assert.equal((await jobRows(ctx2.db)).length, 1); assert.equal((await jobRows(ctx2.db))[0].status, 'failed');
+  ctx2.gh.status = 204;
+  const retry = await withdrawWith(ctx2); assert.equal(retry.status, 200); assert.equal(retry.json.existing, false); assert.equal(retry.json.job.attempt, 2);
+});
+
+test('WITHDRAWAL STATE: Withdrawn is derived from the website; a merge that was not confirmed offers a re-check (no new reason, no new audit row); a verified withdrawal is shown as verified', async () => {
+  const ctx = await imported();
+  const h0 = (await historyAs(ctx, ALI_N)).json;
+  assert.equal(h0.withdrawn, false); assert.equal(h0.withdrawal, null); assert.equal(h0.websiteAddress, ADDR);
+  const r = await withdrawWith(ctx);
+  assert.equal((await historyAs(ctx, ALI_N)).json.withdrawn, false, 'requested is not withdrawn');
+  tombstone(ctx);
+  await cb(ctx, r.json.job.id, 'merge', 'ok', { sha: 'a'.repeat(40) });
+  await cb(ctx, r.json.job.id, 'finished', 'failed', { code: 'verify_failed', message: 'still showing', merged: true });
+  const h1 = (await historyAs(ctx, ALI_N)).json;
+  assert.equal(h1.withdrawn, true); assert.equal(h1.withdrawal.merged, true); assert.equal(h1.withdrawal.verified, false);
+  assert.equal((await withdrawWith(ctx)).json.error, 'already_withdrawn', 'a new withdrawal is refused');
+  assert.equal((await withdrawWith(ctx, { recheck: true, reason: undefined, confirmAddress: undefined }, EDITOR)).status, 403);
+  const re = await withdrawWith(ctx, { recheck: true, reason: undefined, confirmAddress: undefined });
+  assert.equal(re.status, 200, JSON.stringify(re.json)); assert.equal(re.json.job.attempt, 2);
+  assert.equal((await auditRows(ctx.db)).length, 1, 'a re-check is the same withdrawal: no second record');
+  await cb(ctx, re.json.job.id, 'finished', 'succeeded', { dryRun: false, live: false, withdrawn: true, slug: 'rutherford-grove-armstrong-creek-vic', kind: 'withdraw' });
+  const h2 = (await historyAs(ctx, ALI_N)).json;
+  assert.equal(h2.withdrawal.verified, true);
+  assert.equal((await withdrawWith(ctx, { recheck: true })).json.error, 'nothing_to_recheck');
+});
+
+test('STATUS CHANGE AUDIT: a public status change is recorded privately (who, from, to, job); without that record nothing is started', async () => {
+  const ctx = await imported();
+  const r = await publishWith(ctx, 'update', { commercialStatus: 'under_offer', expectedStatus: 'available' });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const rows = await auditRows(ctx.db);
+  assert.equal(rows.length, 1); assert.equal(rows[0].action, 'status_change'); assert.equal(rows[0].status_from, 'available'); assert.equal(rows[0].status_to, 'under_offer');
+  assert.equal(rows[0].actor_email, 'ali@sdahomechoices.com.au'); assert.equal(rows[0].job_id, r.json.job.id); assert.equal(rows[0].reason, null);
+  const ctx2 = await imported();
+  const bad = { ...ctx2.db, unsafe: async (q, p) => { if (/insert into listings\.audit_log/.test(q)) throw new Error('database down'); return ctx2.db.unsafe(q, p); } };
+  const f = await call(draftPublishRoute, ctx2.w, bad, ALI_N, { method: 'POST', fetch: ctx2.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: 1, mode: 'update', commercialStatus: 'sold', expectedStatus: 'available' } });
+  assert.equal(f.status, 500); assert.equal(f.json.error, 'audit_failed'); assert.equal(ctx2.gh.dispatches.length, 0);
+  // ordinary publications and dry runs write no audit row
+  const ctx3 = await imported(); await save(ctx3, { title: 'Established Improved Liveability SDA Investment, y' });
+  assert.equal((await publishWith(ctx3, 'update')).status, 200); assert.equal((await auditRows(ctx3.db)).length, 0);
+});
+
+test('WITHDRAWAL UI: the confirm button needs a reason and the exact public address; the screen shows Withdrawn only from the website\'s state; withdraw wording is plain', () => {
+  const u = uiBrowser();
+  u.LS.jobs = { websiteAddress: ADDR, withdrawn: false, withdrawal: null };
+  assert.equal(u.lsWithdrawReady(), false);
+  u.LS.withdrawReason = 'Vendor asked to pause'; assert.equal(u.lsWithdrawReady(), false);
+  u.LS.withdrawAddress = 'rutherford grove, armstrong creek vic 3218'; assert.equal(u.lsWithdrawReady(), false);
+  u.LS.withdrawAddress = '  Rutherford Grove,   Armstrong Creek VIC 3217 '; assert.equal(u.lsWithdrawReady(), true);
+  u.LS.withdrawReason = '   '; assert.equal(u.lsWithdrawReady(), false);
+  u.LS.withdrawReason = 'x'.repeat(301); assert.equal(u.lsWithdrawReady(), false);
+  assert.equal(u.lsWithdrawn(), false);
+  u.LS.jobs = { websiteAddress: ADDR, withdrawn: true, withdrawal: { status: 'failed', merged: true } };
+  assert.equal(u.lsWithdrawn(), true); assert.equal(u.lsWithdrawUnconfirmed(), true);
+  u.LS.jobs.withdrawal = { status: 'succeeded', merged: false, verified: true }; assert.equal(u.lsWithdrawUnconfirmed(), false);
+  const src = readFileSync('listings.js', 'utf8');
+  assert.match(src, /Reason \(private: it is recorded in the audit trail and is never published\)/);
+  assert.match(src, /type the public address of the listing/);
+  assert.ok(!/reason:[^}]*LS\.withdrawReason[^}]*\}[^]*?console/.test(src));
+  assert.match(src, /Re-check withdrawal/);
+  assert.ok(!/GitHub|pull request|workflow|sitemap.*payload/.test(src.slice(src.indexOf('const WITHDRAW_ERR_TEXT'), src.indexOf('const errText =')).replace(/GitHub's/g, '')), 'plain wording in the withdrawal errors');
 });

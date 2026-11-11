@@ -1,6 +1,6 @@
 # Migration 0005: private audit log and the reinstate job kind
 
-**Status: prepared, NOT applied.** It must not be run in Production without explicit approval. Nothing in the deployed code depends on it yet: `api/_lib/audit-log.js` is not imported by any route (a test enforces that), and every existing job kind keeps working with or without it.
+**Status: APPLIED to Production on 11 Nov 2026 and verified** (permissions, preserved records, the `reinstate` kind, append-only behaviour). The text below describes what it does and how to roll it back. The app writes to it from the withdrawal and from a public status change (`api/_lib/audit-log.js`); rolling it back now would stop those from working.
 
 ## What it does
 1. **`listings.audit_log`**, a private, append-only operational audit trail for status changes, withdrawals and reinstatements.
