@@ -136,7 +136,7 @@ export const draftPublishRoute = guardedRoute({
     const cfg = dataCfg(deps); const db = getDb(deps); const env = deps.env ?? process.env;
     if (req.method === 'GET') return jobsFor({ cfg, db, id: queryOf(req).id, fetchImpl: f(deps), env });
     const body = await readJson(req);
-    const out = await startPublication({ cfg, db, id: body?.id, expectedVersion: body?.expectedVersion, kind: body?.mode, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, deps, ...capsOf(session) });
+    const out = await startPublication({ cfg, db, id: body?.id, expectedVersion: body?.expectedVersion, kind: body?.mode, commercialStatus: body?.commercialStatus, expectedStatus: body?.expectedStatus, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, deps, ...capsOf(session) });
     return out;
   },
 });

@@ -101,11 +101,11 @@ test('START: a ready draft records a job, freezes ONLY the approved public conte
   assert.ok(row.payload.manifest.photos.every((p) => p.privacyReviewed === true && /^[a-f0-9]{12}$/.test(p.id)), 'photographs are approved with the listing (the automatic checks passed in preflight)');
   assert.deepEqual(row.payload.manifest.photos.map((p) => p.kind ?? 'photo'), ['photo', 'photo', 'floorplan'], 'cover first, floorplan last, same order as the draft');
   assert.deepEqual(row.payload.manifest.photos.map((p) => p.alt), ['Kitchen', '', ''], 'short and empty descriptions stay as typed (the website adds the neutral fallback)');
-  // the Listings Manager is the authority: the approval travels with the payload, with a display name (never an email) for the public snapshot
+  // the Listings Manager is the authority: the approval travels with the payload under a constant identity (nobody is named in public)
   assert.equal(row.payload.authority, 'listings_manager');
-  assert.equal(row.payload.approver.id, ALI_N.notionUserId); assert.equal(row.payload.approver.name, 'SDA Home Choices');
-  assert.ok(!JSON.stringify(row.payload.approver).includes('@'), 'no email address in the approver that reaches the public snapshot');
-  assert.equal(row.payload.approval.by, ALI_N.email); assert.ok(row.payload.approval.at);
+  assert.equal(row.payload.approver.id, 'listings-manager'); assert.equal(row.payload.approver.name, 'SDA Home Choices'); assert.equal(row.payload.approver.notionUserId, null);
+  assert.equal(row.payload.approval.by, 'listings_manager'); assert.ok(row.payload.approval.at);
+  assert.ok(!text.includes('@') && !text.includes(ALI_N.notionUserId) && !text.includes('ali@'), 'nobody is named in anything the website job can copy: no email, no Notion user id');
   assert.ok(!('galleryReview' in row.payload), 'no gallery review is part of the payload');
   // a dry run never touches Notion or any public store
   assert.ok(ctx.w.calls.every((c) => c.method === 'GET' || /\/query|\/dispatches/.test(c.url)), JSON.stringify(ctx.w.calls.filter((c) => c.method !== 'GET').map((c) => c.url)));
@@ -374,7 +374,7 @@ test('REVIEW SCREEN: a third tab, read-only polling, a dry run, and a confirmed 
   assert.ok(!/mode: 'withdraw'/.test(code), 'withdrawal is not offered by the browser');
   assert.match(code, /mode: kind/); assert.match(code, /'update' : 'publish'/);
   // publishing needs a second, explicit confirmation; the first button only opens it
-  assert.match(code, /id: 'ls-publish-btn'[^]*LS\.confirmPublish = true/); assert.match(code, /id: 'ls-publish-confirm', onclick: lsStartPublish/);
+  assert.match(code, /id: 'ls-publish-btn'[^]*LS\.confirmPublish = true/); assert.match(code, /id: 'ls-publish-confirm', disabled: [^,]+, onclick: lsStartPublish/);
   const startFn = code.slice(code.indexOf('async function lsStartPublish'), code.indexOf('function reviewContent'));
   assert.ok(/lsApi\('POST'/.test(startFn) && !/setInterval|setTimeout/.test(startFn));
   // Live is shown only from the server's verified record (jobs.live), never from the browser's own guess

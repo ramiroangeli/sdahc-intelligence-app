@@ -22,7 +22,7 @@
    gh variable set LISTINGS_MEDIA_BASE_URL --repo ramiroangeli/sdahc-website --body "<public Blob origin, as in .env.listings>"
    gh variable set LISTINGS_APP_URL --repo ramiroangeli/sdahc-website --body "https://app.sdahomechoices.com.au"
    ```
-7. **Staff list** (`LISTINGS_STAFF_JSON`): nothing is required beyond what exists. Optionally add `"displayName": "Ali Example"` for a Publisher: it is the name shown publicly as the approver of a listing (never an email address; the default is "SDA Home Choices"). Approval is made in the Listings Manager, so a Notion user id and the website `approvers.json` are no longer needed for it.
+7. **Staff list** (`LISTINGS_STAFF_JSON`): nothing is required beyond what exists. Approval is made in the Listings Manager, so a Notion user id and the website `approvers.json` are no longer needed for it. Nobody is named publicly: the approver in every public snapshot is the constant "SDA Home Choices" (a `displayName` in the staff list is accepted but never sent to the website).
 8. Merge this PR and let it deploy.
 
 ## First dry run (the first new listing)

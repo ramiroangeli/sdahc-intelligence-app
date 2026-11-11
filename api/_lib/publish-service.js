@@ -4,7 +4,7 @@ import { audit } from './audit.js';
 import { loadPublishConfig } from './config.js';
 import { HttpError, PUBLIC_ID_RE } from './http.js';
 import * as jobs from './jobs-repo.js';
-import { ENABLED_KINDS, REAL_KINDS, buildPayload, dispatchWorkflow, findRun, jobView, preflight, reconcile } from './publication.js';
+import { COMMERCIAL_STATUSES, ENABLED_KINDS, REAL_KINDS, buildPayload, dispatchWorkflow, findRun, jobView, preflight, reconcile } from './publication.js';
 import { photoStore } from './photo-store.js';
 import { promoteMedia, publicMediaConfigured, publicStore } from './public-media.js';
 import * as drafts from './drafts-repo.js';
@@ -18,6 +18,10 @@ import { loadSnapshots } from './site.js';
  */
 export async function approvedOnWebsite(cfg, id, fetchImpl) {
   try { return (await loadSnapshots(cfg, { fetchImpl })).approved.has(id); } catch { return null; }
+}
+/** The commercial status the website shows for this listing: available, under_offer, sold, or null (not on the website), or undefined (unreadable). */
+export async function websiteStatusOf(cfg, id, fetchImpl) {
+  try { return (await loadSnapshots(cfg, { fetchImpl })).approved.get(id)?.commercialStatus ?? null; } catch { return undefined; }
 }
 
 /**
@@ -36,10 +40,24 @@ const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)
 
 export const publishingConfigured = (env) => { try { loadPublishConfig(env); return true; } catch { return false; } };
 
-export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps, deps = {} }) {
+export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps, deps = {}, commercialStatus, expectedStatus }) {
   requireId(id);
   if (!ENABLED_KINDS.includes(kind)) throw new HttpError(400, 'mode_not_enabled');
   if (!Number.isInteger(expectedVersion)) throw new HttpError(400, 'expected_version_required');
+  // Commercial status (Publisher only, which the route already requires). Asked for as "set to X"; X must be a real status, and the Publisher must
+  // say which status they saw, so a stale tab cannot silently undo someone else's change.
+  let statusChange = null;
+  if (commercialStatus !== undefined && commercialStatus !== null) {
+    if (!COMMERCIAL_STATUSES.includes(commercialStatus)) throw new HttpError(400, 'invalid_status');
+    if (kind === 'publish') { if (commercialStatus !== 'available') throw new HttpError(409, 'status_not_allowed', { reasons: ['A first publication is always Available. Change the status after it is live.'] }); }
+    else {
+      const current = await websiteStatusOf(cfg, id, fetchImpl);
+      if (current === undefined) throw new HttpError(503, 'website_unreadable');
+      if (current === null) throw new HttpError(409, 'not_published', { reasons: ['This listing is not on the website yet, so it has no status to change.'] });
+      if (expectedStatus !== current) throw new HttpError(409, 'status_changed', { reasons: ['The status on the website has changed since you opened this page. Reload and check it.'], current });
+      if (commercialStatus !== current) statusChange = { from: current, to: commercialStatus };
+    }
+  }
   const publish = loadPublishConfig(env); // fail closed first: nothing is recorded if the job could never start
   const real = REAL_KINDS.includes(kind);
   if (real && !publicMediaConfigured(deps, env)) throw new HttpError(503, 'public_media_not_configured');
@@ -51,15 +69,18 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   const pf = preflight(view);
   if (!pf.ready) throw new HttpError(409, 'not_ready', { reasons: pf.reasons, wouldBlock: pf.wouldBlock });
 
-  // idempotent: asking again for the same draft version returns the job already running or already succeeded
+  // idempotent: asking again for the same draft version AND the same frozen content (including a requested status) returns the job already running or already succeeded
+  const jobId = randomUUID();
+  const { payload, hash } = buildPayload({ jobId, view, draft, kind, commercialStatus: statusChange?.to });
   const latest = await jobs.latestJob(db, id, draft.version, kind);
   const finishedOk = latest?.status === 'succeeded' && (!real || latest.result?.live === true);
-  if (latest && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
+  if (latest && latest.payload_hash === hash && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
+  if (latest && jobs.isActive(latest)) throw new HttpError(409, 'job_active');
 
   // nothing to publish: no job is recorded (a dry run of unchanged content used to end as a failed job). A resumed or stuck publication is not "unchanged".
   {
     const live = await jobs.liveJob(db, id);
-    if ((kind === 'dry_run' || (real && live)) && await noPublicChanges(db, draft, { live, stuck: await jobs.mergedUnverified(db, id), active: false, publishedOnWebsite: live ? true : await approvedOnWebsite(cfg, id, fetchImpl) })) {
+    if (!statusChange && (kind === 'dry_run' || (real && live)) && await noPublicChanges(db, draft, { live, stuck: await jobs.mergedUnverified(db, id), active: false, publishedOnWebsite: live ? true : await approvedOnWebsite(cfg, id, fetchImpl) })) {
       throw new HttpError(409, 'no_changes', { reasons: ['No changes to publish. This listing already matches what is on the website.'] });
     }
   }
@@ -67,13 +88,11 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   // refused before any image is copied or job recorded; the website job would refuse it later anyway (wrong_mode)
   if (real && kind === 'publish' && await approvedOnWebsite(cfg, id, fetchImpl) === true) throw new HttpError(409, 'already_published', { reasons: ['This listing is already published on the website. Publish your changes as an update.'] });
   const attempt = (await jobs.countAttempts(db, id, draft.version, kind)) + 1;
-  const jobId = randomUUID();
-  const { payload, hash } = buildPayload({ jobId, view, draft, staff, kind });
   const job = await jobs.createJob(db, {
     id: jobId, publicId: id, draftId: draft.id, draftVersion: draft.version, kind, attempt, payload, payloadHash: hash, requestedBy: actor.email, requestedByAuthUser: actor.authUserId,
     approverNotionUserId: staff.notionUserId ?? null, idempotencyKey: `${id}:${draft.version}:${kind}:${attempt}`,
   });
-  audit({ action: 'listings.publish.request', outcome: 'ok', actor, detail: { id, kind, jobId: job.id, draftVersion: draft.version } });
+  audit({ action: 'listings.publish.request', outcome: 'ok', actor, detail: { id, kind, jobId: job.id, draftVersion: draft.version, ...(statusChange ? { status: statusChange } : {}) } });
 
   if (real) {
     // the approved images go to the public store BEFORE the website job starts; the job verifies them and refuses to continue if any is missing
@@ -113,6 +132,7 @@ export async function jobsFor({ cfg, db, id, fetchImpl, env }) {
   const live = await jobs.liveJob(db, id);
   const stuck = await jobs.mergedUnverified(db, id);
   const publishedOnWebsite = live ? true : await approvedOnWebsite(cfg, id, fetchImpl);
+  const websiteStatus = publishedOnWebsite ? ((await websiteStatusOf(cfg, id, fetchImpl)) ?? null) : null;
   const noChanges = await noPublicChanges(db, await drafts.getDraft(db, id), { live, stuck, active: out.some((j) => j.active), publishedOnWebsite });
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, websiteStatus, noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
 }
