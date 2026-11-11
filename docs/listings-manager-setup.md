@@ -60,7 +60,7 @@ See the separate security pull request (analytics.deals access for non-Microsoft
 # Phase 2: draft editor (drafts are private, nothing is published)
 
 ## What was added
-Add next listing (property picker from Notion Properties), a draft editor (Web title, description, public address, pricing mode,
+Add listing (property picker from the CRM), a draft editor (Title, Description, Address shown on the website, Price shown,
 display price, featured), live validation, private preview of the card and detail page, saved drafts with history and the
 saving person's identity, Notion-change detection, and commercial verification items. No Notion writes. No photos. No publishing.
 

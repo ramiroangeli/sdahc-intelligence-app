@@ -57,7 +57,7 @@ Pushing to `main` of this repository deploys to production, where the publicatio
 ## Adopting a listing that was published before the Listings Manager
 
 A listing that is already on the website (for example Rutherford Grove) has no draft, and a normal "Create draft" is refused (`already_published`).
-**Listings > Add next listing > Import published listing** (needs the Editor and Publisher capabilities) creates its draft from the approved snapshot:
+**Listings > Add listing > Import published listing** (needs the Editor and Publisher capabilities) creates its draft from the approved snapshot:
 
 - The draft keeps the published content, public address, slug, photograph ids, alt text, order and floorplan flag. The existing public WebP files are copied byte for byte into PRIVATE staging, so public image URLs do not change.
 - Before anything is written the import checks the snapshot's content hash and schema, that every image is a WebP of the stated width at `<public id>/<photo id>-<width>.webp` on the public Blob host, and that the draft reproduces the published listing exactly (the website job's own comparison).

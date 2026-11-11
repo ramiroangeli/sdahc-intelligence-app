@@ -1,5 +1,5 @@
 // Builds the Listings screen's data. Three separate facts are kept apart on purpose:
-//   notion      the commercial decision recorded in Notion (Web Listing Status): an INTENT
+//   notion      the CRM record (its Web Listing Status is reference only, never the authority)
 //   snapshot    the approved version committed to the website repository: what the next build contains
 //   deployment  whether the public page actually answers on the website right now: the TRUTH
 import { fetchManagedProperties } from './notion.js';
@@ -16,15 +16,9 @@ export function combine({ notion, snapshot, withdrawn, live, url }) {
   else if (!live || live.state === 'unknown') deployment = { state: 'unknown', ...(live ? { httpStatus: live.httpStatus, checkedAt: live.checkedAt } : {}) };
   else deployment = { state: live.state, httpStatus: live.httpStatus, checkedAt: live.checkedAt };
 
-  const intent = notion?.webStatus.key;
+  // Notion is the CRM, not the authority for public marketing: its Web Listing Status never raises a warning here. Only the website's own state does.
   const notes = [];
-  if (!notion) notes.push('Approved on the website, but no Notion row has a Web Listing Status.');
-  else if (notion.archived) notes.push('The Notion row is archived.');
-  if (intent && LIVE_INTENT.has(intent) && deployment.state === 'not_published') notes.push('Notion says this is live, but no approved version exists on the website.');
-  if (intent && LIVE_INTENT.has(intent) && deployment.state === 'not_live') notes.push('Notion says this is live, but the website page is not responding. A deployment may be pending or failed.');
-  if (intent && !LIVE_INTENT.has(intent) && deployment.state === 'live') notes.push(`The page is live on the website while Notion shows ${notion.webStatus.label}.`);
-  if (snapshot && intent && COMMERCIAL_BY_STATUS[intent] && COMMERCIAL_BY_STATUS[intent] !== snapshot.commercialStatus) notes.push('Notion commercial status differs from the published one. A status update is pending.');
-  if (withdrawn && intent && LIVE_INTENT.has(intent)) notes.push('An explicit withdrawal overrides the Notion status.');
+  if (deployment.state === 'not_live') notes.push('The page is not responding on the website. A deployment may be pending or failed.');
   if (deployment.state === 'unknown' && snapshot) notes.push('The live check could not confirm the page. Try again shortly.');
 
   return {

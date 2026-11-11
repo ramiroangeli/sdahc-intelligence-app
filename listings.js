@@ -63,6 +63,14 @@ async function lsRouteChanged() {
 /* ------------------------------------------------------------------ shared pieces */
 const DEPLOY_LABEL = { live: ['Live', 'ls-badge-live'], not_live: ['Not responding', 'ls-badge-warn'], unknown: ['Unconfirmed', 'ls-badge-muted'], not_published: ['Not on website', 'ls-badge-muted'], withdrawn: ['Withdrawn', 'ls-badge-bad'] };
 const COMMERCIAL_LABEL = { available: 'Available', under_offer: 'Under offer', sold: 'Sold' };
+/* TWO separate things, never merged into one status:
+   PUBLICATION state: is the listing on the website, and does the website match the saved draft?
+   COMMERCIAL status: what the public page says about the sale (only meaningful once published). A listing can be Live AND Under offer. */
+const PUBLICATION_LABEL = { draft: 'Draft', ready: 'Ready to publish', publishing: 'Publishing', live: 'Live', live_changes: 'Live, changes not published', withdrawn: 'Withdrawn' };
+const PUBLICATION_CLASS = { draft: 'ls-badge-draft', ready: 'ls-badge-notion', publishing: 'ls-badge-warn', live: 'ls-badge-live', live_changes: 'ls-badge-warn', withdrawn: 'ls-badge-bad' };
+const COMMERCIAL_CLASS = { available: 'ls-badge-live', under_offer: 'ls-badge-warn', sold: 'ls-badge-draft' };
+const publicationBadge = (state) => badge(PUBLICATION_LABEL[state] || 'Draft', PUBLICATION_CLASS[state] || 'ls-badge-muted');
+const commercialBadge = (status) => (COMMERCIAL_LABEL[status] ? badge(COMMERCIAL_LABEL[status], COMMERCIAL_CLASS[status]) : null);
 const badge = (text, cls) => lsEl('span', { class: 'ls-badge ' + cls, text });
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 
@@ -100,7 +108,7 @@ function listingRow(l) {
     lsEl('td', null, lsEl('div', { class: 'ls-name', text: l.name }), lsEl('div', { class: 'ls-sub', text: [l.state, l.designCategories.join(', '), l.buildType].filter(Boolean).join(' · ') })),
     lsEl('td', null, l.notion ? badge(l.notion.status, 'ls-badge-notion') : badge('Not set', 'ls-badge-muted')),
     siteCell,
-    lsEl('td', { text: l.website ? COMMERCIAL_LABEL[l.website.commercialStatus] + ' · v' + l.website.version : '' }),
+    lsEl('td', null, l.website && !l.deployment.state.startsWith('withdrawn') ? commercialBadge(l.website.commercialStatus) : null),
     lsEl('td', null, l.website && l.website.url ? lsEl('a', { class: 'ls-link', href: l.website.url, target: '_blank', rel: 'noopener noreferrer', text: '/opportunities/' + l.website.slug + '/' }) : null),
     draftCell);
   const rows = [tr];
@@ -122,16 +130,16 @@ function paintList(root) {
   if (d.sources.drafts && d.sources.drafts.state === 'not_configured') warns.push('Drafts are not enabled yet: the drafts database is not configured.');
   root.append(lsEl('div', { class: 'panel' },
     lsEl('div', { class: 'panel-head' },
-      lsEl('div', null, lsEl('h2', { class: 'panel-title', text: 'Website listings' }),
-        lsEl('div', { class: 'panel-sub', text: 'Notion holds the commercial decision. Website is confirmed against the live site. A draft never changes the website.' })),
+      lsEl('div', null, lsEl('h2', { class: 'panel-title', text: 'Listings' }),
+        lsEl('div', { class: 'panel-sub', text: 'What is on the website, and what is being prepared for it. Nothing changes on the website until you publish.' })),
       lsEl('div', { class: 'ls-actions' },
         lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: lsLoadList, text: LS.listLoading ? 'Checking...' : 'Refresh' }),
-        lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-add-btn', disabled: !canEdit, title: canEdit ? '' : 'You need the Editor capability to add a listing', onclick: () => lsGo('#/listings/new'), text: 'Add next listing' }))),
+        lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-add-btn', disabled: !canEdit, title: canEdit ? '' : 'You need the Editor capability to add a listing', onclick: () => lsGo('#/listings/new'), text: 'Add listing' }))),
     warns.length ? lsEl('div', { class: 'ls-banner', role: 'status' }, warns.map((m) => lsEl('div', { text: m }))) : null,
     d.listings.length === 0
       ? lsEl('div', { class: 'ls-state', text: 'No properties are on the website or in draft yet.' })
       : lsEl('div', { class: 'table-wrap ls-table-wrap' }, lsEl('table', { class: 'deals-table ls-table' },
-          lsEl('thead', null, lsEl('tr', null, ['Property', 'Notion status', 'Website', 'Commercial', 'Page', 'Draft'].map((h) => lsEl('th', { scope: 'col', text: h })))),
+          lsEl('thead', null, lsEl('tr', null, ['Property', 'CRM status', 'Website', 'Selling status', 'Page', 'Draft'].map((h) => lsEl('th', { scope: 'col', text: h })))),
           lsEl('tbody', null, d.listings.map(listingRow)))),
     lsEl('div', { class: 'ls-foot', text: 'Generated ' + new Date(d.generatedAt).toLocaleString('en-AU') + '.' })));
 }
@@ -145,7 +153,7 @@ async function lsLoadPicker() {
 
 function paintPicker(root) {
   if (LS.pickerError) { root.append(errorPanel(LS.pickerError, lsLoadPicker)); return; }
-  const search = lsEl('input', { type: 'search', class: 'ls-input', id: 'ls-search', placeholder: 'Search Notion properties by address', value: LS.pickerQ, 'aria-label': 'Search properties',
+  const search = lsEl('input', { type: 'search', class: 'ls-input', id: 'ls-search', placeholder: 'Search the CRM by address', value: LS.pickerQ, 'aria-label': 'Search properties',
     oninput: (e) => { LS.pickerQ = e.target.value; clearTimeout(lsTimer); lsTimer = setTimeout(async () => { try { LS.picker = (await lsApi('GET', '/api/listings/properties?q=' + encodeURIComponent(LS.pickerQ))).properties; } catch (x) { LS.pickerError = x.status || 0; } lsPaintKeepFocus(); }, 350); } });
   const rows = (LS.picker || []).map((p) => {
     const asking = LS.confirm === p.id;
@@ -167,14 +175,14 @@ function paintPicker(root) {
         lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.confirm = null; lsPaint(); }, text: 'Cancel' })))))];
   });
   root.append(lsEl('div', { class: 'panel' },
-    lsEl('div', { class: 'panel-head' }, lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: 'Add next listing' }),
-      lsEl('div', { class: 'panel-sub', text: 'Choose an existing property from Notion Properties. No new CRM record is created.' }))),
+    lsEl('div', { class: 'panel-head' }, lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: 'Add listing' }),
+      lsEl('div', { class: 'panel-sub', text: 'Choose a property from the CRM. The CRM is never changed, and nothing goes on the website until you publish.' }))),
     lsEl('div', { class: 'ls-pad' }, search),
     LS.flash ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: LS.flash }) : null,
     LS.picker == null ? lsEl('div', { class: 'ls-state', text: 'Loading properties...' })
       : LS.picker.length === 0 ? lsEl('div', { class: 'ls-state', text: 'No properties match.' })
       : lsEl('div', { class: 'table-wrap' }, lsEl('table', { class: 'deals-table ls-table' },
-          lsEl('thead', null, lsEl('tr', null, ['Property (internal address)', 'Notion status', ''].map((h) => lsEl('th', { scope: 'col', text: h })))),
+          lsEl('thead', null, lsEl('tr', null, ['Property (CRM address)', 'CRM status', ''].map((h) => lsEl('th', { scope: 'col', text: h })))),
           lsEl('tbody', null, rows)))));
 }
 
@@ -285,12 +293,12 @@ function sideContent() {
     !readOnly() ? lsEl('div', { class: 'ls-note-add' }, lsEl('textarea', { id: 'ls-note-text', class: 'ls-input', rows: '2', maxlength: '500', placeholder: 'Add a note for something to verify, for example an advertised figure that differs from the CRM' }),
       lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-note-btn', onclick: lsAddNote, text: 'Add verification note' })) : null));
   // facts
-  nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'Property facts (read only, from Notion)' }),
+  nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'From the CRM' }),
     lsEl('dl', { class: 'ls-facts' }, [
       ['Property', p.fullName], ['State', p.state || 'Not set'], ['Design category', p.designCategories.join(', ') || 'Not set'], ['Build type', p.buildType || 'Not set'],
-      ['Features', p.features.join(', ') || 'None'], ['CRM occupancy', p.occupancy ? p.occupancy.occupied + ' of ' + p.occupancy.places + ' places' : 'Not stated'], ['Notion web status', p.notionStatus],
+      ['Features', p.features.join(', ') || 'None'], ['CRM occupancy', p.occupancy ? p.occupancy.occupied + ' of ' + p.occupancy.places + ' places' : 'Not stated'], ['CRM status', p.notionStatus],
     ].map(([k, val]) => [lsEl('dt', { text: k }), lsEl('dd', { text: val })])),
-    lsEl('div', { class: 'ls-sub', text: 'Prices, income and other financial fields are not shown or editable here.' })));
+    lsEl('div', { class: 'ls-sub', text: 'Reference only: this is never published. Prices, income and other financial fields are not shown or editable here.' })));
   // history
   // History: collapsed by default, one click to open or close. The heading (a real button) stays visible. Content is unchanged.
   const hOpen = !!LS.historyOpen;
@@ -327,17 +335,17 @@ function editForm() {
   const ro = readOnly(); const f = LS.form;
   const mode = f.pricingMode; const needsPrice = mode === 'asking_price' || mode === 'price_guide';
   const priceField = lsEl('div', { id: 'ls-price-wrap', class: needsPrice ? '' : 'ls-hidden' },
-    field('Display price (AUD)', 'displayPrice', lsEl('input', { id: 'ls-f-displayPrice', class: 'ls-input', type: 'text', inputmode: 'numeric', value: f.displayPrice, disabled: ro, placeholder: 'e.g. 695000', oninput: onEdit('displayPrice', (e) => e.target.value) }), 'A single approved public amount. Price ranges are not supported yet. The CRM price is never used.'));
+    field('Price shown (AUD)', 'displayPrice', lsEl('input', { id: 'ls-f-displayPrice', class: 'ls-input', type: 'text', inputmode: 'numeric', value: f.displayPrice, disabled: ro, placeholder: 'e.g. 695000', oninput: onEdit('displayPrice', (e) => e.target.value) }), 'A single approved public amount. Price ranges are not supported yet. The CRM price is never used.'));
   const sel = lsEl('select', { id: 'ls-f-pricingMode', class: 'ls-input', disabled: ro, onchange: (e) => { LS.form.pricingMode = e.target.value; LS.dirty = true; document.getElementById('ls-price-wrap').classList.toggle('ls-hidden', !(e.target.value === 'asking_price' || e.target.value === 'price_guide')); lsMarkDirty(); clearTimeout(lsTimer); lsTimer = setTimeout(lsLive, 300); } },
     lsEl('option', { value: '', text: 'Choose...' }), ...[['asking_price', 'Asking Price'], ['price_guide', 'Price Guide'], ['eoi', 'Expressions of Interest'], ['contact_agent', 'Contact Agent']].map(([k, t]) => lsEl('option', { value: k, text: t, selected: mode === k })));
   const sugg = LS.d.property.suggestedPublicAddress;
   return lsEl('div', { class: 'ls-form' },
-    field('Web title', 'title', lsEl('input', { id: 'ls-f-title', class: 'ls-input', type: 'text', maxlength: '200', value: f.title, disabled: ro, oninput: onEdit('title', (e) => e.target.value) }), FIELD_HELP.title),
-    field('Web description', 'description', lsEl('textarea', { id: 'ls-f-description', class: 'ls-input', rows: '11', disabled: ro, oninput: onEdit('description', (e) => e.target.value), text: f.description }), FIELD_HELP.description),
-    field('Web public address', 'publicAddress', lsEl('input', { id: 'ls-f-publicAddress', class: 'ls-input', type: 'text', value: f.publicAddress, disabled: ro, placeholder: 'Street Name, Suburb VIC 3000', oninput: onEdit('publicAddress', (e) => e.target.value) }), FIELD_HELP.publicAddress),
+    field('Title', 'title', lsEl('input', { id: 'ls-f-title', class: 'ls-input', type: 'text', maxlength: '200', value: f.title, disabled: ro, oninput: onEdit('title', (e) => e.target.value) }), FIELD_HELP.title),
+    field('Description', 'description', lsEl('textarea', { id: 'ls-f-description', class: 'ls-input', rows: '11', disabled: ro, oninput: onEdit('description', (e) => e.target.value), text: f.description }), FIELD_HELP.description),
+    field('Address shown on the website', 'publicAddress', lsEl('input', { id: 'ls-f-publicAddress', class: 'ls-input', type: 'text', value: f.publicAddress, disabled: ro, placeholder: 'Street Name, Suburb VIC 3000', oninput: onEdit('publicAddress', (e) => e.target.value) }), FIELD_HELP.publicAddress),
     !ro && sugg && sugg !== f.publicAddress ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.form.publicAddress = sugg; LS.dirty = true; lsPaint(); lsLive(); }, text: 'Use suggested: ' + sugg }) : null,
-    lsEl('div', { class: 'ls-row' }, field('Web pricing mode', 'pricingMode', sel), priceField),
-    lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-f-featured', checked: f.featured, disabled: ro, onchange: (e) => { LS.form.featured = e.target.checked; LS.dirty = true; lsMarkDirty(); } }), ' Web featured (shown first when published)'),
+    lsEl('div', { class: 'ls-row' }, field('Price shown as', 'pricingMode', sel), priceField),
+    lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-f-featured', checked: f.featured, disabled: ro, onchange: (e) => { LS.form.featured = e.target.checked; LS.dirty = true; lsMarkDirty(); } }), ' Show this listing first on the website (featured)'),
     photosSection());
 }
 
@@ -360,6 +368,12 @@ function previewContent() {
     lsEl('div', { class: 'ls-pv-grid' }, lsEl('div', null, lsEl('h4', { class: 'ls-pv-h', text: 'Listing card' }), card), lsEl('div', null, lsEl('h4', { class: 'ls-pv-h', text: 'Detail page' }), detail)));
 }
 
+/** The listing's name is the address visitors see (the CRM address, with its house number, is only a reference line). */
+function lsListingName() {
+  const c = LS.d && LS.d.draft && LS.d.draft.content;
+  return (c && c.publicAddress && c.publicAddress.trim()) || (LS.d && LS.d.property && LS.d.property.suggestedPublicAddress) || (LS.d && LS.d.draft && LS.d.draft.label) || 'Listing';
+}
+
 function paintDraft(root) {
   if (LS.dErr) { root.append(errorPanel(LS.dErr, () => lsLoadDraft(lsRoute().id))); return; }
   if (!LS.d) { root.append(lsEl('div', { class: 'panel ls-state', text: 'Loading draft...' })); return; }
@@ -371,8 +385,9 @@ function paintDraft(root) {
   const pendingChange = LS.d.notion.changed.length && !LS.notionConflict ? lsEl('div', { class: 'ls-banner' }, 'The Notion record has changed since this draft started (' + LS.d.notion.changed.join(', ') + '). You will be asked to confirm when you save.') : null;
   root.append(lsEl('div', { class: 'panel' },
     lsEl('div', { class: 'panel-head' },
-      lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: LS.d.property.fullName }),
-        lsEl('div', { class: 'panel-sub', id: 'ls-ver-label', text: 'Website draft v' + d.version + ' · last saved by ' + d.updatedBy.split('@')[0] + ' ' + when(d.updatedAt) + ' · private, not on the website' })),
+      lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: lsListingName() }),
+        lsEl('div', { class: 'ls-sub', id: 'ls-crm-ref', text: 'From the CRM: ' + LS.d.property.fullName + ' (reference only, never published)' }),
+        lsEl('div', { class: 'panel-sub', id: 'ls-ver-label', text: 'Saved by ' + d.updatedBy.split('@')[0] + ' ' + when(d.updatedAt) + '. Changes you save here are not public until you publish.' })),
       lsEl('div', { class: 'ls-actions' }, lsEl('span', { id: 'ls-save-state', class: 'ls-sub', text: ro ? 'Read only' : LS.dirty ? 'Unsaved changes' : 'All changes saved' }),
         ro ? null : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-save-btn', disabled: LS.saving, onclick: () => lsSave(false), text: LS.saving ? 'Saving...' : 'Save draft' }))),
     lsEl('div', { class: 'ls-tabs', role: 'tablist' },
@@ -464,7 +479,7 @@ function lsAdoptPhotos(resp) {
   LS.d.photos = resp.photos;
   if (LS.live) { LS.live.photos = resp.photos; LS.live.draft = LS.d.draft; }
   const sub = document.getElementById('ls-ver-label');
-  if (sub) sub.textContent = 'Website draft v' + LS.d.draft.version + ' · last saved by ' + LS.d.draft.updatedBy.split('@')[0] + ' ' + when(LS.d.draft.updatedAt) + ' · private, not on the website';
+  if (sub) sub.textContent = 'Saved by ' + LS.d.draft.updatedBy.split('@')[0] + ' ' + when(LS.d.draft.updatedAt) + '. Changes you save here are not public until you publish.';
 }
 /* Validation, history and the preview come from the full draft: fetched in the background, never blocking the gallery. */
 function lsScheduleRefresh() {
