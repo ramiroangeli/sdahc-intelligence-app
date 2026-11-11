@@ -38,8 +38,8 @@ async function lsApi(method, path, body) {
 
 const lsRoute = () => {
   const h = location.hash || '';
-  let m = /^#\/listings\/draft\/(lst_[a-f0-9]{10})(\/preview|\/review)?$/.exec(h);
-  if (m) return { name: 'draft', id: m[1], tab: m[2] === '/preview' ? 'preview' : m[2] === '/review' ? 'review' : 'edit' };
+  let m = /^#\/listings\/draft\/(lst_[a-f0-9]{10})(\/preview|\/review|\/manage)?$/.exec(h);
+  if (m) return { name: 'draft', id: m[1], tab: m[2] === '/preview' ? 'preview' : m[2] === '/review' ? 'review' : m[2] === '/manage' ? 'manage' : 'edit' };
   if (h === '#/listings/new') return { name: 'new' };
   return { name: 'list' };
 };
@@ -100,7 +100,7 @@ function listingRow(l) {
   const siteCell = lsEl('td', null, l.draft && !l.website ? badge('Draft, not published', 'ls-badge-draft') : badge(dLabel, dClass),
     l.deployment.checkedAt ? lsEl('div', { class: 'ls-sub', text: 'Checked ' + new Date(l.deployment.checkedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }) }) : null);
   const draftCell = lsEl('td', null, l.draft
-    ? lsEl('div', null, lsEl('a', { class: 'ls-link-strong', href: '#/listings/draft/' + l.id, text: 'Draft v' + l.draft.version }),
+    ? lsEl('div', null, lsEl('a', { class: 'ls-link-strong', href: '#/listings/draft/' + l.id + (l.website ? '/manage' : ''), text: l.website ? 'Manage' : 'Draft v' + l.draft.version }),
         lsEl('div', { class: 'ls-sub', text: l.draft.fieldsFilled + ' of ' + l.draft.fieldsTotal + ' fields, ' + (l.draft.photoCount || 0) + ' photos, saved by ' + l.draft.updatedBy.split('@')[0] + ' ' + when(l.draft.updatedAt) }),
         l.draft.openNotes ? lsEl('div', { class: 'ls-sub ls-warn-text', text: l.draft.openNotes + ' open verification note' + (l.draft.openNotes > 1 ? 's' : '') }) : null)
     : lsEl('span', { class: 'ls-sub', text: 'None' }));
@@ -220,10 +220,16 @@ async function lsCreate(propertyId, adopt) {
 
 /* ------------------------------------------------------------------ draft editor */
 async function lsLoadDraft(id) {
-  LS.dErr = null; if (!LS.d || LS.d.draft.id !== id) LS.historyOpen = false; LS.d = LS.d && LS.d.draft.id === id ? LS.d : null; LS.dirty = false; lsPaint();
-  try { if (!LS.me) LS.me = await lsApi('GET', '/api/listings/me'); LS.d = await lsApi('GET', '/api/listings/draft?id=' + id); LS.form = { ...LS.d.draft.content }; LS.live = LS.d; if (lsRoute().tab === 'review') await lsLoadJobs(); }
+  LS.dErr = null; if (!LS.d || LS.d.draft.id !== id) { LS.historyOpen = false; LS.jobs = null; } LS.d = LS.d && LS.d.draft.id === id ? LS.d : null; LS.dirty = false; lsPaint();
+  try {
+    if (!LS.me) LS.me = await lsApi('GET', '/api/listings/me');
+    LS.d = await lsApi('GET', '/api/listings/draft?id=' + id); LS.form = { ...LS.d.draft.content }; LS.live = LS.d;
+    const tab = lsRoute().tab;
+    if (tab === 'review' || tab === 'manage') await lsLoadJobs();
+    else lsLoadJobs().then(lsRefreshSteps);   // only to know whether the listing is published (the Manage step); never blocks the screen
+  }
   catch (e) { LS.dErr = e.status || 0; }
-  lsPaint();
+  lsPaint(); if (lsRoute().tab === 'manage') lsSchedulePoll();
 }
 
 const FIELD_HELP = {
@@ -402,11 +408,12 @@ function lsListingName() {
 /** The three steps of a listing (Add listing comes before them, Manage after). Each step says where you are and what is done. */
 function lsStepper(tab, id) {
   const v = LS.live && LS.live.validation; const jobs = LS.jobs;
+  const published = lsIsPublished() || lsWithdrawn();
   const prepared = !!(v && v.complete && LS.live.photos && LS.live.photos.items.length > 0);
   const checked = !!(v && v.publishable);
-  const done = [prepared, checked, !!(jobs && jobs.noChanges) || !!(jobs && jobs.live && !(jobs.changes && jobs.changes.count))];
-  const steps = [['edit', 'Prepare', '#/listings/draft/' + id], ['preview', 'Preview and check', '#/listings/draft/' + id + '/preview'], ['review', 'Publish', '#/listings/draft/' + id + '/review']];
-  return lsEl('nav', { class: 'ls-steps', 'aria-label': 'Steps' }, steps.map(([key, label, href], i) => lsEl('a', { class: 'ls-step' + (tab === key ? ' active' : '') + (done[i] && tab !== key ? ' done' : ''), href, 'aria-current': tab === key ? 'step' : false },
+  const done = [prepared, checked, !!(jobs && jobs.noChanges) || !!(jobs && jobs.live && !(jobs.changes && jobs.changes.count)), false];
+  const steps = [['edit', 'Prepare', '#/listings/draft/' + id], ['preview', 'Preview and check', '#/listings/draft/' + id + '/preview'], ['review', 'Publish', '#/listings/draft/' + id + '/review'], ['manage', 'Manage', published ? '#/listings/draft/' + id + '/manage' : null]];
+  return lsEl('nav', { class: 'ls-steps', id: 'ls-steps', 'aria-label': 'Steps' }, steps.map(([key, label, href], i) => lsEl(href ? 'a' : 'span', { class: 'ls-step' + (tab === key ? ' active' : '') + (done[i] && tab !== key ? ' done' : '') + (href ? '' : ' off'), href, title: href ? false : 'Available once the listing is published', 'aria-current': tab === key ? 'step' : false, 'aria-disabled': href ? false : 'true' },
     lsEl('span', { class: 'ls-step-n', 'aria-hidden': 'true', text: done[i] && tab !== key ? '✓' : String(i + 1) }), ' ', label)));
 }
 /** Continue: save first when there are unsaved changes (the draft is the only thing that moves forward), then go to the next step. */
@@ -440,9 +447,9 @@ function paintDraft(root) {
     lsStepper(r.tab, d.id),
     flash, conflict, pendingChange,
     ro ? lsEl('div', { class: 'ls-banner', text: 'You have read-only access. Editors can change this draft.' }) : null,
-    lsEl('div', { class: 'ls-editor' + (r.tab === 'review' ? ' ls-editor-single' : '') },
-      lsEl('div', { class: 'ls-main' }, r.tab === 'edit' ? editForm() : r.tab === 'review' ? reviewContent() : lsEl('div', { id: 'ls-preview-host' }, previewContent()), lsStepFooter(r.tab, d.id)),
-      r.tab === 'review' ? null : lsEl('aside', { class: 'ls-side', id: 'ls-side' }, sideContent(r.tab)))));
+    lsEl('div', { class: 'ls-editor' + (r.tab === 'review' || r.tab === 'manage' ? ' ls-editor-single' : '') },
+      lsEl('div', { class: 'ls-main' }, r.tab === 'edit' ? editForm() : r.tab === 'review' ? reviewContent() : r.tab === 'manage' ? manageContent() : lsEl('div', { id: 'ls-preview-host' }, previewContent()), r.tab === 'manage' ? null : lsStepFooter(r.tab, d.id)),
+      r.tab === 'review' || r.tab === 'manage' ? null : lsEl('aside', { class: 'ls-side', id: 'ls-side' }, sideContent(r.tab)))));
 }
 
 
@@ -741,10 +748,12 @@ async function lsLoadJobs() {
 /* Polling only READS progress. The job itself runs on GitHub's servers and continues if this page is closed. */
 function lsSchedulePoll() {
   lsStopPolling();
-  if (lsRoute().tab !== 'review' || !LS.jobs || !LS.jobs.active) return;
-  lsPollTimer = setTimeout(async () => { await lsLoadJobs(); if (lsRoute().tab === 'review') { lsRefreshReview(); lsSchedulePoll(); } }, 5000);
+  const onTab = () => ['review', 'manage'].includes(lsRoute().tab);
+  if (!onTab() || !LS.jobs || !LS.jobs.active) return;
+  lsPollTimer = setTimeout(async () => { await lsLoadJobs(); if (onTab()) { lsRefreshReview(); lsRefreshSteps(); lsSchedulePoll(); } }, 5000);
 }
-function lsRefreshReview() { const h = document.getElementById('ls-review-host'); if (h) h.replaceWith(reviewContent()); }
+function lsRefreshReview() { const h = document.getElementById('ls-review-host'); if (h) h.replaceWith(lsRoute().tab === 'manage' ? manageContent() : reviewContent()); }
+function lsRefreshSteps() { const n = document.getElementById('ls-steps'); if (n && LS.d && lsRoute().name === 'draft') n.replaceWith(lsStepper(lsRoute().tab, LS.d.draft.id)); }
 
 /* Commercial status. Available, Under offer and Sold all stay public; a Sold page stops offering the property. Publishers choose it on the publish card. */
 const STATUS_LABEL = { available: 'Available', under_offer: 'Under offer', sold: 'Sold' };
@@ -893,6 +902,77 @@ async function lsStartPublish() {
   LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
 }
 
+/* ---- Manage (after the listing is published) --------------------------------------------------------------------------------------------
+   Two separate things are shown and never merged: the PUBLICATION state (is it on the website, and does the website match the saved draft?) and the
+   SELLING status (Available, Under offer, Sold). A listing can be Live and Under offer. */
+/** The publication state of this listing, from what the server reports. Pure. */
+function lsPublicationState(jobs, validation) {
+  if (jobs && jobs.withdrawn === true) return 'withdrawn';
+  if (jobs && jobs.active && (jobs.active.kind === 'publish' || jobs.active.kind === 'update' || jobs.active.kind === 'withdraw')) return 'publishing';
+  if (jobs && (jobs.live || jobs.publishedOnWebsite)) return jobs.changes && jobs.changes.count > 0 ? 'live_changes' : 'live';
+  return validation && validation.publishable ? 'ready' : 'draft';
+}
+/** What happened to this listing, in plain words, newest first. Jobs show for everyone; who changed the status (private audit) only for Publishers. Pure. */
+function lsHistory(jobs, history) {
+  const who = (e) => String(e || '').split('@')[0];
+  const out = [];
+  for (const j of (jobs && jobs.jobs) || []) {
+    if (j.kind === 'dry_run' || j.active) continue;
+    const ok = j.status === 'succeeded';
+    const what = j.kind === 'withdraw' ? (ok ? 'Withdrawn from public marketing' : 'Withdrawal did not complete') : j.kind === 'publish' ? (ok ? 'Published to the website' : 'Publishing did not complete') : (ok ? 'Published changes' : 'Publishing changes did not complete');
+    out.push({ at: j.finishedAt || j.createdAt, text: what, by: who(j.requestedBy), bad: !ok });
+  }
+  for (const r of (jobs && jobs.audit) || []) if (r.action === 'status_change') out.push({ at: r.at, text: 'Status changed from ' + (COMMERCIAL_LABEL[r.from] || r.from) + ' to ' + (COMMERCIAL_LABEL[r.to] || r.to), by: who(r.by), bad: false });
+  for (const h of history || []) if ((h.fields || []).includes('importedFromPublished')) out.push({ at: h.at, text: 'Brought in from the live website', by: who(h.by), bad: false });
+  return out.filter((x) => x.at).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+
+function manageContent() {
+  const d = LS.d; const jobs = LS.jobs; const ro = !d.permissions.canPublish;
+  const latest = jobs && jobs.jobs && jobs.jobs[0]; const active = jobs && jobs.active;
+  if (!jobs) return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' }, lsEl('div', { class: 'ls-rv-box', text: 'Loading...' }));
+  if (lsWithdrawn() && !active) return withdrawnView(ro, latest);
+  const state = lsPublicationState(jobs, d.validation); const live = jobs.live;
+  const sc = lsStatusChange(); const cur = lsWebsiteStatus(); const changes = jobs.changes; const waiting = changes && changes.count > 0;
+  const realActive = !!(active && isReal(active));
+  const failedLatest = latest && latest.status === 'failed' && !active && latest.kind !== 'dry_run' && latest.kind !== 'withdraw' && !jobNoChange(latest) ? latest : null;
+  const url = live && live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? live.url : null;
+
+  const head = lsEl('div', { class: 'ls-rv-box', id: 'ls-manage-head' },
+    lsEl('div', { class: 'ls-manage-pills' }, lsEl('span', { class: 'ls-sub', text: 'On the website: ' }), publicationBadge(state), cur ? lsEl('span', { class: 'ls-sub', text: ' Selling status: ' }) : null, cur ? commercialBadge(cur) : null,
+      url ? lsEl('a', { class: 'ls-link', href: url, target: '_blank', rel: 'noopener noreferrer', text: 'View the live page' }) : null),
+    waiting ? lsEl('div', { class: 'ls-banner', id: 'ls-waiting', role: 'status' }, lsEl('strong', { text: changes.count + (changes.count === 1 ? ' change is' : ' changes are') + ' waiting to be published: ' }), changes.items.map((i) => i.label).join(', ') + '. ',
+      lsEl('a', { class: 'ls-link', href: '#/listings/draft/' + d.draft.id + '/review', text: 'Review and publish' })) : null,
+    LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
+    realActive ? lsEl('div', { id: 'ls-progress' }, lsEl('h4', { class: 'ls-rv-title', text: 'Updating the website...' }), progressView(active), lsEl('div', { class: 'ls-sub', text: 'This takes about two minutes. You can close this page: it keeps going.' })) : null,
+    failedLatest ? (() => { const f = friendlyFailure(failedLatest); return lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', id: 'ls-failure' }, lsEl('strong', { text: f.what }), ' ', f.todo); })() : null);
+
+  // selling status: one control; the change is published together with any saved changes, and the screen says so
+  const statusCard = cur ? lsEl('div', { class: 'ls-rv-box', id: 'ls-status-card' }, lsEl('h3', { text: 'Selling status' }),
+    lsEl('p', { class: 'ls-sub', text: 'Shown on the listing page. The page stays public whichever you choose. A Sold page says so and stops offering the property for enquiry.' }),
+    ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can change it.' }) : lsEl('div', null,
+      lsEl('div', { class: 'ls-seg', role: 'group', 'aria-label': 'Selling status' }, Object.keys(COMMERCIAL_LABEL).map((k) => lsEl('button', { type: 'button', class: 'ls-seg-b' + (k === (sc || cur) ? ' on' : ''), 'data-status': k, 'aria-pressed': k === (sc || cur) ? 'true' : 'false', disabled: !!active || LS.jobBusy,
+        onclick: () => { LS.statusChoice = k === cur ? null : k; LS.soldConfirmed = false; lsRefreshReview(); }, text: COMMERCIAL_LABEL[k] }))),
+      sc ? lsEl('div', { class: 'ls-status-confirm' },
+        waiting ? lsEl('div', { class: 'ls-banner', id: 'ls-status-with-changes', role: 'status' }, 'Your ' + changes.count + (changes.count === 1 ? ' saved change' : ' saved changes') + ' (' + changes.items.map((i) => i.label).join(', ') + ') will be published together with this status.') : null,
+        sc === 'sold' ? lsEl('label', { class: 'ls-sold-confirm' }, lsEl('input', { type: 'checkbox', id: 'ls-sold-confirm', checked: !!LS.soldConfirmed, onchange: (e) => { LS.soldConfirmed = e.target.checked; lsRefreshReview(); } }), ' I confirm the property has sold. The listing page will say so and stop offering the property for enquiry.') : null,
+        lsEl('div', { class: 'ls-step-footer' }, lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-status-cancel', onclick: () => { LS.statusChoice = null; LS.soldConfirmed = false; lsRefreshReview(); }, text: 'Cancel' }), ' ',
+          lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-status-go', disabled: !!active || LS.jobBusy || (sc === 'sold' && !LS.soldConfirmed), onclick: lsStartPublish, text: LS.jobBusy ? 'Updating...' : (waiting ? 'Update status and publish changes' : 'Update status to ' + COMMERCIAL_LABEL[sc]) }))) : null)) : null;
+
+  const edit = lsEl('div', { class: 'ls-rv-box', id: 'ls-edit-card' }, lsEl('h3', { text: 'Edit this listing' }),
+    lsEl('p', { class: 'ls-sub', text: 'Change the text, price or photographs. Nothing changes on the website until you publish.' }),
+    lsEl('a', { class: 'btn btn-primary', id: 'ls-edit-btn', href: '#/listings/draft/' + d.draft.id, text: 'Edit details' }));
+
+  const items = lsHistory(jobs, LS.d.history).slice(0, 8);
+  const history = lsEl('div', { class: 'ls-rv-box', id: 'ls-history-card' }, lsEl('h3', { text: 'History' }),
+    items.length ? lsEl('ul', { class: 'ls-hist-plain' }, items.map((i) => lsEl('li', { class: i.bad ? 'bad' : '' }, lsEl('strong', { text: i.text }), lsEl('div', { class: 'ls-sub', text: when(i.at) + (i.by ? ' · ' + i.by : '') })))) : lsEl('div', { class: 'ls-sub', text: 'Nothing yet.' }),
+    lsIsAdmin() ? lsEl('details', { class: 'ls-admin ls-tech-box', id: 'ls-admin' }, lsEl('summary', { text: 'Technical details (administrators)' }), latest ? jobTimeline(latest) : lsEl('div', { class: 'ls-sub', text: 'No jobs yet.' }),
+      jobs.jobs.length > 1 ? lsEl('div', { class: 'ls-jobs-older' }, lsEl('h4', { class: 'ls-rv-title', text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: (j.kind === 'dry_run' ? 'test' : j.kind) + ', version ' + j.draftVersion + ': ' + (jobNoChange(j) ? 'no changes' : j.status === 'failed' ? 'did not complete' : j.status) + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null) : null);
+
+  const more = !ro && !(jobs.mergedUnverified) ? withdrawCard(ro, active) : null;
+  return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' }, head, statusCard, edit, history, more);
+}
+
 /* ---- the Publish step -------------------------------------------------------------------------------------------------------------------
    One primary action. The summary on this screen IS the confirmation (Sold keeps its extra tick). Staff see four friendly stages and, when something
    goes wrong, one sentence and what to do. Administrators can open the technical details and the optional test run. */
@@ -950,12 +1030,11 @@ function reviewContent() {
   const live = jobs && jobs.live; const stuck = jobs && jobs.mergedUnverified;
   const onSite = !live && !!(jobs && jobs.publishedOnWebsite);
   const published = !!(live || onSite);
-  const sc = lsStatusChange(); const curStatus = lsWebsiteStatus();
   const nochg = lsNoChanges();
   const changes = jobs && jobs.changes;
   const realActive = !!(active && isReal(active));
   const failedLatest = latest && latest.status === 'failed' && !active && latest.kind !== 'dry_run' && !jobNoChange(latest) ? latest : null;
-  const button = stuck ? 'Re-check and finish' : sc && jobs && jobs.noChanges ? 'Publish status change' : published ? 'Publish changes' : 'Publish to website';
+  const button = stuck ? 'Re-check and finish' : published ? 'Publish changes' : 'Publish to website';
   const heading = nochg ? 'Nothing to publish' : stuck ? 'Almost there' : published ? 'Publish changes' : startable ? 'Ready to publish' : 'Not ready to publish yet';
 
   const summary = [];
@@ -979,8 +1058,7 @@ function reviewContent() {
   const action = nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-no-changes', role: 'status' }, 'No changes to publish. This listing already matches what is on the website. Go back to "Prepare" when something needs to change.')
     : ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
     : lsEl('div', { class: 'ls-publish-action' },
-      sc === 'sold' ? lsEl('label', { class: 'ls-sold-confirm' }, lsEl('input', { type: 'checkbox', id: 'ls-sold-confirm', checked: !!LS.soldConfirmed, onchange: (e) => { LS.soldConfirmed = e.target.checked; lsRefreshReview(); } }), ' I confirm the property has sold. The listing page will say so and stop offering the property for enquiry.') : null,
-      lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured) || (sc === 'sold' && !LS.soldConfirmed), onclick: lsStartPublish,
+      lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: lsStartPublish,
         text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'Please wait...' : button }),
       !startable ? lsEl('ul', { class: 'ls-ferr', id: 'ls-publish-reasons' }, pf.map((m) => lsEl('li', { text: m }))) : null);
 
@@ -992,8 +1070,9 @@ function reviewContent() {
     latest ? jobTimeline(latest) : lsEl('div', { class: 'ls-sub', text: 'No jobs yet.' }),
     jobs && jobs.jobs.length > 1 ? lsEl('div', { class: 'ls-jobs-older' }, lsEl('h4', { class: 'ls-rv-title', text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: (j.kind === 'dry_run' ? 'test' : j.kind) + ', version ' + j.draftVersion + ': ' + (jobNoChange(j) ? 'no changes' : j.status === 'failed' ? 'did not complete' : j.status) + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null) : null;
 
-  const card = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' }, lsEl('h3', { text: heading }), summary, published && curStatus ? statusRow(ro, curStatus, sc) : null, body, action, tech);
-  return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' }, card, published && !stuck ? withdrawCard(ro, active) : null);
+  const card = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' }, lsEl('h3', { text: heading }), summary, body, action, tech,
+    published ? lsEl('p', { class: 'ls-sub' }, 'Selling status and withdrawal are on the ', lsEl('a', { class: 'ls-link', href: '#/listings/draft/' + d.draft.id + '/manage', text: 'Manage' }), ' page.') : null);
+  return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' }, card);
 }
 
 /* The website engine's own wording for advertising rules is technical; staff read it in plain words. The rules are unchanged. */

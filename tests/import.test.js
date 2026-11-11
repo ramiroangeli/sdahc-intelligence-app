@@ -477,7 +477,7 @@ test('UI: the status choice is a change only when it differs from the website, i
   u.LS.statusChoice = 'available'; assert.equal(u.lsStatusChange(), null); assert.deepEqual(JSON.parse(JSON.stringify(u.lsStatusFields())), {});
   u.LS.jobs = { websiteStatus: null, noChanges: false }; u.LS.statusChoice = 'sold'; assert.equal(u.lsStatusChange(), null, 'no status to change when the listing is not on the website');
   const src = readFileSync('listings.js', 'utf8');
-  assert.match(src, /Publish status change/); assert.match(src, /id: 'ls-sold-confirm'/); assert.match(src, /\(sc === 'sold' && !LS\.soldConfirmed\)/);
+  assert.match(src, /Update status to /); assert.match(src, /id: 'ls-sold-confirm'/); assert.match(src, /\(sc === 'sold' && !LS\.soldConfirmed\)/);
   assert.match(src, /LS\.statusChoice = null; LS\.soldConfirmed = false;/, 'the choice never survives a change of page');
 });
 

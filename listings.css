@@ -224,3 +224,17 @@ textarea.ls-input { resize: vertical; line-height: 1.5; }
 .ls-pick.picked { background: #EAF3FD; }
 .ls-pick.off { opacity: .6; cursor: not-allowed; }
 .ls-pick-main { display: flex; flex-direction: column; gap: 2px; }
+/* Manage */
+.ls-manage-pills { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.ls-seg { display: inline-flex; border: 1px solid var(--panel-border); border-radius: var(--radius-sm); overflow: hidden; background: var(--panel); }
+.ls-seg-b { border: 0; background: none; padding: 10px 18px; font-weight: 600; color: var(--ink-soft); border-right: 1px solid var(--panel-border); }
+.ls-seg-b:last-child { border-right: 0; }
+.ls-seg-b.on { background: var(--navy); color: #fff; }
+.ls-seg-b:disabled { opacity: .5; cursor: not-allowed; }
+.ls-status-confirm { margin-top: 12px; }
+.ls-hist-plain { list-style: none; margin: 8px 0 0; padding: 0; }
+.ls-hist-plain li { padding: 8px 0; border-top: 1px solid var(--panel-border); }
+.ls-hist-plain li:first-child { border-top: 0; }
+.ls-hist-plain li.bad strong { color: #A12622; }
+.ls-step.off { opacity: .5; cursor: not-allowed; }
+#view-listings a.btn { text-decoration: none; display: inline-block; }
