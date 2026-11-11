@@ -217,3 +217,64 @@ test('HEADER: the listing is named by the address visitors see; the CRM address 
   assert.equal(x.lsListingName(), 'Rutherford Grove');
   assert.ok(!/lsEl\('h2', \{ class: 'panel-title', text: LS\.d\.property\.fullName/.test(code), 'the internal address is never the page title');
 });
+
+/* ---------- UX PR 2: the three-step flow, friendly progress, administrators-only technical details ---------- */
+function flowBrowser() {
+  const ctx = { window: { addEventListener() {}, __lsPhotoTimings: [] }, document: { getElementById: () => null, createElement: () => ({}), body: { append() {} }, querySelectorAll: () => [], querySelector: () => null }, console, URL, performance, setTimeout, clearTimeout };
+  vm.createContext(ctx);
+  vm.runInContext(`${code}\n;globalThis.__f = { friendlyProgress, friendlyFailure, lsIsAdmin, LS };`, ctx);
+  return ctx.__f;
+}
+const J = (over) => JSON.parse(JSON.stringify(over));
+const st = (step, status = 'ok') => ({ step, status });
+
+test('PROGRESS: four friendly stages, one active at a time, a failure lands on the stage where it happened, and no technical word is shown', () => {
+  const f = flowBrowser();
+  const states = (j) => J(f.friendlyProgress(j)).map((x) => x.state).join();
+  assert.equal(states({ kind: 'update', active: true, steps: [st('requested'), st('dispatched')] }), 'active,pending,pending,pending');
+  assert.equal(states({ kind: 'update', active: true, steps: [st('requested'), st('build'), st('media'), st('pull_request')] }), 'done,done,active,pending');
+  assert.equal(states({ kind: 'update', active: false, status: 'failed', steps: [st('build'), st('media'), st('pull_request'), st('checks', 'failed')] }), 'done,done,failed,pending');
+  assert.equal(states({ kind: 'update', active: false, status: 'succeeded', steps: [] }), 'done,done,done,done');
+  assert.equal(states({ kind: 'update', active: false, status: 'failed', steps: [st('build', 'failed')] }), 'failed,pending,pending,pending');
+  const labels = J(f.friendlyProgress({ kind: 'update', steps: [] })).map((x) => x.label).join(' | ');
+  assert.equal(labels, 'Checking your listing | Preparing the photos | Publishing to the website | Confirming it is live');
+  assert.ok(!/GitHub|pull request|merge|deploy|engine|build|workflow|job|dry/i.test(labels));
+  assert.equal(J(f.friendlyProgress({ kind: 'withdraw', active: true, steps: [st('build')] })).map((x) => x.label + ':' + x.state).join(' | '), 'Checking the listing:done | Removing it from the website:active | Confirming it is gone:pending');
+});
+
+test('RECOVERY: a failure is one sentence plus what to do: after a merge "check again, nothing is redone", before it "nothing was changed"', () => {
+  const f = flowBrowser();
+  const before = J(f.friendlyFailure({ kind: 'update', error: { code: 'checks_failed' }, result: null }));
+  assert.match(before.what, /did not pass/); assert.match(before.todo, /Nothing was changed: the live page is exactly as it was/);
+  const after = J(f.friendlyFailure({ kind: 'update', error: { code: 'verify_failed' }, result: { merged: true } }));
+  assert.match(after.todo, /Press the button again to check it: nothing is redone/);
+  assert.match(J(f.friendlyFailure({ kind: 'withdraw', error: { code: 'verify_failed' }, result: { merged: true } })).todo, /Re-check withdrawal/);
+  for (const t of [before.what, before.todo, after.what, after.todo]) assert.ok(!/GitHub|pull request|workflow|engine|code:/i.test(t), t);
+});
+
+test('ADMIN ONLY: the technical timeline, the test run and the job list exist only inside the administrator block; staff see none of them', () => {
+  const f = flowBrowser();
+  f.LS.me = { capabilities: ['listings.view', 'listings.edit', 'listings.publish'] };
+  assert.equal(f.lsIsAdmin(), false);
+  f.LS.me = { capabilities: ['listings.view', 'listings.admin'] };
+  assert.equal(f.lsIsAdmin(), true);
+  f.LS.me = null; assert.equal(f.lsIsAdmin(), false);
+  const fn = code.slice(code.indexOf('function reviewContent()'), code.indexOf("/* The website engine's own wording"));
+  const gate = fn.indexOf('lsIsAdmin() ? lsEl(');
+  assert.ok(gate > 0, 'there is an administrator block');
+  const staff = fn.slice(0, gate);
+  for (const technical of ['jobTimeline(', 'lsStartDryRun', 'Earlier jobs', 'Technical details', 'Test without publishing']) assert.ok(!staff.includes(technical), `${technical} is visible to staff`);
+  const admin = fn.slice(gate);
+  for (const technical of ['jobTimeline(', 'lsStartDryRun', 'Earlier jobs', 'Technical details', 'Test without publishing']) assert.ok(admin.includes(technical), `${technical} missing for administrators`);
+  assert.ok(!/GitHub|pull request|engine|workflow|deployment/i.test(staff.replace(/\/\*[^]*?\*\//g, '')), 'no technical vocabulary in what staff see');
+});
+
+test('FLOW: three steps (Prepare, Preview and check, Publish) with ONE primary action each; one confirmation; no duplicate review tab', () => {
+  assert.match(code, /\['edit', 'Prepare'/); assert.match(code, /\['preview', 'Preview and check'/); assert.match(code, /\['review', 'Publish'/);
+  assert.ok(!/ls-tabs|Private preview'|text: 'Review & publish'/.test(code), 'the three tabs are gone');
+  const footer = code.slice(code.indexOf('function lsStepFooter'), code.indexOf('function paintDraft'));
+  assert.equal((footer.match(/btn btn-primary/g) || []).length, 2, 'Prepare and Preview each end in one primary button; Publish has its own');
+  const pub = code.slice(code.indexOf('function reviewContent()'), code.indexOf("/* The website engine's own wording"));
+  assert.equal((pub.match(/class: 'btn btn-primary'/g) || []).length, 1, 'the Publish step has exactly one primary button');
+  assert.match(pub, /Publish to website/); assert.match(pub, /Publish changes/); assert.ok(!/Yes, publish|Approve and publish|Publish update/.test(pub));
+});

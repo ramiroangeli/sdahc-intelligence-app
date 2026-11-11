@@ -26,8 +26,8 @@ export function cleanReason(raw) {
 }
 
 /** What the website shows for this listing: { approved: snapshot|null, withdrawn: bool }, or null when the website cannot be read. */
-export async function websiteState(cfg, id, fetchImpl) {
-  try { const s = await loadSnapshots(cfg, { fetchImpl }); return { approved: s.approved.get(id) ?? null, withdrawn: s.withdrawn.has(id) }; } catch { return null; }
+export async function websiteState(cfg, id, fetchImpl, { ttlMs } = {}) {
+  try { const s = await loadSnapshots(cfg, { fetchImpl, ...(ttlMs !== undefined ? { ttlMs } : {}) }); return { approved: s.approved.get(id) ?? null, withdrawn: s.withdrawn.has(id) }; } catch { return null; }
 }
 
 export async function startWithdrawal({ cfg, db, id, body, actor, session, fetchImpl, env }) {

@@ -369,13 +369,13 @@ test('REVIEW SCREEN: a third tab, read-only polling, a dry run, and a confirmed 
   const { readFileSync } = await import('node:fs');
   const code = readFileSync('listings.js', 'utf8');
   assert.match(code, /\(\\\/preview\|\\\/review\)\?\$/);
-  assert.match(code, /text: 'Review & publish'/);
+  assert.match(code, /'Publish', '#\/listings\/draft\/' \+ id \+ '\/review'/);
   assert.match(code, /mode: 'dry_run'/);
   assert.equal((code.match(/mode: 'withdraw'/g) || []).length, 2, 'withdrawal is requested in exactly one function (a withdrawal, or a re-check of one), and only after the typed-address confirmation');
   assert.match(code, /id: 'ls-withdraw-confirm', disabled: !lsWithdrawReady\(\) \|\| busy, onclick: \(\) => lsStartWithdraw\(false\)/);
   assert.match(code, /mode: kind/); assert.match(code, /'update' : 'publish'/);
   // publishing needs a second, explicit confirmation; the first button only opens it
-  assert.match(code, /id: 'ls-publish-btn'[^]*LS\.confirmPublish = true/); assert.match(code, /id: 'ls-publish-confirm', disabled: [^,]+, onclick: lsStartPublish/);
+  assert.ok(!/confirmPublish/.test(code), 'one confirmation: the summary on the Publish step is the confirmation, there is no second "Yes, publish"'); assert.match(code, /id: 'ls-publish-btn'[^]*onclick: lsStartPublish/);
   const startFn = code.slice(code.indexOf('async function lsStartPublish'), code.indexOf('function reviewContent'));
   assert.ok(/lsApi\('POST'/.test(startFn) && !/setInterval|setTimeout/.test(startFn));
   // Live is shown only from the server's verified record (jobs.live), never from the browser's own guess
@@ -575,7 +575,7 @@ test('MERGED BUT NOT VERIFIED: a failure after the merge is shown as merged-not-
   const done = await history(ctx);
   assert.equal(done.mergedUnverified, null); assert.equal(done.live.jobId, c.id);
   const code = (await import('node:fs')).readFileSync('listings.js', 'utf8');
-  assert.match(code, /Merged, not yet confirmed live/); assert.ok(!/unless a step above shows it merged/.test(code));
+  assert.match(code, /reached the website but could not be confirmed yet/); assert.ok(!/unless a step above shows it merged/.test(code));
 });
 
 test('PUBLIC STORE CHECK: administrators only; GET reads, POST also writes a probe; the answer is a verdict, never a credential', async () => {

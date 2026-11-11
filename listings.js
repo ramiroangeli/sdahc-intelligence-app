@@ -234,7 +234,7 @@ function lsRefreshLive() {
     ul.replaceChildren(...e.map((m) => lsEl('li', { text: m })));
   }
   const side = document.getElementById('ls-side');
-  if (side) side.replaceChildren(...sideContent());
+  if (side) side.replaceChildren(...sideContent(lsRoute().tab));
   const pv = document.getElementById('ls-preview-host');
   if (pv) pv.replaceChildren(previewContent());
 }
@@ -269,7 +269,7 @@ async function lsVerify(item) {
   lsPaint();
 }
 
-function sideContent() {
+function sideContent(tab) {
   const v = LS.live.validation; const ver = LS.live.verification; const p = LS.d.property; const nodes = [];
   // readiness
   const items = [
@@ -279,16 +279,16 @@ function sideContent() {
     ['Commercial verification clear', ver.open === 0],
     ['Advertising sign-off', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
   ];
-  nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'Readiness' }),
+  nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'Before you publish' }),
     lsEl('div', { class: 'ls-ready ' + (v.publishable ? 'ok' : 'no'), text: v.publishable ? 'Ready for publication review' : 'Not ready to publish' }),
     lsEl('ul', { class: 'ls-check' }, items.map(([t, ok]) => lsEl('li', { class: ok ? 'ok' : 'no' }, lsEl('span', { 'aria-hidden': 'true', text: ok ? '✓' : '○' }), ' ', t))),
     v.errors.length ? lsEl('div', { class: 'ls-errs' }, lsEl('strong', { text: 'To fix' }), lsEl('ul', null, v.errors.map((e) => lsEl('li', { text: e.message })))) : null,
-    v.blockers.length ? lsEl('div', { class: 'ls-blocks' }, lsEl('strong', { text: 'Before publication' }), lsEl('ul', null, v.blockers.map((b) => lsEl('li', { text: b.message })))) : null,
+    v.blockers.length ? lsEl('div', { class: 'ls-blocks', id: 'ls-signoff' }, lsEl('strong', { text: 'Before publication' }), lsEl('ul', null, v.blockers.map((b) => lsEl('li', { text: b.message })))) : null,
     v.warnings.length ? lsEl('div', { class: 'ls-sub', text: v.warnings.map((w) => w.message).join(' ') }) : null,
     v.slug ? lsEl('div', { class: 'ls-sub', text: 'Website path: /opportunities/' + v.slug + '/' }) : null));
   // verification
   const all = [...ver.system, ...ver.notes];
-  nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'Commercial verification' }),
+  nodes.push(lsEl('div', { class: 'ls-card' }, lsEl('h3', { text: 'Notes for review' }),
     all.length === 0 ? lsEl('div', { class: 'ls-sub', text: 'Nothing flagged.' }) : lsEl('ul', { class: 'ls-ver' }, all.map((i) => verifyItem(i))),
     !readOnly() ? lsEl('div', { class: 'ls-note-add' }, lsEl('textarea', { id: 'ls-note-text', class: 'ls-input', rows: '2', maxlength: '500', placeholder: 'Add a note for something to verify, for example an advertised figure that differs from the CRM' }),
       lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-note-btn', onclick: lsAddNote, text: 'Add verification note' })) : null));
@@ -307,7 +307,9 @@ function sideContent() {
       lsEl('span', { text: 'History' }), lsEl('span', { class: 'ls-hist-count', text: String(LS.d.history.length) }), lsEl('span', { class: 'ls-hist-chev', 'aria-hidden': 'true' }))),
     lsEl('div', { id: 'ls-hist-panel', class: 'ls-hist-panel', role: 'region', 'aria-labelledby': 'ls-hist-toggle', hidden: !hOpen },
       lsEl('ul', { class: 'ls-hist' }, LS.d.history.map((h) => lsEl('li', null, lsEl('strong', { text: 'v' + h.version + ' ' + h.action }), ' ', h.by.split('@')[0], ' ', when(h.at), h.fields.length ? lsEl('div', { class: 'ls-sub', text: h.fields.join(', ') }) : null))))));
-  return nodes;
+  // Prepare: what is missing, and the CRM reference. Preview and check: what is missing, the notes for review, and the history. Never the same card twice.
+  const pick = tab === 'preview' ? [0, 1, 3] : [0, 2];
+  return pick.map((i) => nodes[i]);
 }
 
 function lsToggleHistory() {
@@ -374,6 +376,28 @@ function lsListingName() {
   return (c && c.publicAddress && c.publicAddress.trim()) || (LS.d && LS.d.property && LS.d.property.suggestedPublicAddress) || (LS.d && LS.d.draft && LS.d.draft.label) || 'Listing';
 }
 
+/** The three steps of a listing (Add listing comes before them, Manage after). Each step says where you are and what is done. */
+function lsStepper(tab, id) {
+  const v = LS.live && LS.live.validation; const jobs = LS.jobs;
+  const prepared = !!(v && v.complete && LS.live.photos && LS.live.photos.items.length > 0);
+  const checked = !!(v && v.publishable);
+  const done = [prepared, checked, !!(jobs && jobs.noChanges) || !!(jobs && jobs.live && !(jobs.changes && jobs.changes.count))];
+  const steps = [['edit', 'Prepare', '#/listings/draft/' + id], ['preview', 'Preview and check', '#/listings/draft/' + id + '/preview'], ['review', 'Publish', '#/listings/draft/' + id + '/review']];
+  return lsEl('nav', { class: 'ls-steps', 'aria-label': 'Steps' }, steps.map(([key, label, href], i) => lsEl('a', { class: 'ls-step' + (tab === key ? ' active' : '') + (done[i] && tab !== key ? ' done' : ''), href, 'aria-current': tab === key ? 'step' : false },
+    lsEl('span', { class: 'ls-step-n', 'aria-hidden': 'true', text: done[i] && tab !== key ? '✓' : String(i + 1) }), ' ', label)));
+}
+/** Continue: save first when there are unsaved changes (the draft is the only thing that moves forward), then go to the next step. */
+async function lsContinue(hash) {
+  if (LS.dirty && !readOnly()) await lsSave(false);
+  if (!LS.dirty) lsGo(hash);
+}
+function lsStepFooter(tab, id) {
+  const back = (hash) => lsEl('a', { class: 'btn btn-secondary', href: hash, text: 'Back' });
+  if (tab === 'edit') return lsEl('div', { class: 'ls-step-footer' }, lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-continue', onclick: () => lsContinue('#/listings/draft/' + id + '/preview'), text: 'Continue to Preview and check' }));
+  if (tab === 'preview') return lsEl('div', { class: 'ls-step-footer' }, back('#/listings/draft/' + id), ' ', lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-continue', onclick: () => lsGo('#/listings/draft/' + id + '/review'), text: 'Continue to Publish' }));
+  return lsEl('div', { class: 'ls-step-footer' }, back('#/listings/draft/' + id + '/preview'));
+}
+
 function paintDraft(root) {
   if (LS.dErr) { root.append(errorPanel(LS.dErr, () => lsLoadDraft(lsRoute().id))); return; }
   if (!LS.d) { root.append(lsEl('div', { class: 'panel ls-state', text: 'Loading draft...' })); return; }
@@ -388,17 +412,14 @@ function paintDraft(root) {
       lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: lsListingName() }),
         lsEl('div', { class: 'ls-sub', id: 'ls-crm-ref', text: 'From the CRM: ' + LS.d.property.fullName + ' (reference only, never published)' }),
         lsEl('div', { class: 'panel-sub', id: 'ls-ver-label', text: 'Saved by ' + d.updatedBy.split('@')[0] + ' ' + when(d.updatedAt) + '. Changes you save here are not public until you publish.' })),
-      lsEl('div', { class: 'ls-actions' }, lsEl('span', { id: 'ls-save-state', class: 'ls-sub', text: ro ? 'Read only' : LS.dirty ? 'Unsaved changes' : 'All changes saved' }),
-        ro ? null : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-save-btn', disabled: LS.saving, onclick: () => lsSave(false), text: LS.saving ? 'Saving...' : 'Save draft' }))),
-    lsEl('div', { class: 'ls-tabs', role: 'tablist' },
-      lsEl('a', { class: 'ls-tab' + (r.tab === 'edit' ? ' active' : ''), role: 'tab', href: '#/listings/draft/' + d.id, text: 'Edit' }),
-      lsEl('a', { class: 'ls-tab' + (r.tab === 'preview' ? ' active' : ''), role: 'tab', href: '#/listings/draft/' + d.id + '/preview', text: 'Private preview' }),
-      lsEl('a', { class: 'ls-tab' + (r.tab === 'review' ? ' active' : ''), role: 'tab', id: 'ls-tab-review', href: '#/listings/draft/' + d.id + '/review', text: 'Review & publish' })),
+      r.tab === 'edit' ? lsEl('div', { class: 'ls-actions' }, lsEl('span', { id: 'ls-save-state', class: 'ls-sub', text: ro ? 'Read only' : LS.dirty ? 'Unsaved changes' : 'All changes saved' }),
+        ro ? null : lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-save-btn', disabled: LS.saving, onclick: () => lsSave(false), text: LS.saving ? 'Saving...' : 'Save' })) : null),
+    lsStepper(r.tab, d.id),
     flash, conflict, pendingChange,
     ro ? lsEl('div', { class: 'ls-banner', text: 'You have read-only access. Editors can change this draft.' }) : null,
-    lsEl('div', { class: 'ls-editor' },
-      lsEl('div', { class: 'ls-main' }, r.tab === 'edit' ? editForm() : r.tab === 'review' ? reviewContent() : lsEl('div', { id: 'ls-preview-host' }, previewContent())),
-      lsEl('aside', { class: 'ls-side', id: 'ls-side' }, sideContent()))));
+    lsEl('div', { class: 'ls-editor' + (r.tab === 'review' ? ' ls-editor-single' : '') },
+      lsEl('div', { class: 'ls-main' }, r.tab === 'edit' ? editForm() : r.tab === 'review' ? reviewContent() : lsEl('div', { id: 'ls-preview-host' }, previewContent()), lsStepFooter(r.tab, d.id)),
+      r.tab === 'review' ? null : lsEl('aside', { class: 'ls-side', id: 'ls-side' }, sideContent(r.tab)))));
 }
 
 
@@ -714,7 +735,7 @@ const lsStatusFields = () => { const c = lsStatusChange(); return c ? { commerci
 function statusRow(ro, current, change) {
   const label = lsEl('div', { class: 'ls-sub', id: 'ls-status-now', text: 'Public status on the website now: ' + STATUS_LABEL[current] + '.' });
   if (ro) return label;
-  const sel = lsEl('select', { id: 'ls-status-select', class: 'ls-input', 'aria-label': 'Public status', onchange: (e) => { LS.statusChoice = e.target.value === current ? null : e.target.value; LS.soldConfirmed = false; LS.confirmPublish = false; lsRefreshReview(); } },
+  const sel = lsEl('select', { id: 'ls-status-select', class: 'ls-input', 'aria-label': 'Public status', onchange: (e) => { LS.statusChoice = e.target.value === current ? null : e.target.value; LS.soldConfirmed = false; lsRefreshReview(); } },
     Object.keys(STATUS_LABEL).map((k) => lsEl('option', { value: k, selected: k === (change || current), text: STATUS_LABEL[k] })));
   return lsEl('div', { class: 'ls-statusrow' }, label, lsEl('label', { class: 'ls-sub', for: 'ls-status-select', text: 'Change the public status: ' }), sel,
     change ? lsEl('div', { class: 'ls-banner', id: 'ls-status-pending', role: 'status' }, 'The status will change to ' + STATUS_LABEL[change] + ' when you publish below.' + (change === 'sold' ? ' A Sold page stays public but no longer offers the property for enquiry.' : '')) : null);
@@ -826,7 +847,7 @@ const lsIsPublished = () => !!(LS.jobs && (LS.jobs.live || LS.jobs.publishedOnWe
 async function lsStartPublish() {
   if (LS.jobBusy) return;
   const kind = lsIsPublished() ? 'update' : 'publish';
-  LS.jobBusy = true; LS.jobFlash = null; LS.confirmPublish = false; lsRefreshReview();
+  LS.jobBusy = true; LS.jobFlash = null; lsRefreshReview();
   try {
     const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: kind, ...lsStatusFields() });
     LS.jobFlash = { ok: out.existing ? 'This version has already been published.' : 'Publishing started. It runs on the server: you can close this page. The listing shows as Live only after the website has been checked.' };
@@ -849,81 +870,107 @@ async function lsStartPublish() {
   LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
 }
 
+/* ---- the Publish step -------------------------------------------------------------------------------------------------------------------
+   One primary action. The summary on this screen IS the confirmation (Sold keeps its extra tick). Staff see four friendly stages and, when something
+   goes wrong, one sentence and what to do. Administrators can open the technical details and the optional test run. */
+const lsIsAdmin = () => !!(LS.me && Array.isArray(LS.me.capabilities) && LS.me.capabilities.includes('listings.admin'));
+
+const STEP_ORDER = ['requested', 'media_copy', 'dispatched', 'started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'media', 'pull_request', 'checks', 'merge', 'deploy', 'verify', 'finished'];
+/** Friendly stages for a job, in plain words. Each stage closes on one technical step; no technical word is shown. Pure. */
+function friendlyProgress(j) {
+  const stages = j.kind === 'withdraw'
+    ? [['Checking the listing', 'build'], ['Removing it from the website', 'merge'], ['Confirming it is gone', 'verify']]
+    : [['Checking your listing', 'build'], ['Preparing the photos', 'media'], ['Publishing to the website', 'merge'], ['Confirming it is live', 'verify']];
+  const steps = j.steps || [];
+  const ok = new Set(steps.filter((x) => x.status === 'ok').map((x) => x.step));
+  const failed = steps.find((x) => x.status === 'failed');
+  const failedAt = failed ? STEP_ORDER.indexOf(failed.step) : -1;
+  let activeGiven = false; let prevClose = -1;
+  return stages.map(([label, closing]) => {
+    const done = j.status === 'succeeded' || ok.has(closing);
+    const closeAt = STEP_ORDER.indexOf(closing);
+    // a failure belongs to the first stage that has not closed and that its step falls in
+    const failedHere = !done && failedAt > prevClose && failedAt <= closeAt;
+    prevClose = closeAt;
+    let state = done ? 'done' : failedHere ? 'failed' : 'pending';
+    if (state === 'pending' && j.active && !activeGiven) { state = 'active'; activeGiven = true; }
+    if (state === 'failed') activeGiven = true;
+    return { label, state };
+  });
+}
+function progressView(j) {
+  return lsEl('ol', { class: 'ls-prog', 'aria-label': 'Progress' }, friendlyProgress(j).map((st) => lsEl('li', { class: 'ls-prog-' + st.state },
+    lsEl('span', { class: 'ls-prog-dot', 'aria-hidden': 'true', text: st.state === 'done' ? '✓' : st.state === 'failed' ? '✗' : '' }), ' ', st.label)));
+}
+/** One sentence about what happened, and what to do. No codes (administrators have those under Technical details). */
+function friendlyFailure(j) {
+  const merged = !!(j.result && j.result.merged);
+  const what = j.error ? errText(j.error, j.kind) : (j.kind === 'withdraw' ? 'The withdrawal did not complete.' : 'The publication did not complete.');
+  const todo = merged ? (j.kind === 'withdraw' ? 'Use "Re-check withdrawal": nothing is redone.' : 'Press the button again to check it: nothing is redone.')
+    : 'Nothing was changed: the live page is exactly as it was. Try again, and if it fails again tell an administrator.';
+  return { what, todo };
+}
+
 function reviewContent() {
-  const d = LS.d; const v = d.validation; const pv = d.preview; const c = d.draft.content; const ph = d.photos; const ro = !d.permissions.canPublish;
-  const dirty = LS.dirty;
+  const d = LS.d; const v = d.validation; const c = d.draft.content; const ph = d.photos; const ro = !d.permissions.canPublish;
   const pf = [];
-  if (!v.complete) pf.push('Complete the required fields.');
+  if (!v.complete) pf.push('Complete the required details.');
   if (!ph.items.some((p) => p.kind !== 'floorplan')) pf.push('Add at least one photograph.');
   if (!ph.readiness.ready) pf.push('Fix the flagged photo descriptions.');
-  if (d.notion.changed.length) pf.push('The Notion record changed: review it and save the draft.');
-  if (dirty) pf.push('Save your changes: this review shows the saved draft.');
+  if (v.blockers.some((b) => !['photos_required', 'photo_alt'].includes(b.code))) pf.push('Finish the items in "Preview and check".');
+  if (d.notion.changed.length) pf.push('The CRM record changed: review it and save the draft.');
+  if (LS.dirty) pf.push('Save your changes first: this step shows the saved draft.');
   const startable = pf.length === 0;
-  const stops = v.blockers.filter((b) => !['photos_required', 'photo_alt'].includes(b.code));
   const jobs = LS.jobs; const active = jobs && jobs.active; const latest = jobs && jobs.jobs && jobs.jobs[0];
   if (lsWithdrawn() && !active) return withdrawnView(ro, latest);
 
-  const checklist = [
-    ['Required fields are complete', v.complete], ['Photographs added and described', ph.items.some((p) => p.kind !== 'floorplan') && ph.readiness.ready],
-    ['Commercial verification accepted', d.verification.open === 0], ['Advertising sign-off', !v.blockers.some((b) => b.code === 'victoria_compliance' || b.code === 'basic_classification')],
-  ];
-  const finalCard = lsEl('div', { class: 'ls-rv-box' },
-    lsEl('h3', { text: 'Final public content' }),
-    lsEl('div', { class: 'ls-sub', text: 'Exactly what visitors will read, from the saved draft. Internal address, prices and income are never part of it.' }),
-    lsEl('h4', { class: 'ls-rv-title', text: pv.title || '(no title)' }), pv.titleIsDefault ? lsEl('div', { class: 'ls-sub', text: 'Default title: no title was written.' }) : null,
-    lsEl('dl', { class: 'ls-facts' }, [['Public address', pv.addressLine || 'Not set'], ['Pricing', pv.pricing || 'Not set'], ['Design category', pv.design.join(', ') || 'Not set'], ['Building', pv.buildType || 'Not set'],
-      ['Featured', c.featured ? 'Yes' : 'No'], ['Page', v.slug ? '/opportunities/' + v.slug + '/' : 'Not available yet']].map(([k, val]) => [lsEl('dt', { text: k }), lsEl('dd', { text: val })])),
-    ...(pv.description.length ? pv.description.map((t) => lsEl('p', { text: t })) : [lsEl('p', { class: 'ls-sub', text: '(no description yet)' })]));
-  const photoCard = lsEl('div', { class: 'ls-rv-box' },
-    lsEl('h3', { text: 'Photographs, in publication order' }),
-    ph.items.length ? lsEl('ol', { class: 'ls-rv-photos' }, ph.items.map((p, i) => lsEl('li', null, lsEl('div', { class: 'ls-rv-ph' }, lsPhotoImg(p.id, 480, p.altText), lsEl('span', { class: 'ls-ph-pos', text: String(i + 1) }), p.cover ? lsEl('span', { class: 'ls-ph-flag', text: 'Cover' }) : p.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null),
-      lsEl('div', { class: 'ls-sub', text: p.altText + (p.altFallback ? ' (neutral text)' : '') })))) : lsEl('div', { class: 'ls-sub', text: 'No images yet.' }),
-    lsEl('div', { class: 'ls-sub', text: 'Publishing approves these photographs with the listing. The automatic checks (no location data, size, type, descriptions) have already run.' }));
-  const openItems = [...d.verification.system, ...d.verification.notes].filter((i) => i.status === 'open' || i.verifiedBy || i.resolvedBy);
-  const verifyCard = lsEl('div', { class: 'ls-rv-box' },
-    lsEl('h3', { text: 'Commercial verification and advertising sign-off' }),
-    openItems.length ? lsEl('ul', { class: 'ls-ver' }, openItems.map((i) => verifyItem(i))) : lsEl('div', { class: 'ls-sub', text: 'Nothing flagged.' }),
-    stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').length ? lsEl('div', { class: 'ls-blocks', id: 'ls-signoff' }, lsEl('strong', { text: 'Advertising sign-off' }), lsEl('ul', null, stops.filter((b) => b.code !== 'verification' && b.code !== 'verification_note').map((b) => lsEl('li', { text: b.message })))) : null);
-  const nochg = lsNoChanges();
-  const dryCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-dry' },
-    lsEl('h3', { text: 'Dry run (optional)' }),
-    lsEl('p', { class: 'ls-sub', text: 'A dry run is an optional rehearsal: you can publish without running one. It runs the website\'s own checks on this exact content (the publication rules, the test suite, a test build and the privacy scan). Nothing is published, the property record is not changed and no photograph becomes public.' }),
-    nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-dry-nochanges', role: 'status' }, 'No changes to publish. This listing already matches what is on the website, so there is nothing to check.') : null,
-    !nochg && !startable ? lsEl('ul', { class: 'ls-ferr', id: 'ls-dry-reasons' }, pf.map((m) => lsEl('li', { text: m }))) : null,
-    LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
-    LS.jobErr ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: 'The job history could not be read right now.' }) : null,
-    jobs && !jobs.configured ? lsEl('div', { class: 'ls-banner', text: 'Publishing is not set up correctly: an administrator needs to check the publishing settings.' }) : null,
-    ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can run a dry run.' }) : nochg ? null : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-dry-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: lsStartDryRun, text: LS.jobBusy ? 'Starting...' : active ? 'A job is running...' : 'Run dry run' }),
-    active ? lsEl('div', { class: 'ls-sub', text: 'This keeps running on the server if you close the page.' }) : null,
-    latest ? jobTimeline(latest) : null,
-    jobs && jobs.jobs.length > 1 ? lsEl('details', { class: 'ls-jobs-older' }, lsEl('summary', { text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: (j.kind === 'dry_run' ? 'dry run' : j.kind) + ', version ' + j.draftVersion + ': ' + (jobNoChange(j) ? 'no changes' : j.status === 'failed' ? 'did not complete' : j.status) + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null);
   const live = jobs && jobs.live; const stuck = jobs && jobs.mergedUnverified;
-  const realActive = !!(active && isReal(active));
   const onSite = !live && !!(jobs && jobs.publishedOnWebsite);
+  const published = !!(live || onSite);
   const sc = lsStatusChange(); const curStatus = lsWebsiteStatus();
-  const verb = stuck ? 'Re-check and finish publishing' : sc && LS.jobs && LS.jobs.noChanges ? 'Publish status change' : live || onSite ? 'Publish update' : 'Approve and publish';
-  const publishCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' },
-    lsEl('h3', { text: live ? 'Live on the website' : onSite ? 'Publish update' : 'Approve and publish' }),
-    stuck && !(active && isReal(active)) ? lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'Merged, not yet confirmed live. The last publication merged into the website but the live page could not be verified. It is not shown as Live. Use the button below to re-check it.') : null,
-    live ? lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Verified on the website ', when(live.since), live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open the live page' })] : null) : null,
-    onSite && !nochg ? lsEl('div', { class: 'ls-banner', id: 'ls-on-website', role: 'status' }, 'This listing is already on the website. Publishing sends your saved changes as an update and keeps the existing page address. It shows as Live here once the update has been checked.') : null,
-    (live || onSite) && curStatus ? statusRow(ro, curStatus, sc) : null,
-    lsEl('p', { class: 'ls-sub', text: live || onSite ? 'Changes saved after publishing are not public until you publish an update. The live page keeps showing the last verified version until the update has been checked.'
-      : 'Publishing makes this exact saved version public. The images are copied to the public store, a pull request with only this listing is checked and merged, and the listing shows as Live here only after the live page, its images and the catalogue have been checked. If anything fails, the current website is left untouched.' }),
-    nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-no-changes', role: 'status' }, 'No changes to publish. This listing already matches what is on the website. Edit and save the draft when something needs to change.')
-      : ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
-      : LS.confirmPublish ? lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm publication' },
-        lsEl('p', null, lsEl('strong', { text: sc ? 'Change the public status to ' + STATUS_LABEL[sc] + (LS.jobs && LS.jobs.noChanges ? '?' : ' and publish your saved changes?') : live || onSite ? 'Publish this version as an update to the live listing?' : 'Publish this listing to the live website?' }), ' It will be visible to the public once checked.'),
-        sc === 'sold' ? lsEl('label', { class: 'ls-sold-confirm' }, lsEl('input', { type: 'checkbox', id: 'ls-sold-confirm', checked: !!LS.soldConfirmed, onchange: (e) => { LS.soldConfirmed = e.target.checked; lsRefreshReview(); } }), ' I confirm the property has sold. The listing page will say so and stop offering the property for enquiry.') : null,
-        lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-confirm', disabled: sc === 'sold' && !LS.soldConfirmed, onclick: lsStartPublish, text: sc ? 'Yes, change the status' : 'Yes, publish' }), ' ',
-        lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-publish-cancel', onclick: () => { LS.confirmPublish = false; lsRefreshReview(); }, text: 'Cancel' }))
-      : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: () => { LS.confirmPublish = true; lsRefreshReview(); },
-        text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'A job is running.' : verb }),
-    !ro && !nochg && !startable ? lsEl('div', { class: 'ls-sub', text: 'Finish the items above first.' }) : null);
-  return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' },
-    lsEl('div', { class: 'ls-banner' }, 'Review the final listing, optionally run the dry run, then publish. This screen shows the saved draft.'),
-    lsEl('ul', { class: 'ls-check ls-rv-check' }, checklist.map(([t, ok]) => lsEl('li', { class: ok ? 'ok' : 'no' }, lsEl('span', { 'aria-hidden': 'true', text: ok ? '✓' : '○' }), ' ', t))),
-    finalCard, photoCard, verifyCard, dryCard, publishCard, (live || onSite) && !stuck ? withdrawCard(ro, active) : null);
+  const nochg = lsNoChanges();
+  const changes = jobs && jobs.changes;
+  const realActive = !!(active && isReal(active));
+  const failedLatest = latest && latest.status === 'failed' && !active && latest.kind !== 'dry_run' && !jobNoChange(latest) ? latest : null;
+  const button = stuck ? 'Re-check and finish' : sc && jobs && jobs.noChanges ? 'Publish status change' : published ? 'Publish changes' : 'Publish to website';
+  const heading = nochg ? 'Nothing to publish' : stuck ? 'Almost there' : published ? 'Publish changes' : startable ? 'Ready to publish' : 'Not ready to publish yet';
+
+  const summary = [];
+  if (published && changes && changes.count) {
+    summary.push(lsEl('p', { class: 'ls-sub', text: 'These changes will go on the website once it has checked them:' }));
+    summary.push(lsEl('ul', { class: 'ls-changes', id: 'ls-changes' }, changes.items.map((i) => lsEl('li', null, lsEl('strong', { text: i.label }), i.detail ? ' (' + i.detail + ')' : ''))));
+  } else if (!published) {
+    summary.push(lsEl('p', { class: 'ls-sub', text: 'Publishing makes this listing public at /opportunities/' + (v.slug || '...') + '/ once the website has checked it. It is shown as Live here only after that.' }));
+  }
+
+  const body = [];
+  if (stuck && !realActive) body.push(lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'The last publication reached the website but could not be confirmed yet. It is not shown as Live. Press the button to check it again.'));
+  if (live) body.push(lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Checked on the website ', when(live.since),
+    live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'View the live page' })] : null));
+  if (LS.jobFlash) body.push(lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }));
+  if (LS.jobErr) body.push(lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: 'The progress could not be read right now. Reload the page in a moment.' }));
+  if (jobs && !jobs.configured) body.push(lsEl('div', { class: 'ls-banner', text: 'Publishing is not set up correctly: an administrator needs to check the publishing settings.' }));
+  if (realActive) body.push(lsEl('div', { id: 'ls-progress' }, lsEl('h4', { class: 'ls-rv-title', text: active.kind === 'withdraw' ? 'Withdrawing...' : 'Publishing...' }), progressView(active), lsEl('div', { class: 'ls-sub', text: 'This takes about two minutes. You can close this page: it keeps going.' })));
+  else if (failedLatest) { const f = friendlyFailure(failedLatest); body.push(lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', id: 'ls-failure' }, lsEl('strong', { text: f.what }), ' ', f.todo)); }
+
+  const action = nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-no-changes', role: 'status' }, 'No changes to publish. This listing already matches what is on the website. Go back to "Prepare" when something needs to change.')
+    : ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
+    : lsEl('div', { class: 'ls-publish-action' },
+      sc === 'sold' ? lsEl('label', { class: 'ls-sold-confirm' }, lsEl('input', { type: 'checkbox', id: 'ls-sold-confirm', checked: !!LS.soldConfirmed, onchange: (e) => { LS.soldConfirmed = e.target.checked; lsRefreshReview(); } }), ' I confirm the property has sold. The listing page will say so and stop offering the property for enquiry.') : null,
+      lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured) || (sc === 'sold' && !LS.soldConfirmed), onclick: lsStartPublish,
+        text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'Please wait...' : button }),
+      !startable ? lsEl('ul', { class: 'ls-ferr', id: 'ls-publish-reasons' }, pf.map((m) => lsEl('li', { text: m }))) : null);
+
+  // the dry run and the technical history: administrators only, inside the same screen
+  const tech = lsIsAdmin() ? lsEl('details', { class: 'ls-admin ls-tech-box', id: 'ls-admin' }, lsEl('summary', { text: 'Technical details (administrators)' }),
+    lsEl('div', { id: 'ls-dry' }, lsEl('h4', { class: 'ls-rv-title', text: 'Test without publishing' }),
+      lsEl('p', { class: 'ls-sub', text: 'An optional rehearsal: publishing does not need it. It runs the website\'s own checks on this exact content and changes nothing: nothing is published and no photograph becomes public.' }),
+      ro ? null : lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-dry-btn', disabled: !startable || !!active || LS.jobBusy || nochg || (jobs && !jobs.configured), onclick: lsStartDryRun, text: LS.jobBusy ? 'Starting...' : 'Run test' })),
+    latest ? jobTimeline(latest) : lsEl('div', { class: 'ls-sub', text: 'No jobs yet.' }),
+    jobs && jobs.jobs.length > 1 ? lsEl('div', { class: 'ls-jobs-older' }, lsEl('h4', { class: 'ls-rv-title', text: 'Earlier jobs (' + (jobs.jobs.length - 1) + ')' }), lsEl('ul', null, jobs.jobs.slice(1).map((j) => lsEl('li', { text: (j.kind === 'dry_run' ? 'test' : j.kind) + ', version ' + j.draftVersion + ': ' + (jobNoChange(j) ? 'no changes' : j.status === 'failed' ? 'did not complete' : j.status) + ' (' + j.requestedBy.split('@')[0] + ', ' + when(j.createdAt) + ')' })))) : null) : null;
+
+  const card = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' }, lsEl('h3', { text: heading }), summary, published && curStatus ? statusRow(ro, curStatus, sc) : null, body, action, tech);
+  return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' }, card, published && !stuck ? withdrawCard(ro, active) : null);
 }
 
 /* The website engine's own wording for advertising rules is technical; staff read it in plain words. The rules are unchanged. */
