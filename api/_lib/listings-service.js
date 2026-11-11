@@ -10,7 +10,7 @@ const COMMERCIAL_BY_STATUS = { published: 'available', under_offer: 'under_offer
 const LIVE_INTENT = new Set(['published', 'under_offer', 'sold']);
 
 /**
- * The PUBLICATION state of a listing, separate from its selling status: draft, ready, publishing, live, live_changes (the saved draft differs from the
+ * The PUBLICATION state of a listing, separate from its selling status: draft, review (enough content to review; blockers are only known on the Publish step), publishing, live, live_changes (the saved draft differs from the
  * website), withdrawn. Also how many changes are waiting and whether something needs attention (the last real job did not complete). Pure.
  *   draftRow    the raw draft row (content, photos) or null; snapshot the website's summary from site.js or null; lastJob the listing's latest real job or null
  */
@@ -26,7 +26,7 @@ export function publicationFor({ draftRow, snapshot, withdrawn, lastJob }) {
   const c = draftRow?.content ?? {};
   const photos = Array.isArray(draftRow?.photos) ? draftRow.photos.filter((p) => p.kind !== 'floorplan').length : 0;
   const ready = !!(c.description && c.publicAddress && c.pricingMode && photos > 0);
-  return { state: ready ? 'ready' : 'draft', changesCount: 0, attention: failed };
+  return { state: ready ? 'review' : 'draft', changesCount: 0, attention: failed };
 }
 
 /** Pure: combine the three facts into one row and say plainly whether they agree. */

@@ -13,10 +13,10 @@ const SNAP = {
 };
 const draftRow = (over = {}) => ({ content: { title: 'Established SDA house', description: 'One paragraph.', publicAddress: SNAP.address, pricingMode: 'contact_agent', displayPrice: '', featured: false, ...over }, photos: [{ id: 'aaaaaaaaaaaa', alt: 'Front', kind: 'photo' }] });
 
-test('PUBLICATION STATE: draft, ready, publishing, live, live with changes, withdrawn: one state, never mixed with the selling status', () => {
+test('PUBLICATION STATE: draft, review, publishing, live, live with changes, withdrawn: one state, never mixed with the selling status', () => {
   const st = (a) => publicationFor(a).state;
   assert.equal(st({ draftRow: { content: { title: 'x' }, photos: [] }, snapshot: null }), 'draft');
-  assert.equal(st({ draftRow: draftRow(), snapshot: null }), 'ready');
+  assert.equal(st({ draftRow: draftRow(), snapshot: null }), 'review', 'enough content to review is never called ready to publish: blockers are only known on the Publish step');
   assert.equal(st({ draftRow: { ...draftRow(), photos: [] }, snapshot: null }), 'draft', 'a photograph is needed to be ready');
   assert.equal(st({ draftRow: { ...draftRow(), photos: [{ id: 'f', kind: 'floorplan' }] }, snapshot: null }), 'draft', 'a floorplan alone is not a photograph');
   assert.equal(st({ draftRow: draftRow(), snapshot: SNAP }), 'live');
@@ -24,7 +24,7 @@ test('PUBLICATION STATE: draft, ready, publishing, live, live with changes, with
   assert.equal(st({ draftRow: draftRow(), snapshot: SNAP, lastJob: { kind: 'update', status: 'running' } }), 'publishing');
   assert.equal(st({ draftRow: draftRow(), snapshot: SNAP, withdrawn: true }), 'withdrawn');
   assert.equal(st({ draftRow: null, snapshot: SNAP }), 'live', 'a listing on the website with no draft is simply live');
-  for (const state of ['draft', 'ready', 'publishing', 'live', 'live_changes', 'withdrawn']) assert.ok(!/available|offer|sold/i.test(state));
+  for (const state of ['draft', 'review', 'publishing', 'live', 'live_changes', 'withdrawn']) assert.ok(!/available|offer|sold/i.test(state));
 });
 
 test('PUBLICATION STATE: changes are real differences (a restored value is not a change) and the count is reported', () => {
