@@ -53,7 +53,7 @@ function renderListingsPage() { lsRouteChanged(); }
 
 async function lsRouteChanged() {
   lsStopPolling(); LS.jobFlash = null;
-  LS.flash = null; LS.notionConflict = null; LS.verifyOpen = null; LS.confirm = null; LS.photoMsg = null; LS.removeAsk = null; LS.statusChoice = null; LS.soldConfirmed = false;
+  LS.flash = null; LS.notionConflict = null; LS.verifyOpen = null; LS.confirm = null; LS.photoMsg = null; LS.removeAsk = null; LS.statusChoice = null; LS.soldConfirmed = false; LS.withdrawOpen = false; LS.withdrawReason = ''; LS.withdrawAddress = '';
   const r = lsRoute();
   if (r.name === 'list') return lsLoadList();
   if (r.name === 'new') return lsLoadPicker();
@@ -667,6 +667,12 @@ const REAL_STEPS = [
   ['media', 'Images checked on the public store'], ['pull_request', 'Publication pull request opened (one file)'], ['checks', 'Required checks passed'],
   ['merge', 'Merged under the branch rules'], ['deploy', 'Production deployment finished'], ['verify', 'Live page, images and catalogue checked'], ['finished', 'Finished'],
 ];
+const WITHDRAW_STEPS = [
+  ['requested', 'Requested'], ['dispatched', 'Handed to GitHub'], ['started', 'Job started'], ['payload', 'Request received'],
+  ['engine', 'Listing found, not already withdrawn'], ['build', 'Website built without the listing and checked'], ['pull_request', 'Withdrawal pull request opened (one file)'],
+  ['checks', 'Required checks passed'], ['merge', 'Merged under the branch rules'], ['deploy', 'Production deployment finished'],
+  ['verify', 'Page is gone, and the catalogue and sitemap no longer list it'], ['finished', 'Finished'],
+];
 const isReal = (j) => j.kind === 'publish' || j.kind === 'update';
 let lsPollTimer = null;
 function lsStopPolling() { if (lsPollTimer) { clearTimeout(lsPollTimer); lsPollTimer = null; } }
@@ -698,6 +704,79 @@ function statusRow(ro, current, change) {
   return lsEl('div', { class: 'ls-statusrow' }, label, lsEl('label', { class: 'ls-sub', for: 'ls-status-select', text: 'Change the public status: ' }), sel,
     change ? lsEl('div', { class: 'ls-banner', id: 'ls-status-pending', role: 'status' }, 'The status will change to ' + STATUS_LABEL[change] + ' when you publish below.' + (change === 'sold' ? ' A Sold page stays public but no longer offers the property for enquiry.' : '')) : null);
 }
+/* Withdrawal. A Publisher takes a published listing out of public marketing: the page, catalogue entry and sitemap entry go (the address answers "not found").
+   The reason is private (never published); the typed address is the confirmation. The website, not this page, decides when it is Withdrawn. */
+const lsNorm = (s) => String(s || '').replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().toLowerCase();
+const lsWithdrawn = () => !!(LS.jobs && LS.jobs.withdrawn === true);
+/** Merged into the website but the page being gone was not confirmed: a re-check is offered instead of a new withdrawal. */
+const lsWithdrawUnconfirmed = () => lsWithdrawn() && !!(LS.jobs.withdrawal && LS.jobs.withdrawal.status === 'failed' && LS.jobs.withdrawal.merged);
+const lsWithdrawReady = () => !!(LS.jobs && LS.jobs.websiteAddress && LS.withdrawReason && LS.withdrawReason.trim() && LS.withdrawReason.trim().length <= 300 && lsNorm(LS.withdrawAddress) === lsNorm(LS.jobs.websiteAddress));
+async function lsStartWithdraw(recheck) {
+  if (LS.jobBusy) return;
+  LS.jobBusy = true; LS.jobFlash = null; lsRefreshReview();
+  try {
+    const body = recheck ? { id: LS.d.draft.id, mode: 'withdraw', recheck: true } : { id: LS.d.draft.id, mode: 'withdraw', confirmAddress: LS.withdrawAddress, reason: LS.withdrawReason };
+    const out = await lsApi('POST', '/api/listings/draft-publish', body);
+    LS.jobFlash = { ok: out.existing ? 'A withdrawal is already running for this listing.' : 'Withdrawal started. It runs on the server: you can close this page. The listing shows as Withdrawn only after the website has been checked.' };
+    LS.withdrawOpen = false; LS.withdrawReason = ''; LS.withdrawAddress = '';
+    await lsLoadJobs();
+  } catch (e) {
+    const b = e.body || {};
+    LS.jobFlash = { bad: e.status === 409 && b.error === 'address_mismatch' ? 'The address you typed does not match the listing. Nothing was changed.'
+      : e.status === 400 && b.error === 'reason_required' ? 'Write the reason for the withdrawal. It stays private and is never published.'
+      : e.status === 400 && b.error === 'invalid_reason' ? 'The reason is too long (300 characters at most).'
+      : e.status === 409 && b.error === 'already_withdrawn' ? 'This listing is already withdrawn. Reload the page.'
+      : e.status === 409 && b.error === 'job_active' ? 'A publication is already running for this listing.'
+      : e.status === 409 && b.error === 'draft_required' ? 'This listing has no draft in the Listings Manager. Import the published listing first.'
+      : e.status === 409 && b.error === 'not_published' ? 'This listing is not published, so there is nothing to withdraw.'
+      : e.status === 500 && b.error === 'audit_failed' ? 'The private record of this withdrawal could not be saved, so nothing was started. Tell an administrator.'
+      : e.status === 503 ? 'Publishing is not set up correctly. An administrator needs to check the publishing settings.'
+      : e.status === 502 ? 'The withdrawal could not be started. Nothing was changed. Try again shortly, and if it keeps happening ask an administrator.' : e.status === 403 ? 'Only a Publisher can withdraw a listing.' : 'The withdrawal could not be started. Try again, and if it keeps happening ask an administrator.' };
+    await lsLoadJobs().catch(() => {});
+  }
+  LS.jobBusy = false; lsRefreshReview(); lsSchedulePoll();
+}
+/** The "Withdraw this listing" area: Publishers only, kept apart and visually distinct from publishing. */
+function withdrawCard(ro, active) {
+  if (ro || !LS.jobs || !LS.jobs.configured) return null;
+  const busy = !!active || LS.jobBusy;
+  return lsEl('div', { class: 'ls-rv-box ls-danger-box', id: 'ls-withdraw' },
+    lsEl('h3', { text: 'Withdraw this listing' }),
+    !LS.withdrawOpen
+      ? lsEl('div', null, lsEl('p', { class: 'ls-sub', text: 'Permanently takes the listing out of public marketing. Use it when the property should no longer be advertised at all. Selling status (Available, Under offer, Sold) is changed above, not here.' }),
+        lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-withdraw-open', disabled: busy, onclick: () => { LS.withdrawOpen = true; lsRefreshReview(); }, text: 'Withdraw this listing...' }))
+      : lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm withdrawal' },
+        lsEl('p', null, lsEl('strong', { text: 'This permanently removes the listing from public marketing.' })),
+        lsEl('ul', { class: 'ls-sub' }, [
+          'The page is removed: its address will answer "not found".', 'It disappears from the catalogue and from the sitemap.',
+          'The photograph files are kept and may remain reachable through their direct web addresses. Search engines may keep a copy for a while.', 'The draft, its history and the private record stay here. Withdrawal is permanent in the Listings Manager: there is no undo.'].map((t) => lsEl('li', { text: t }))),
+        lsEl('label', { class: 'ls-sub', for: 'ls-withdraw-reason', text: 'Reason (private: it is recorded in the audit trail and is never published)' }),
+        lsEl('textarea', { id: 'ls-withdraw-reason', class: 'ls-input', rows: '3', maxlength: '300', value: LS.withdrawReason || '', oninput: (e) => { LS.withdrawReason = e.target.value; lsWithdrawBtn(); } }),
+        lsEl('label', { class: 'ls-sub', for: 'ls-withdraw-address' }, 'To confirm, type the public address of the listing: ', lsEl('strong', { text: LS.jobs.websiteAddress || '(not available)' })),
+        lsEl('input', { id: 'ls-withdraw-address', class: 'ls-input', type: 'text', autocomplete: 'off', value: LS.withdrawAddress || '', oninput: (e) => { LS.withdrawAddress = e.target.value; lsWithdrawBtn(); } }),
+        lsEl('div', { class: 'ls-confirm-actions' },
+          lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-withdraw-confirm', disabled: !lsWithdrawReady() || busy, onclick: () => lsStartWithdraw(false), text: 'Yes, withdraw this listing' }), ' ',
+          lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-withdraw-cancel', onclick: () => { LS.withdrawOpen = false; LS.withdrawReason = ''; LS.withdrawAddress = ''; lsRefreshReview(); }, text: 'Cancel' }))));
+}
+/** Typing must not rebuild the form (it would lose focus): only the confirm button is updated. */
+function lsWithdrawBtn() { const b = document.getElementById('ls-withdraw-confirm'); if (b) b.disabled = !lsWithdrawReady() || !!(LS.jobs && LS.jobs.active) || LS.jobBusy; }
+/** What a withdrawn listing shows: no publish or status controls, the proof, and (for Publishers) the private history. */
+function withdrawnView(ro, latest) {
+  const jobs = LS.jobs; const unconf = lsWithdrawUnconfirmed();
+  const trail = (jobs.audit || []).filter((r) => r.action === 'withdraw');
+  return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' },
+    lsEl('div', { class: 'ls-rv-box', id: 'ls-withdrawn' },
+      lsEl('h3', { text: unconf ? 'Withdrawal not yet confirmed' : 'Withdrawn from public marketing' }),
+      unconf ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', id: 'ls-withdraw-unconfirmed' }, 'The withdrawal was merged into the website, but the page being gone has not been confirmed yet. It is not shown as Withdrawn until it is.')
+        : lsEl('div', { class: 'ls-banner', role: 'status', id: 'ls-withdrawn-note' }, badge('Withdrawn', 'ls-badge-muted'), ' The page, the catalogue entry and the sitemap entry are removed. Its address answers "not found".'),
+      LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
+      lsEl('p', { class: 'ls-sub', text: 'Publishing and status changes are switched off while a listing is withdrawn. The draft, its history and the private record are kept. Withdrawal is permanent in the Listings Manager. Marketing this property again is a separate administrative process: ask an administrator.' }),
+      unconf && !ro ? lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-withdraw-recheck', disabled: LS.jobBusy, onclick: () => lsStartWithdraw(true), text: LS.jobBusy ? 'Checking...' : 'Re-check withdrawal' }) : null,
+      !ro && trail.length ? lsEl('div', { id: 'ls-withdraw-trail' }, lsEl('h4', { class: 'ls-rv-title', text: 'Private record (Publishers and administrators only)' }),
+        lsEl('ul', { class: 'ls-sub' }, trail.map((r) => lsEl('li', { text: when(r.at) + ', ' + String(r.by).split('@')[0] + ': ' + r.reason })))) : null,
+      latest && latest.kind === 'withdraw' ? jobTimeline(latest) : null));
+}
+
 /** A dry run that found the content identical to what is already published is not a failure: there is simply nothing to publish. */
 function jobNoChange(j) {
   const s = (j.steps || []).find((x) => x.status === 'failed');
@@ -767,6 +846,7 @@ function reviewContent() {
   const startable = pf.length === 0;
   const stops = v.blockers.filter((b) => !['photos_required', 'photo_alt'].includes(b.code));
   const jobs = LS.jobs; const active = jobs && jobs.active; const latest = jobs && jobs.jobs && jobs.jobs[0];
+  if (lsWithdrawn() && !active) return withdrawnView(ro, latest);
 
   const checklist = [
     ['Required fields are complete', v.complete], ['Photographs added and described', ph.items.some((p) => p.kind !== 'floorplan') && ph.readiness.ready],
@@ -828,7 +908,7 @@ function reviewContent() {
   return lsEl('div', { id: 'ls-review-host', class: 'ls-review-host' },
     lsEl('div', { class: 'ls-banner' }, 'Review the final listing, optionally run the dry run, then publish. This screen shows the saved draft.'),
     lsEl('ul', { class: 'ls-check ls-rv-check' }, checklist.map(([t, ok]) => lsEl('li', { class: ok ? 'ok' : 'no' }, lsEl('span', { 'aria-hidden': 'true', text: ok ? '✓' : '○' }), ' ', t))),
-    finalCard, photoCard, verifyCard, dryCard, publishCard);
+    finalCard, photoCard, verifyCard, dryCard, publishCard, (live || onSite) && !stuck ? withdrawCard(ro, active) : null);
 }
 
 /* The website engine's own wording for advertising rules is technical; staff read it in plain words. The rules are unchanged. */
@@ -837,8 +917,8 @@ const plainIssue = (m) => (/Victorian pricing compliance/i.test(m) ? 'Advertisin
 function jobTimeline(j) {
   const done = new Map(j.steps.map((s) => [s.step, s]));
   const failedStep = j.steps.find((s) => s.status === 'failed');
-  const real = isReal(j);
-  const rows = (real ? REAL_STEPS : JOB_STEPS).map(([key, label]) => {
+  const real = isReal(j); const wd = j.kind === 'withdraw';
+  const rows = (wd ? WITHDRAW_STEPS : real ? REAL_STEPS : JOB_STEPS).map(([key, label]) => {
     const s = done.get(key);
     const state = s ? (s.status === 'failed' ? 'bad' : (key === 'finished' && j.status !== 'succeeded' ? 'bad' : 'ok')) : (j.active ? 'wait' : 'skip');
     return lsEl('li', { class: 'ls-tl ' + state }, lsEl('span', { class: 'ls-tl-dot', 'aria-hidden': 'true', text: state === 'ok' ? '✓' : state === 'bad' ? '✗' : state === 'wait' ? '…' : '–' }), ' ', label, s ? lsEl('span', { class: 'ls-sub', text: ' ' + when(s.at) }) : null);
@@ -849,18 +929,21 @@ function jobTimeline(j) {
     lsEl('div', null, badge('No changes', 'ls-badge-muted'), ' ', lsEl('span', { class: 'ls-sub', text: 'Version ' + j.draftVersion + ', checked by ' + j.requestedBy.split('@')[0] + ' ' + when(j.createdAt) })),
     lsEl('div', { class: 'ls-banner', role: 'status' }, 'No changes to publish. This version is identical to what is on the website, so there was nothing to check.'));
   return lsEl('div', { class: 'ls-job', id: 'ls-job', 'data-status': j.status },
-    lsEl('div', null, badge(j.status === 'succeeded' ? (real ? (j.result && j.result.live ? 'Live' : 'Finished') : 'Dry run passed') : j.status === 'failed' ? 'Failed' : j.status === 'cancelled' ? 'Cancelled' : (real ? 'Publishing' : 'Running'), j.status === 'succeeded' ? 'ls-badge-live' : j.status === 'failed' ? 'ls-badge-bad' : 'ls-badge-warn'),
+    lsEl('div', null, badge(wd ? (j.status === 'succeeded' ? 'Withdrawn' : j.status === 'failed' ? 'Failed' : 'Withdrawing') : j.status === 'succeeded' ? (real ? (j.result && j.result.live ? 'Live' : 'Finished') : 'Dry run passed') : j.status === 'failed' ? 'Failed' : j.status === 'cancelled' ? 'Cancelled' : (real ? 'Publishing' : 'Running'), j.status === 'succeeded' ? 'ls-badge-live' : j.status === 'failed' ? 'ls-badge-bad' : 'ls-badge-warn'),
       ' ', lsEl('span', { class: 'ls-sub', text: 'Version ' + j.draftVersion + ', started by ' + j.requestedBy.split('@')[0] + ' ' + when(j.createdAt) }),
       j.runUrl && /^https:\/\/github\.com\//.test(j.runUrl) ? [' ', lsEl('a', { class: 'ls-link', href: j.runUrl, target: '_blank', rel: 'noopener noreferrer', text: 'GitHub run' })] : null),
     lsEl('ol', { class: 'ls-tl-list' }, rows),
-    j.status === 'succeeded' && !real ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
+    j.status === 'succeeded' && wd ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'Withdrawn and checked: the page no longer exists and the listing is gone from the catalogue and the sitemap.') : null,
+    j.status === 'failed' && wd && res && res.merged ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, 'The withdrawal was merged into the website, but the page being gone has not been confirmed yet. Use "Re-check withdrawal": nothing is redone.') : null,
+    j.status === 'failed' && wd && !(res && res.merged) ? lsEl('div', { class: 'ls-banner' }, 'Nothing was changed: the listing is still public. You can try again; repeating is safe.') : null,
+    j.status === 'succeeded' && !real && !wd ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'The approved content would publish. Nothing was published or changed.') : null,
     j.status === 'succeeded' && real && res && res.live ? lsEl('div', { class: 'ls-banner ls-banner-ok' }, 'Published and checked on the live website.') : null,
     j.status === 'failed' && real && res && res.merged ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, 'The change was merged into the website, but the live page has not been confirmed. The listing is not shown as Live. Press publish again to re-check: nothing is redone.') : null,
     j.status === 'failed' && real && !(res && res.merged) ? lsEl('div', { class: 'ls-banner' }, 'Nothing was merged: the website that visitors see is unchanged. You can try again; repeating is safe.') : null,
-    j.error ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, errText(j.error)) : null,
+    j.error ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert' }, errText(j.error, j.kind)) : null,
     j.error ? lsEl('details', { class: 'ls-tech' }, lsEl('summary', { text: 'Technical details (for an administrator)' }), lsEl('div', { class: 'ls-sub', text: 'Code: ' + j.error.code + (j.attempt > 1 ? ', attempt ' + j.attempt : '') + (j.error.message ? '. ' + j.error.message : '') })) : null,
     issues.length ? lsEl('ul', { class: 'ls-ferr ls-job-issues' }, issues.map((m) => lsEl('li', { text: plainIssue(m) }))) : null,
-    checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : (real ? 'Problem: ' : 'Would stop: ')) + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,
+    checks.length ? lsEl('ul', { class: 'ls-checks' }, checks.map((c) => lsEl('li', { class: c.ok ? 'ok' : 'no' }, lsEl('strong', { text: (c.ok ? 'OK ' : (real || wd ? 'Problem: ' : 'Would stop: ')) + c.name.replace(/_/g, ' ') }), c.note ? lsEl('div', { class: 'ls-sub', text: c.note }) : null))) : null,
     !real && res && res.wouldBlock && res.wouldBlock.length ? lsEl('div', { class: 'ls-banner' }, 'A real publication would currently stop on: ' + res.wouldBlock.map((x) => x.replace(/_/g, ' ')).join(', ') + '.') : null);
 }
 /* Plain words for staff. The technical code and GitHub's message stay on the job (and in the audit log) and are shown under "Technical details". */
@@ -881,10 +964,20 @@ const ERR_TEXT = {
   verify_failed: 'The change reached the website, but the live page does not show it correctly yet. Press the publish button again in a few minutes to check it.',
   wrong_mode: 'The portal asked for the wrong kind of publication for this listing. Reload the page and try again.',
   unexpected_files: 'The publication would have changed more than this listing, so it was stopped. Nothing was published. An administrator needs to look at this.',
+  not_published: 'This listing is not published, so there is nothing to publish or withdraw.',
   not_configured: 'Publishing is not set up correctly. An administrator needs to check the publishing settings.',
   manifest_invalid: 'The photograph list could not be read. Check the photographs in the draft and try again.',
   property_not_found: 'The property record could not be found. An administrator needs to look at this.',
   mode_not_enabled: 'This action is not available.',
   payload_mismatch: 'The request did not match what was approved, so nothing was published. Reload the page and try again.',
 };
-const errText = (e) => ERR_TEXT[e.code] || 'The publication did not complete. Try again, and if it keeps happening ask an administrator.';
+const WITHDRAW_ERR_TEXT = {
+  build_failed: 'The website could not be built without this listing, so nothing was changed. An administrator needs to look at this.',
+  verify_failed: 'The website was updated, but the page or its catalogue entry is still showing. Use "Re-check withdrawal" in a few minutes.',
+  deploy_failed: 'The website did not finish updating. Use "Re-check withdrawal" in a few minutes.',
+  checks_failed: 'The website\'s required checks did not pass, so nothing was changed.',
+  merge_refused: 'The website\'s protection rules blocked the change, so nothing was changed. An administrator needs to look at this.',
+  not_published: 'This listing is not published, so there is nothing to withdraw.',
+  audit_failed: 'The private record of this withdrawal could not be saved, so nothing was started. An administrator needs to look at this.',
+};
+const errText = (e, kind) => (kind === 'withdraw' && WITHDRAW_ERR_TEXT[e.code]) || ERR_TEXT[e.code] || (kind === 'withdraw' ? 'The withdrawal did not complete. Nothing is hidden unless this page says otherwise. Try again, and if it keeps happening ask an administrator.' : 'The publication did not complete. Try again, and if it keeps happening ask an administrator.');

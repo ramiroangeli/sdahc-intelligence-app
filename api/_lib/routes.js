@@ -11,6 +11,7 @@ import { signedRoute } from './signed.js';
 import * as jobsRepo from './jobs-repo.js';
 import { isJobId, sanitiseEvent } from './publication.js';
 import { jobsFor, startPublication } from './publish-service.js';
+import { startWithdrawal } from './withdrawal.js';
 import { checkPublicMedia } from './public-media.js';
 import { checkGithubApp } from './github-app.js';
 import { HttpError, queryOf, readBuffer, readJson } from './http.js';
@@ -134,9 +135,11 @@ export const draftPublishRoute = guardedRoute({
   capability: { GET: C.VIEW, POST: C.PUBLISH },
   run: async ({ req, session, deps }) => {
     const cfg = dataCfg(deps); const db = getDb(deps); const env = deps.env ?? process.env;
-    if (req.method === 'GET') return jobsFor({ cfg, db, id: queryOf(req).id, fetchImpl: f(deps), env });
+    if (req.method === 'GET') return jobsFor({ cfg, db, id: queryOf(req).id, fetchImpl: f(deps), env, canPublish: hasCapability(session.staff, C.PUBLISH) });
     const body = await readJson(req);
-    const out = await startPublication({ cfg, db, id: body?.id, expectedVersion: body?.expectedVersion, kind: body?.mode, commercialStatus: body?.commercialStatus, expectedStatus: body?.expectedStatus, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, deps, ...capsOf(session) });
+    // a withdrawal carries no listing content and has its own rules (typed address, private reason, private audit record)
+    if (body?.mode === 'withdraw') return startWithdrawal({ cfg, db, id: body?.id, body, actor: actorOf(session), session, fetchImpl: f(deps), env });
+    const out = await startPublication({ cfg, db, id: body?.id, expectedVersion: body?.expectedVersion, kind: body?.mode, commercialStatus: body?.commercialStatus, expectedStatus: body?.expectedStatus, session, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, deps, ...capsOf(session) });
     return out;
   },
 });

@@ -1,4 +1,4 @@
--- PROPOSED, NOT APPLIED. Do not run in Production without explicit approval. Run by hand in the Supabase SQL editor (the same way as 0004).
+-- APPLIED to Production on 11 Nov 2026 (verified). Run by hand in the Supabase SQL editor, the same way as 0004. Only this comment changed after it was applied.
 -- Touches only the `listings` schema. No change to the drafts tables, to grants for any other role, or to raw, history, analytics, public or rfi.
 -- Reversible while unused (listings_0005_audit_log_and_reinstate_rollback.sql; the rollback refuses to delete audit rows unless told to).
 --

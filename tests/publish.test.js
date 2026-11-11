@@ -70,9 +70,9 @@ test('missing or weak server configuration fails closed with 503 and records not
   assert.equal(ctx.gh.dispatches.length, 0);
 });
 
-test('only dry_run, publish and update are enabled: withdraw and anything else is refused before anything is recorded', async () => {
+test('only dry_run, publish and update go through the publication path: anything else is refused before anything is recorded (withdraw has its own service)', async () => {
   const ctx = await ready();
-  for (const mode of ['withdraw', '', undefined, 'DROP TABLE', 'PUBLISH']) {
+  for (const mode of ['reinstate', '', undefined, 'DROP TABLE', 'PUBLISH']) {
     const r = await start(ctx, ALI_N, { mode: mode ?? 'x' });
     assert.equal(r.status, 400); assert.equal(r.json.error, 'mode_not_enabled');
   }
@@ -371,7 +371,8 @@ test('REVIEW SCREEN: a third tab, read-only polling, a dry run, and a confirmed 
   assert.match(code, /\(\\\/preview\|\\\/review\)\?\$/);
   assert.match(code, /text: 'Review & publish'/);
   assert.match(code, /mode: 'dry_run'/);
-  assert.ok(!/mode: 'withdraw'/.test(code), 'withdrawal is not offered by the browser');
+  assert.equal((code.match(/mode: 'withdraw'/g) || []).length, 2, 'withdrawal is requested in exactly one function (a withdrawal, or a re-check of one), and only after the typed-address confirmation');
+  assert.match(code, /id: 'ls-withdraw-confirm', disabled: !lsWithdrawReady\(\) \|\| busy, onclick: \(\) => lsStartWithdraw\(false\)/);
   assert.match(code, /mode: kind/); assert.match(code, /'update' : 'publish'/);
   // publishing needs a second, explicit confirmation; the first button only opens it
   assert.match(code, /id: 'ls-publish-btn'[^]*LS\.confirmPublish = true/); assert.match(code, /id: 'ls-publish-confirm', disabled: [^,]+, onclick: lsStartPublish/);

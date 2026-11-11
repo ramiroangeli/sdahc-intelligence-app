@@ -10,6 +10,8 @@ import { promoteMedia, publicMediaConfigured, publicStore } from './public-media
 import * as drafts from './drafts-repo.js';
 import { openDraft } from './draft-service.js';
 import { loadSnapshots } from './site.js';
+import { appendAudit, readAudit } from './audit-log.js';
+import { websiteState } from './withdrawal.js';
 
 /**
  * Is this listing already on the website (an approved snapshot exists)? true / false, or null when the website cannot be read.
@@ -40,10 +42,12 @@ const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)
 
 export const publishingConfigured = (env) => { try { loadPublishConfig(env); return true; } catch { return false; } };
 
-export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps, deps = {}, commercialStatus, expectedStatus }) {
+export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps, deps = {}, commercialStatus, expectedStatus, session }) {
   requireId(id);
   if (!ENABLED_KINDS.includes(kind)) throw new HttpError(400, 'mode_not_enabled');
   if (!Number.isInteger(expectedVersion)) throw new HttpError(400, 'expected_version_required');
+  // a withdrawn listing is not published, updated, re-statused or rehearsed: withdrawal is permanent in the Listings Manager
+  if ((await websiteState(cfg, id, fetchImpl))?.withdrawn === true) throw new HttpError(409, 'withdrawn', { reasons: ['This listing is withdrawn from public marketing. Withdrawal is permanent in the Listings Manager, so it cannot be published or changed.'] });
   // Commercial status (Publisher only, which the route already requires). Asked for as "set to X"; X must be a real status, and the Publisher must
   // say which status they saw, so a stale tab cannot silently undo someone else's change.
   let statusChange = null;
@@ -93,6 +97,11 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
     approverNotionUserId: staff.notionUserId ?? null, idempotencyKey: `${id}:${draft.version}:${kind}:${attempt}`,
   });
   audit({ action: 'listings.publish.request', outcome: 'ok', actor, detail: { id, kind, jobId: job.id, draftVersion: draft.version, ...(statusChange ? { status: statusChange } : {}) } });
+  if (statusChange) {
+    // the private audit trail records who changed the public status, and from what to what; without it nothing is started
+    try { await appendAudit(db, { session, action: 'status_change', publicId: id, draftVersion: draft.version, jobId: job.id, statusFrom: statusChange.from, statusTo: statusChange.to }); }
+    catch { const failed = await jobs.failJob(db, job.id, 'audit_failed', 'The private audit record could not be written, so nothing was started.'); throw new HttpError(500, 'audit_failed', { job: jobView(failed ?? job) }); }
+  }
 
   if (real) {
     // the approved images go to the public store BEFORE the website job starts; the job verifies them and refuses to continue if any is missing
@@ -123,7 +132,7 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
 
 const liveView = (j) => ({ jobId: j.id, kind: j.kind, draftVersion: j.draft_version, since: j.finished_at, url: j.result?.url ?? null, version: j.result?.version ?? null });
 
-export async function jobsFor({ cfg, db, id, fetchImpl, env }) {
+export async function jobsFor({ cfg, db, id, fetchImpl, env, canPublish = false }) {
   requireId(id);
   let publish = null; try { publish = loadPublishConfig(env); } catch { /* status still works without it */ }
   const list = await jobs.listJobs(db, id, 10);
@@ -132,7 +141,13 @@ export async function jobsFor({ cfg, db, id, fetchImpl, env }) {
   const live = await jobs.liveJob(db, id);
   const stuck = await jobs.mergedUnverified(db, id);
   const publishedOnWebsite = live ? true : await approvedOnWebsite(cfg, id, fetchImpl);
-  const websiteStatus = publishedOnWebsite ? ((await websiteStatusOf(cfg, id, fetchImpl)) ?? null) : null;
+  const site = await websiteState(cfg, id, fetchImpl);
+  const websiteStatus = publishedOnWebsite ? (site?.approved?.commercialStatus ?? null) : null;
+  // withdrawal: the tombstone on the website's main branch, and what the last withdrawal job proved
+  const wj = await jobs.withdrawalState(db, id);
+  const withdrawn = site ? site.withdrawn : null;
+  const withdrawal = wj ? { jobId: wj.id, status: wj.status, merged: wj.result?.merged === true, verified: wj.status === 'succeeded' && wj.result?.withdrawn === true, at: wj.finished_at ?? wj.created_at } : null;
+  const audit = canPublish ? (await readAudit(db, id, 20)).map((r) => ({ id: r.id, at: r.at, by: r.actor_email, action: r.action, from: r.status_from, to: r.status_to, reason: r.reason, jobId: r.job_id })) : null;
   const noChanges = await noPublicChanges(db, await drafts.getDraft(db, id), { live, stuck, active: out.some((j) => j.active), publishedOnWebsite });
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, websiteStatus, noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, websiteStatus, websiteAddress: site?.approved?.address ?? null, withdrawn, withdrawal, ...(audit ? { audit } : {}), noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
 }

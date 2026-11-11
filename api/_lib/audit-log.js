@@ -1,7 +1,7 @@
 // The private operational audit trail (listings.audit_log, migration 0005). Server side only.
 // The actor is ALWAYS the verified session (email and Supabase user id from authorise()); there is no parameter through which a request body,
 // a query string or a header could name someone else. The reason and the person never leave the Listings Manager: they are not part of any
-// payload, pull request, commit, log line or public file. This module is not wired into a route yet (withdrawal and reinstatement come next).
+// payload, pull request, commit, log line or public file. It is written by the withdrawal and by a public status change. 'reinstate' is allowed by the database (migration 0005) but is unused: reinstatement was cancelled by decision, and the extra permitted value stays harmlessly in place.
 import { HttpError } from './http.js';
 
 export const AUDIT_ACTIONS = ['status_change', 'withdraw', 'reinstate'];

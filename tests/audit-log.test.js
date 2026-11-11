@@ -140,11 +140,11 @@ test('ROLLBACK: an empty audit log can be rolled back without confirmation', asy
   assert.equal((await db.query("select to_regclass('listings.audit_log') t")).rows[0].t, null);
 });
 
-test('FILES: the migration is a proposal (never marked applied), touches only the listings schema, and nothing in the code reads or writes the audit log yet', () => {
-  assert.match(UP, /PROPOSED, NOT APPLIED/);
+test('FILES: the migration touches only the listings schema, and only the withdrawal and publication services use the audit log module', () => {
+  assert.match(UP, /APPLIED to Production/);
   const objects = [...UP.matchAll(/(?:create|alter|drop)\s+(?:table|index|function|trigger)\s+(?:if (?:not )?exists\s+)?(?:\w+\s+on\s+)?([a-z_]+)\./gi)].map((m) => m[1].toLowerCase());
   assert.ok(objects.length > 0 && objects.every((s) => s === 'listings'), `only the listings schema is touched: ${[...new Set(objects)].join()}`);
   assert.ok(!/\b(raw|history|analytics|public|rfi)\./i.test(UP.replace(/--.*$/gm, '')), 'no other schema is named');
   const used = [...readdirSync('api/_lib'), ...readdirSync('api/listings').map((f) => `../listings/${f}`)].filter((f) => f.endsWith('.js') && f !== 'audit-log.js').filter((f) => /from '\.\/audit-log\.js'|audit-log\.js'/.test(readFileSync(`api/_lib/${f}`, 'utf8')));
-  assert.deepEqual(used, [], 'not wired to any route yet');
+  assert.deepEqual(used.sort(), ['publish-service.js', 'withdrawal.js'], 'the audit trail is written by the withdrawal and the status change, nowhere else');
 });

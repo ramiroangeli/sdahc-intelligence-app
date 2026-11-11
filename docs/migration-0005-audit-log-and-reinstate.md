@@ -1,6 +1,6 @@
 # Migration 0005: private audit log and the reinstate job kind
 
-**Status: prepared, NOT applied.** It must not be run in Production without explicit approval. Nothing in the deployed code depends on it yet: `api/_lib/audit-log.js` is not imported by any route (a test enforces that), and every existing job kind keeps working with or without it.
+**Status: APPLIED to Production on 11 Nov 2026 and verified** (permissions, preserved records, the `reinstate` kind, append-only behaviour). The text below describes what it does and how to roll it back. The app writes to it from the withdrawal and from a public status change (`api/_lib/audit-log.js`); rolling it back now would stop those from working.
 
 ## What it does
 1. **`listings.audit_log`**, a private, append-only operational audit trail for status changes, withdrawals and reinstatements.
@@ -9,7 +9,7 @@
    - Immutability at the database level: triggers refuse every update, delete and truncate, for the app role **and** the table owner. The timestamp (`at`) and the writing role (`recorded_by`) are stamped by the database, so a caller cannot backdate or impersonate.
    - Access: only `listings_app` can select and insert, through row-level security with no update or delete policy. `anon`, `authenticated` and `service_role` have nothing.
    - Rules enforced by the database as well as the code: a withdrawal needs a reason; a status change needs two different valid statuses; a reinstatement needs a status; emails are lower case; the listing id has the public format.
-2. **`publish_jobs.kind` also allows `reinstate`.** Widening a check cannot invalidate a row, so existing jobs, idempotency keys and the one-active-job-per-listing index are untouched.
+2. **`publish_jobs.kind` also allows `reinstate`** (permitted but unused: reinstatement was cancelled by decision on 11 Nov 2026, and the migration is not rolled back). Widening a check cannot invalidate a row, so existing jobs, idempotency keys and the one-active-job-per-listing index are untouched.
 
 Only the `listings` schema is touched. Nothing in raw, history, analytics, public or rfi.
 

@@ -96,6 +96,12 @@ export async function liveJob(db, publicId) {
   return rows[0] ?? null;
 }
 
+/** The most recent withdrawal job for a listing (any status), or null. */
+export async function withdrawalState(db, publicId) {
+  const rows = await db.unsafe(`select ${COLS} from listings.publish_jobs where public_id = $1 and kind = 'withdraw' order by created_at desc limit 1`, [publicId]);
+  return rows[0] ?? null;
+}
+
 /**
  * A real publication that merged but could not be confirmed live: the change is on the website's main branch, the page is not verified.
  * Reported until a later job verifies it. Never counts as Live.
