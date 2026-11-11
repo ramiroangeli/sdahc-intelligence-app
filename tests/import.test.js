@@ -220,7 +220,7 @@ test('IMPORTED PUBLICATION: with no successful portal job, the portal still know
   assert.equal(fresh.json.publishedOnWebsite, false);
   const src = readFileSync(new URL('../listings.js', import.meta.url), 'utf8');
   assert.match(src, /LS\.jobs\.live \|\| LS\.jobs\.publishedOnWebsite/, 'the browser chooses update for a published listing');
-  assert.match(src, /live \|\| onSite \? 'Publish update'/);
+  assert.match(src, /published \? 'Publish changes'/);
 });
 
 test('IMPORTED PUBLICATION: a first publication request is refused before anything is recorded, copied or dispatched; an update starts in update mode', async () => {
@@ -289,19 +289,22 @@ test('NO CHANGES: an imported listing nobody has edited reports noChanges, and a
   assert.equal((await jobRows(ctx.db)).length, 0, 'no job is recorded, so nothing shows as Failed'); assert.equal(ctx.gh.dispatches.length, 0);
 });
 
-test('NO CHANGES: any saved public change turns it off (text, price, even if changed back); notes do not', async () => {
+test('NO CHANGES: any real difference turns it off (text, price); notes do not; a value changed and then restored is NOT a change', async () => {
   const ctx = await imported();
   const note = await call(draftRoute, ctx.w, ctx.db, ALI_N, { method: 'PUT', body: { id: ID_RG, expectedVersion: 1, content: undefined, addNote: 'checked the address with the agent' } });
   assert.equal(note.status, 200, JSON.stringify(note.json));
   assert.equal((await history(ctx)).noChanges, true, 'a note is not a public change');
   const title = (await call(draftRoute, ctx.w, ctx.db, ALI_N, { url: `/api/listings/draft?id=${ID_RG}` })).json.draft.content.title;
   assert.equal((await save(ctx, { title: title + ' updated' })).status, 200);
-  assert.equal((await history(ctx)).noChanges, false);
+  const h1 = await history(ctx);
+  assert.equal(h1.noChanges, false); assert.deepEqual(h1.changes.items.map((i) => i.field), ['title']);
   assert.equal((await publishAs(ctx, 'dry_run')).status, 200, 'a changed draft can be rehearsed');
-  // restoring the old wording is still a saved change: the rule is conservative and never hides an update
+  // restoring the published wording means there is nothing to publish: the comparison looks at values, not at the edit history
   const ctx2 = await imported();
   await save(ctx2, { title: title + ' updated' }); await save(ctx2, { title });
-  assert.equal((await history(ctx2)).noChanges, false);
+  const h2 = await history(ctx2);
+  assert.equal(h2.noChanges, true); assert.equal(h2.changes.count, 0);
+  assert.equal((await publishAs(ctx2, 'dry_run')).json.error, 'no_changes', 'and the server agrees');
 });
 
 test('NO CHANGES: an acknowledged Notion change or a photograph change counts as a change', async () => {
@@ -321,7 +324,7 @@ test('NO CHANGES: once Live, an unchanged draft refuses a dry run and answers an
   await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
   const u = await publishAs(ctx, 'update'); assert.equal(u.status, 200, JSON.stringify(u.json));
   assert.equal((await history(ctx)).noChanges, false, 'a running job is never "no changes"');
-  await live(ctx, u.json.job.id, 2);
+  await live(ctx, u.json.job.id, 2); await mirror(ctx);
   const h = await history(ctx); assert.ok(h.live); assert.equal(h.noChanges, true);
   const dry = await publishAs(ctx, 'dry_run'); assert.equal(dry.status, 409); assert.equal(dry.json.error, 'no_changes');
   const again = await publishAs(ctx, 'update'); assert.equal(again.status, 200); assert.equal(again.json.existing, true, 'the same version is answered with the job that already published it');
@@ -374,13 +377,20 @@ test('UI: staff-facing error text is plain (no GitHub, engine, workflow, payload
   assert.ok(!u.errText(e).includes('405') && !u.errText(e).includes('rule violations'), 'the raw message goes under Technical details only');
   assert.match(u.errText({ code: 'something_new' }), /did not complete/);
   const src = readFileSync('listings.js', 'utf8');
-  assert.match(src, /Technical details/); assert.match(src, /Dry run \(optional\)/); assert.match(src, /you can publish without running one/);
+  assert.match(src, /Technical details/); assert.match(src, /Test without publishing/); assert.match(src, /publishing does not need it/);
   assert.ok(!/GitHub access token/.test(src), 'no stale instruction about the removed personal token');
 });
 
 // ---- Commercial status: Available, Under offer, Sold (a Publisher's request; the website keeps its status unless one is asked for) ----
 const publishWith = async (ctx, mode, extra = {}, who = ALI_N) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: (await ctx.db.unsafe('select version from listings.drafts where public_id = $1', [ID_RG]))[0].version, mode, ...extra } });
 const payloadOfJob = async (ctx, id) => (await ctx.db.unsafe('select payload from listings.publish_jobs where id = $1', [id]))[0].payload;
+/** What the website shows after a successful publication: the saved draft, as paragraphs. (The fake job cannot merge, so the test mirrors the merge.) */
+const mirror = async (ctx) => {
+  const d = (await ctx.db.unsafe('select content from listings.drafts where public_id = $1', [ID_RG]))[0].content;
+  const snap = ctx.w.state.snapshots[0];
+  ctx.w.state.snapshots[0] = { ...snap, content: { ...snap.content, title: d.title || snap.content.title, description: String(d.description || '').split(/\n\s*\n/).map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean) } };
+  resetCaches();
+};
 const setWebsiteStatus = (ctx, status) => { ctx.w.state.snapshots[0] = { ...ctx.w.state.snapshots[0], commercialStatus: status }; resetCaches(); };
 
 test('STATUS: a Publisher can change the public status of a published listing with nothing else to publish; only the change travels in the payload', async () => {
@@ -434,7 +444,7 @@ test('STATUS: only Publishers can change it (Editors and Viewers are refused), a
 test('STATUS: a status change at a version that is already live is a new job, repeating it returns that job, and "no changes" does not hide it', async () => {
   const ctx = await imported();
   await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
-  const a = await publishWith(ctx, 'update'); await live(ctx, a.json.job.id, 2);
+  const a = await publishWith(ctx, 'update'); await live(ctx, a.json.job.id, 2); await mirror(ctx);
   assert.equal((await history(ctx)).noChanges, true);
   assert.equal((await publishWith(ctx, 'dry_run')).status, 409, 'content is unchanged');
   const s = await publishWith(ctx, 'update', { commercialStatus: 'sold', expectedStatus: 'available' });
@@ -467,7 +477,7 @@ test('UI: the status choice is a change only when it differs from the website, i
   u.LS.statusChoice = 'available'; assert.equal(u.lsStatusChange(), null); assert.deepEqual(JSON.parse(JSON.stringify(u.lsStatusFields())), {});
   u.LS.jobs = { websiteStatus: null, noChanges: false }; u.LS.statusChoice = 'sold'; assert.equal(u.lsStatusChange(), null, 'no status to change when the listing is not on the website');
   const src = readFileSync('listings.js', 'utf8');
-  assert.match(src, /Publish status change/); assert.match(src, /id: 'ls-sold-confirm'/); assert.match(src, /disabled: sc === 'sold' && !LS\.soldConfirmed/);
+  assert.match(src, /Publish status change/); assert.match(src, /id: 'ls-sold-confirm'/); assert.match(src, /\(sc === 'sold' && !LS\.soldConfirmed\)/);
   assert.match(src, /LS\.statusChoice = null; LS\.soldConfirmed = false;/, 'the choice never survives a change of page');
 });
 

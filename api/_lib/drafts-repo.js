@@ -23,11 +23,10 @@ export async function getHistory(db, draftId, limit = 25) {
   return db.unsafe('select version, action, changed_fields, changed_by, changed_at from listings.draft_history where draft_id = $1 order by id desc limit $2', [draftId, limit]);
 }
 
-/** The history fields that can change what the public sees (content, photographs, a refreshed Notion baseline). Notes, verification and photo review cannot. */
-const PUBLIC_FIELDS = ['title', 'description', 'publicAddress', 'pricingMode', 'displayPrice', 'featured', 'photos', 'notionBaseline'];
-/** Has anything public changed in this draft after `version`? Reads the draft history only. */
-export async function publicChangesSince(db, draftId, version) {
-  const rows = await db.unsafe(`select 1 from listings.draft_history where draft_id = $1 and version > $2 and action in ('update','refresh_base') and changed_fields && $3::text[] limit 1`, [draftId, version, PUBLIC_FIELDS]);
+/** Has a change in the CRM been accepted into this draft after `version`? Reads the draft history. The public facts that come from the CRM (design category,
+ *  building type) are not part of the draft content, so the content comparison cannot see them. */
+export async function notionRefreshedSince(db, draftId, version) {
+  const rows = await db.unsafe(`select 1 from listings.draft_history where draft_id = $1 and version > $2 and action = 'refresh_base' limit 1`, [draftId, version]);
   return rows.length > 0;
 }
 /** The version at which this draft was imported from the website, or null. */

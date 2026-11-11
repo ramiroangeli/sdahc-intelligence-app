@@ -42,6 +42,15 @@ export function pickSnapshot(raw) {
     approvedAt: typeof raw.approvedAt === 'string' ? raw.approvedAt : null,
     firstPublishedAt: typeof raw.firstPublishedAt === 'string' ? raw.firstPublishedAt : null,
     listingEndDate: typeof raw.listingEndDate === 'string' ? raw.listingEndDate : null,
+    // what visitors are shown (all of it already public in the website repository): the other half of the "changes since live" comparison
+    public: {
+      title: typeof raw.content.title === 'string' ? raw.content.title : '',
+      description: Array.isArray(raw.content.description) ? raw.content.description.filter((x) => typeof x === 'string') : [],
+      pricingMode: typeof raw.content.pricing?.mode === 'string' ? raw.content.pricing.mode : null,
+      displayPrice: typeof raw.content.pricing?.display === 'string' ? raw.content.pricing.display : null,
+      featured: raw.featured === true,
+      photos: Array.isArray(raw.content.photos) ? raw.content.photos.filter((p) => p && typeof p.id === 'string').map((p) => ({ id: p.id, alt: typeof p.alt === 'string' ? p.alt : '', kind: p.kind === 'floorplan' ? 'floorplan' : 'photo' })) : [],
+    },
   };
 }
 

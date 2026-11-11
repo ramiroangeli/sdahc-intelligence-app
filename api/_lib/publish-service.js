@@ -12,6 +12,7 @@ import { openDraft } from './draft-service.js';
 import { loadSnapshots } from './site.js';
 import { appendAudit, readAudit } from './audit-log.js';
 import { websiteState } from './withdrawal.js';
+import { changesSincePublished } from './changes.js';
 
 /**
  * Is this listing already on the website (an approved snapshot exists)? true / false, or null when the website cannot be read.
@@ -27,15 +28,16 @@ export async function websiteStatusOf(cfg, id, fetchImpl) {
 }
 
 /**
- * True when the saved draft says nothing new about the public listing since the version that is on the website: the last version a real job
- * verified Live, or (for a listing imported from the website that has no job yet) the version created by the import. Any saved public change
- * (text, price, photographs, an acknowledged Notion change) counts as a change, even if it was changed back. Never true while a publication is
- * merged but unconfirmed, or running, so the re-check and monitoring paths keep working. Reads only the database.
+ * The real difference between the saved draft and the version on the website, or null when there is nothing to compare (not published, withdrawn,
+ * or the website could not be read). Values are compared, not edit events (see changes.js). One thing the content cannot show is a change in the CRM
+ * that was accepted into the draft after the last publication, so that adds one item.
  */
-export async function noPublicChanges(db, draft, { live, stuck, active, publishedOnWebsite }) {
-  if (!draft || stuck || active) return false;
-  const base = live ? (live.draft_id === draft.id ? live.draft_version : null) : (publishedOnWebsite ? await drafts.importedVersion(db, draft.id) : null);
-  return base != null && !(await drafts.publicChangesSince(db, draft.id, base));
+export async function changesFor(db, draft, { site, live }) {
+  if (!draft || !site || !site.approved || !site.approved.public || site.withdrawn) return null;
+  const result = changesSincePublished(draft, { ...site.approved.public, address: site.approved.address });
+  const base = live ? (live.draft_id === draft.id ? live.draft_version : null) : await drafts.importedVersion(db, draft.id);
+  if (base != null && await drafts.notionRefreshedSince(db, draft.id, base)) { result.items.push({ field: 'crm', label: 'CRM details you accepted' }); result.count += 1; }
+  return result;
 }
 
 const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
@@ -81,11 +83,13 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   if (latest && latest.payload_hash === hash && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
   if (latest && jobs.isActive(latest)) throw new HttpError(409, 'job_active');
 
-  // nothing to publish: no job is recorded (a dry run of unchanged content used to end as a failed job). A resumed or stuck publication is not "unchanged".
+  // nothing to publish: no job is recorded. The saved draft is compared with the version on the website (values, not edit events); a requested status
+  // change, a merge that was not confirmed, or an unreadable website all mean "there may be something to do".
   {
     const live = await jobs.liveJob(db, id);
-    if (!statusChange && (kind === 'dry_run' || (real && live)) && await noPublicChanges(db, draft, { live, stuck: await jobs.mergedUnverified(db, id), active: false, publishedOnWebsite: live ? true : await approvedOnWebsite(cfg, id, fetchImpl) })) {
-      throw new HttpError(409, 'no_changes', { reasons: ['No changes to publish. This listing already matches what is on the website.'] });
+    if (!statusChange && (kind === 'dry_run' || (real && live))) {
+      const changes = await changesFor(db, draft, { site: await websiteState(cfg, id, fetchImpl), live });
+      if (changes && changes.count === 0 && !(await jobs.mergedUnverified(db, id))) throw new HttpError(409, 'no_changes', { reasons: ['No changes to publish. This listing already matches what is on the website.'] });
     }
   }
   if (real && kind === 'publish' && await jobs.liveJob(db, id)) throw new HttpError(409, 'already_live', { reasons: ['This listing is already live. Publish your changes as an update.'] });
@@ -139,15 +143,19 @@ export async function jobsFor({ cfg, db, id, fetchImpl, env, canPublish = false 
   const out = [];
   for (const j of list) out.push(jobView(jobs.isActive(j) ? await reconcile(j, { db, publish, repo: cfg.repo, fetchImpl }) : j));
   const live = await jobs.liveJob(db, id);
+  const wjForFresh = await jobs.withdrawalState(db, id);
   const stuck = await jobs.mergedUnverified(db, id);
   const publishedOnWebsite = live ? true : await approvedOnWebsite(cfg, id, fetchImpl);
-  const site = await websiteState(cfg, id, fetchImpl);
+  // right after a publication the website's files have just changed: read them fresh for a couple of minutes so the screen never shows stale "changes"
+  const justFinished = [live, wjForFresh].some((j) => j && j.finished_at && Date.now() - new Date(j.finished_at).getTime() < 120000);
+  const site = await websiteState(cfg, id, fetchImpl, justFinished ? { ttlMs: 0 } : {});
   const websiteStatus = publishedOnWebsite ? (site?.approved?.commercialStatus ?? null) : null;
   // withdrawal: the tombstone on the website's main branch, and what the last withdrawal job proved
   const wj = await jobs.withdrawalState(db, id);
   const withdrawn = site ? site.withdrawn : null;
   const withdrawal = wj ? { jobId: wj.id, status: wj.status, merged: wj.result?.merged === true, verified: wj.status === 'succeeded' && wj.result?.withdrawn === true, at: wj.finished_at ?? wj.created_at } : null;
   const audit = canPublish ? (await readAudit(db, id, 20)).map((r) => ({ id: r.id, at: r.at, by: r.actor_email, action: r.action, from: r.status_from, to: r.status_to, reason: r.reason, jobId: r.job_id })) : null;
-  const noChanges = await noPublicChanges(db, await drafts.getDraft(db, id), { live, stuck, active: out.some((j) => j.active), publishedOnWebsite });
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, websiteStatus, websiteAddress: site?.approved?.address ?? null, withdrawn, withdrawal, ...(audit ? { audit } : {}), noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
+  const changes = await changesFor(db, await drafts.getDraft(db, id), { site, live });
+  const noChanges = !!changes && changes.count === 0 && !stuck && !out.some((j) => j.active);
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, websiteStatus, changes, websiteAddress: site?.approved?.address ?? null, withdrawn, withdrawal, ...(audit ? { audit } : {}), noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
 }
