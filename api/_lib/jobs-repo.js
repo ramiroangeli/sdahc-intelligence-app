@@ -96,6 +96,12 @@ export async function liveJob(db, publicId) {
   return rows[0] ?? null;
 }
 
+/** The most recent publish, update or withdraw job of EVERY listing (one query): what the Listings list needs to say Publishing or Needs attention. */
+export async function lastRealJobs(db) {
+  const rows = await db.unsafe(`select distinct on (public_id) public_id, kind, status, result, finished_at from listings.publish_jobs where kind in ('publish','update','withdraw') order by public_id, created_at desc`);
+  return new Map(rows.map((r) => [r.public_id, r]));
+}
+
 /** The most recent withdrawal job for a listing (any status), or null. */
 export async function withdrawalState(db, publicId) {
   const rows = await db.unsafe(`select ${COLS} from listings.publish_jobs where public_id = $1 and kind = 'withdraw' order by created_at desc limit 1`, [publicId]);

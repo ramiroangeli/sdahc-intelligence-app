@@ -27,11 +27,16 @@ const capsOf = (session) => ({ caps: { canEdit: hasCapability(session.staff, C.E
 export const listRoute = guardedRoute({
   capability: C.VIEW,
   run: async ({ deps }) => {
-    let drafts = null;
+    let drafts = null; let draftRows = []; let lastJobs = new Map();
     if (draftsConfigured(deps, deps.env ?? process.env)) {
-      try { drafts = { state: 'ok', items: (await listDrafts(getDb(deps, deps.env ?? process.env))).map(draftSummary) }; } catch { drafts = { state: 'error', items: [] }; }
+      try {
+        const db = getDb(deps, deps.env ?? process.env);
+        draftRows = await listDrafts(db);
+        drafts = { state: 'ok', items: draftRows.map(draftSummary) };
+        lastJobs = await jobsRepo.lastRealJobs(db).catch(() => new Map());
+      } catch { drafts = { state: 'error', items: [] }; draftRows = []; }
     }
-    return buildListings(dataCfg(deps), { fetchImpl: f(deps), drafts });
+    return buildListings(dataCfg(deps), { fetchImpl: f(deps), drafts, draftRows, lastJobs });
   },
 });
 

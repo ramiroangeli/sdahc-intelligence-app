@@ -95,39 +95,52 @@ async function lsLoadList() {
   LS.listLoading = false; lsPaint();
 }
 
+/* One row per listing: the address, ONE publication state, the selling status (once published) and one action. The CRM status, the page address and
+   version numbers are not shown here: they are reference data, or technical. */
+const LIST_FILTERS = [['all', 'All'], ['attention', 'Needs attention'], ['draft', 'Drafts'], ['live', 'Live'], ['withdrawn', 'Withdrawn']];
+const lsPub = (l) => (l.publication && l.publication.state) || 'draft';
+/** Which filter a listing belongs to. Pure. */
+function lsListMatches(l, key) {
+  const st = lsPub(l);
+  if (key === 'all') return true;
+  if (key === 'attention') return !!((l.publication && l.publication.attention) || (l.deployment && l.deployment.state === 'not_live'));
+  if (key === 'draft') return !l.website && st !== 'withdrawn';
+  if (key === 'live') return !!l.website && st !== 'withdrawn';
+  if (key === 'withdrawn') return st === 'withdrawn';
+  return true;
+}
+const lsListHref = (l) => '#/listings/draft/' + l.id + (l.website || lsPub(l) === 'withdrawn' ? '/manage' : '');
+const lsListAction = (l) => (lsPub(l) === 'withdrawn' ? 'View' : l.website ? 'Manage' : 'Continue');
+
 function listingRow(l) {
-  const [dLabel, dClass] = DEPLOY_LABEL[l.deployment.state] || DEPLOY_LABEL.unknown;
-  const siteCell = lsEl('td', null, l.draft && !l.website ? badge('Draft, not published', 'ls-badge-draft') : badge(dLabel, dClass),
-    l.deployment.checkedAt ? lsEl('div', { class: 'ls-sub', text: 'Checked ' + new Date(l.deployment.checkedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }) }) : null);
-  const draftCell = lsEl('td', null, l.draft
-    ? lsEl('div', null, lsEl('a', { class: 'ls-link-strong', href: '#/listings/draft/' + l.id + (l.website ? '/manage' : ''), text: l.website ? 'Manage' : 'Draft v' + l.draft.version }),
-        lsEl('div', { class: 'ls-sub', text: l.draft.fieldsFilled + ' of ' + l.draft.fieldsTotal + ' fields, ' + (l.draft.photoCount || 0) + ' photos, saved by ' + l.draft.updatedBy.split('@')[0] + ' ' + when(l.draft.updatedAt) }),
-        l.draft.openNotes ? lsEl('div', { class: 'ls-sub ls-warn-text', text: l.draft.openNotes + ' open verification note' + (l.draft.openNotes > 1 ? 's' : '') }) : null)
-    : lsEl('span', { class: 'ls-sub', text: 'None' }));
-  const tr = lsEl('tr', null,
-    lsEl('td', null, lsEl('div', { class: 'ls-name', text: l.name }), lsEl('div', { class: 'ls-sub', text: [l.state, l.designCategories.join(', '), l.buildType].filter(Boolean).join(' · ') })),
-    lsEl('td', null, l.notion ? badge(l.notion.status, 'ls-badge-notion') : badge('Not set', 'ls-badge-muted')),
-    siteCell,
-    lsEl('td', null, l.website && !l.deployment.state.startsWith('withdrawn') ? commercialBadge(l.website.commercialStatus) : null),
-    lsEl('td', null, l.website && l.website.url ? lsEl('a', { class: 'ls-link', href: l.website.url, target: '_blank', rel: 'noopener noreferrer', text: '/opportunities/' + l.website.slug + '/' }) : null),
-    draftCell);
-  const rows = [tr];
-  if (l.notes.length) rows.push(lsEl('tr', { class: 'ls-note-row' }, lsEl('td', { colspan: '6' }, lsEl('ul', { class: 'ls-notes' }, l.notes.map((n) => lsEl('li', { text: n }))))));
-  return rows;
+  const st = lsPub(l); const p = l.publication || { changesCount: 0, attention: false };
+  const sub = [];
+  if (l.draft && !l.website) sub.push('Saved by ' + l.draft.updatedBy.split('@')[0] + ' ' + when(l.draft.updatedAt));
+  if (st === 'live_changes') sub.push(p.changesCount + (p.changesCount === 1 ? ' change' : ' changes') + ' not published yet');
+  if (l.draft && l.draft.openNotes) sub.push(l.draft.openNotes + ' note' + (l.draft.openNotes > 1 ? 's' : '') + ' to review');
+  const trouble = p.attention ? 'The last update did not complete. Open it for what to do.' : l.deployment && l.deployment.state === 'not_live' ? 'The page is not responding on the website.' : null;
+  return [lsEl('tr', { class: 'ls-lrow' + (p.attention ? ' ls-lrow-attn' : '') },
+    lsEl('td', null, lsEl('a', { class: 'ls-name ls-link-strong', href: lsListHref(l), text: l.name }), lsEl('div', { class: 'ls-sub', text: [l.state, l.designCategories.join(', '), l.buildType].filter(Boolean).join(' · ') }),
+      sub.length ? lsEl('div', { class: 'ls-sub', text: sub.join(' · ') }) : null, trouble ? lsEl('div', { class: 'ls-sub ls-warn-text', text: trouble }) : null),
+    lsEl('td', null, publicationBadge(st)),
+    lsEl('td', null, l.website && st !== 'withdrawn' ? commercialBadge(l.website.commercialStatus) : lsEl('span', { class: 'ls-sub', text: l.website ? '' : 'Not published' })),
+    lsEl('td', { class: 'ls-lrow-act' }, lsEl('a', { class: 'btn btn-secondary btn-sm', href: lsListHref(l), text: lsListAction(l) })))];
 }
 
 function paintList(root) {
-  if (LS.listLoading && !LS.list) { root.append(lsEl('div', { class: 'panel ls-state', text: 'Loading website listings...' })); return; }
+  if (LS.listLoading && !LS.list) { root.append(lsEl('div', { class: 'panel ls-state', text: 'Loading listings...' })); return; }
   if (LS.listError) { root.append(errorPanel(LS.listError, lsLoadList)); return; }
   const d = LS.list;
   const canEdit = LS.me && LS.me.canEdit;
   const warns = [];
-  if (d.sources.notion.state === 'not_configured') warns.push('Notion is not connected to this service, so only what is already on the website is shown.');
+  if (d.sources.notion.state === 'not_configured') warns.push('The CRM is not connected to this service, so only what is already on the website is shown.');
   if (d.sources.notion.state === 'error') warns.push(d.sources.notion.message + '. Showing the website state only.');
-  if (d.sources.website.state === 'error') warns.push(d.sources.website.message + '. Live status cannot be confirmed.');
+  if (d.sources.website.state === 'error') warns.push(d.sources.website.message + '. What is live cannot be confirmed.');
   if (d.sources.website.state === 'warning') warns.push(d.sources.website.message);
   if (d.sources.drafts && d.sources.drafts.state === 'error') warns.push('Drafts could not be read right now.');
   if (d.sources.drafts && d.sources.drafts.state === 'not_configured') warns.push('Drafts are not enabled yet: the drafts database is not configured.');
+  const key = LS.listFilter || 'all';
+  const shown = d.listings.filter((l) => lsListMatches(l, key));
   root.append(lsEl('div', { class: 'panel' },
     lsEl('div', { class: 'panel-head' },
       lsEl('div', null, lsEl('h2', { class: 'panel-title', text: 'Listings' }),
@@ -136,12 +149,15 @@ function paintList(root) {
         lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: lsLoadList, text: LS.listLoading ? 'Checking...' : 'Refresh' }),
         lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-add-btn', disabled: !canEdit, title: canEdit ? '' : 'You need the Editor capability to add a listing', onclick: () => lsGo('#/listings/new'), text: 'Add listing' }))),
     warns.length ? lsEl('div', { class: 'ls-banner', role: 'status' }, warns.map((m) => lsEl('div', { text: m }))) : null,
+    lsEl('div', { class: 'ls-chips', role: 'group', 'aria-label': 'Filter listings' }, LIST_FILTERS.map(([k, label]) => lsEl('button', { type: 'button', class: 'ls-chip' + (k === key ? ' on' : ''), 'aria-pressed': k === key ? 'true' : 'false', 'data-filter': k,
+      onclick: () => { LS.listFilter = k; lsPaint(); }, text: label + ' ' + d.listings.filter((l) => lsListMatches(l, k)).length }))),
     d.listings.length === 0
-      ? lsEl('div', { class: 'ls-state', text: 'No properties are on the website or in draft yet.' })
+      ? lsEl('div', { class: 'ls-state', text: 'No properties are on the website or in draft yet. Use "Add listing" to start.' })
+      : shown.length === 0 ? lsEl('div', { class: 'ls-state', text: 'Nothing here.' })
       : lsEl('div', { class: 'table-wrap ls-table-wrap' }, lsEl('table', { class: 'deals-table ls-table' },
-          lsEl('thead', null, lsEl('tr', null, ['Property', 'CRM status', 'Website', 'Selling status', 'Page', 'Draft'].map((h) => lsEl('th', { scope: 'col', text: h })))),
-          lsEl('tbody', null, d.listings.map(listingRow)))),
-    lsEl('div', { class: 'ls-foot', text: 'Generated ' + new Date(d.generatedAt).toLocaleString('en-AU') + '.' })));
+          lsEl('thead', null, lsEl('tr', null, ['Property', 'On the website', 'Selling status', ''].map((h) => lsEl('th', { scope: 'col', text: h })))),
+          lsEl('tbody', null, shown.map(listingRow)))),
+    lsEl('div', { class: 'ls-foot', text: 'Checked ' + new Date(d.generatedAt).toLocaleString('en-AU') + '.' })));
 }
 
 /* ------------------------------------------------------------------ Add listing */
