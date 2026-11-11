@@ -238,3 +238,9 @@ textarea.ls-input { resize: vertical; line-height: 1.5; }
 .ls-hist-plain li.bad strong { color: #A12622; }
 .ls-step.off { opacity: .5; cursor: not-allowed; }
 #view-listings a.btn { text-decoration: none; display: inline-block; }
+/* Listings list */
+.ls-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 24px 12px; }
+.ls-chip { border: 1px solid var(--panel-border); background: var(--panel); border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--ink-soft); }
+.ls-chip.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.ls-lrow-attn td:first-child { box-shadow: inset 3px 0 0 #C0392B; }
+.ls-lrow-act { text-align: right; }

@@ -4,9 +4,30 @@
 //   deployment  whether the public page actually answers on the website right now: the TRUTH
 import { fetchManagedProperties } from './notion.js';
 import { checkLive, listingUrl, loadSnapshots } from './site.js';
+import { changesSincePublished } from './changes.js';
 
 const COMMERCIAL_BY_STATUS = { published: 'available', under_offer: 'under_offer', sold: 'sold' };
 const LIVE_INTENT = new Set(['published', 'under_offer', 'sold']);
+
+/**
+ * The PUBLICATION state of a listing, separate from its selling status: draft, ready, publishing, live, live_changes (the saved draft differs from the
+ * website), withdrawn. Also how many changes are waiting and whether something needs attention (the last real job did not complete). Pure.
+ *   draftRow    the raw draft row (content, photos) or null; snapshot the website's summary from site.js or null; lastJob the listing's latest real job or null
+ */
+export function publicationFor({ draftRow, snapshot, withdrawn, lastJob }) {
+  const active = lastJob && ['queued', 'dispatched', 'running'].includes(lastJob.status);
+  const failed = !!(lastJob && lastJob.status === 'failed');
+  if (withdrawn) return { state: 'withdrawn', changesCount: 0, attention: failed && lastJob.kind === 'withdraw' && lastJob.result?.merged === true };
+  if (active) return { state: 'publishing', changesCount: 0, attention: false };
+  if (snapshot) {
+    const changes = draftRow && snapshot.public ? changesSincePublished(draftRow, { ...snapshot.public, address: snapshot.address }).count : 0;
+    return { state: changes > 0 ? 'live_changes' : 'live', changesCount: changes, attention: failed };
+  }
+  const c = draftRow?.content ?? {};
+  const photos = Array.isArray(draftRow?.photos) ? draftRow.photos.filter((p) => p.kind !== 'floorplan').length : 0;
+  const ready = !!(c.description && c.publicAddress && c.pricingMode && photos > 0);
+  return { state: ready ? 'ready' : 'draft', changesCount: 0, attention: failed };
+}
 
 /** Pure: combine the three facts into one row and say plainly whether they agree. */
 export function combine({ notion, snapshot, withdrawn, live, url }) {
@@ -36,17 +57,19 @@ export function combine({ notion, snapshot, withdrawn, live, url }) {
 }
 
 /** Attach saved drafts to their rows, or add a draft-only row. A draft never changes the website/deployment columns. */
-export function attachDrafts(listings, drafts) {
+export function attachDrafts(listings, drafts, { rows = [], snaps = null, lastJobs = new Map() } = {}) {
+  const rawById = new Map(rows.map((r) => [r.public_id, r]));
   const byId = new Map(listings.map((l) => [l.id, l]));
   for (const d of drafts) {
     const row = byId.get(d.id);
     if (row) { row.draft = d; continue; }
     listings.push({ id: d.id, name: d.label, state: null, designCategories: [], buildType: null, notion: null, website: null, deployment: { state: 'not_published' }, inSync: true, notes: [], draft: d });
   }
+  for (const l of listings) l.publication = publicationFor({ draftRow: rawById.get(l.id) ?? null, snapshot: snaps?.approved.get(l.id) ?? null, withdrawn: l.deployment.state === 'withdrawn', lastJob: lastJobs.get(l.id) ?? null });
   return listings.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Date(), drafts = null } = {}) {
+export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Date(), drafts = null, draftRows = [], lastJobs = new Map() } = {}) {
   const sources = { notion: { state: 'ok' }, website: { state: 'ok' }, drafts: drafts ? { state: drafts.state } : { state: 'not_configured' } };
 
   let properties = [];
@@ -74,6 +97,6 @@ export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Da
     const live = snapshot && !withdrawn && sources.website.state !== 'error' ? await checkLive(cfg, snapshot.slug, { fetchImpl }) : null;
     return combine({ notion, snapshot: sources.website.state === 'error' ? null : snapshot, withdrawn, live, url });
   }));
-  const listings = attachDrafts(rows.filter(Boolean), drafts?.items ?? []);
+  const listings = attachDrafts(rows.filter(Boolean), drafts?.items ?? [], { rows: draftRows, snaps: sources.website.state === 'error' ? null : snaps, lastJobs });
   return { generatedAt: now().toISOString(), sources, listings };
 }
