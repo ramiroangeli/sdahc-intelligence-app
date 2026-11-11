@@ -1,6 +1,6 @@
 # Listing status and withdrawal: functional specification
 
-Status: **for review. Nothing in this document is built, and it is not yet approved.** Prepared 10 Nov 2026 from the code of both repositories at their `main`. Revised 10 Nov 2026 after review: **withdrawal reasons are private and are never committed to the public website repository** (sections 4, 6, 7 and 9).
+Status: **approved 10 Nov 2026 (decisions in section 12).** Implementation proceeds in increments: 1 Commercial Status, 2 Migration 0005 (prepared, not executed until approved), 3 Withdrawal, 4 Reinstatement and recovery. Prepared from the code of both repositories at their `main`. Withdrawal reasons are private and are never committed to the public website repository (sections 4, 6, 7 and 9).
 
 ## 1. Summary
 
@@ -138,3 +138,39 @@ Recommended order: 1, then 2, then 3. Each is its own pull request in each repos
 7. **Who may change status:** Publishers only (recommended), or may an Editor also move Available and Under offer?
 8. **Sold wording:** confirm what the public page and the enquiry form should do for a Sold listing (this is a website decision; the portal only sets the status).
 9. **Reason format:** free text, private (recommended, up to 300 characters), or a short list (vendor request, sold elsewhere, error, compliance) plus an optional private note?
+
+
+## 12. Final decisions (approved 10 Nov 2026)
+
+| # | Decision | Final |
+|---|---|---|
+| 1 | Withdrawal approval | A single authorised Publisher, with typed property address and a required private reason. No two-person approval |
+| 2 | What a reinstated listing shows | An **explicit commercial status chosen on the reinstate screen** (no default carried over), after full validation |
+| 3 | Public photographs on withdrawal | **Retained** for reinstatement. A manual emergency purge procedure is documented (increment 3) |
+| 4 | End dates and scheduled removal | **Deferred.** No scheduled infrastructure. Existing end dates are audited and preserved (see below) |
+| 5 | Reinstate job kind | A distinct `reinstate` kind (migration 0005) |
+| 6 | Private audit trail | A private, append-only `listings.audit_log` (migration 0005), with immutability and the authenticated actor captured server side |
+| 7 | Who changes status | Publishers only |
+| 8 | Sold listings | Remain public and in the catalogue. A Sold page must not offer the property for purchase: no purchase enquiry, no price, no access steps, and a general enquiry message instead |
+| 9 | Reason format | Free text, required, up to 300 characters, private; never sent to GitHub or the website |
+| 10 | Withdrawn URL | 404, removed from the catalogue and the sitemap |
+| 11 | Recovery and idempotency | Same lifecycle as publishing; the job checks `main` first; idempotency includes the action and requested status |
+| 12 | Existing listings | Sheppard Street and Rutherford Grove keep their current status and content; every new field is optional |
+
+Notion remains the CRM and is never written. It is not the authority for public marketing status.
+
+### Three safeguards (verified in code)
+
+1. **Notion Web Listing Status is not a gate.** The website job already overlays the property with the approved draft and forces the status to Published, so Notion's value cannot block a portal publication. That overlay also meant a portal content update would silently reset an Under offer or Sold listing to Available (the engine derives the status from the overlay). Increment 1 fixes this: the job preserves the website's current status unless the Publisher requests a change. The same rule will apply to reinstatement.
+2. **Sold pages.** Today a Sold page still shows "Enquire about this property", the price row, the "How access works" steps (register, NDA, IM, EOI), the property-specific enquiry form, and structured data with a price offer. Increment 1 replaces these with a "This property has been sold" message, a link to available properties and a general enquiry route, drops the price and offer data, and makes the enquiry endpoint refuse enquiries for a sold listing.
+3. **End dates.** Both published snapshots have no end date. The website job read the end date from the real Notion row, so a Notion value could have entered a snapshot at the next portal update and hidden the listing at a later build. Increment 1 stops that: the job takes the end date from the existing snapshot only. No scheduler is introduced.
+
+### Privacy finding handled in increment 1
+Each snapshot carries `approvedById`. For portal approvals it is a truncated SHA-256 of the approving staff member's email (`app-...`), the same value for every listing approved by the same person. That is a stable, guessable identifier of a staff member in a public repository. From increment 1 the portal sends a constant approver identity (`listings-manager`, "SDA Home Choices"). Existing snapshots are not rewritten by this change; they carry the old value until they are next published as a new version.
+
+### Increment 1 design (Commercial Status)
+- The status is a **property of the publication request**, not of the draft. A Publisher chooses it on the Publish update card (default: the status on the website now). The request carries the status they saw (`expectedStatus`); a stale tab is refused rather than silently reverting a change.
+- The status is sent to the website job only when it differs from the current website status. The job applies it to the snapshot (no new version number: the status moves only), keeps the end date, keeps the existing approver, and verifies the live page.
+- Publishing content without choosing a status never changes the status.
+- Idempotency compares the frozen payload hash, so a status change at the same draft version is a new job, not the earlier one returned.
+- Only Publishers can request a status. Everything is recorded on the job record (private) and in the audit log.
