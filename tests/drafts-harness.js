@@ -78,6 +78,7 @@ export async function database() {
   await db.exec(readFileSync('supabase/migrations/listings_0002_photos.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/listings_0003_photo_review.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/listings_0004_publish_jobs.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/listings_0005_audit_log_and_reinstate.sql', 'utf8'));
   const adapter = {
     raw: db,
     unsafe: async (q, p) => (await db.query(q, p)).rows,
