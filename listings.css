@@ -244,3 +244,21 @@ textarea.ls-input { resize: vertical; line-height: 1.5; }
 .ls-chip.on { background: var(--navy); color: #fff; border-color: var(--navy); }
 .ls-lrow-attn td:first-child { box-shadow: inset 3px 0 0 #C0392B; }
 .ls-lrow-act { text-align: right; }
+
+/* ---- Final polish: one heading system, header rhythm, and the two buttons for moving around --------------------------------------------------
+   Headings reuse the existing body face (IBM Plex Sans, squared proportions): no new font. Colours are the existing tokens. */
+.ls-page-title { font-family: var(--font-body); font-weight: 700; font-size: clamp(28px, 4.2vw, 38px); line-height: 1.1; letter-spacing: -0.015em; color: var(--navy); margin: 0 0 14px; }
+.ls-page-sub { font-size: 13.5px; line-height: 1.5; margin: 0 0 4px; max-width: 70ch; }
+.ls-hdr-line { margin: 0 0 8px; font-size: 12.5px; line-height: 1.45; }
+#view-listings .panel-head { padding-bottom: 6px; }
+#view-listings .ls-chips { margin-top: 22px; margin-bottom: 18px; }
+#view-listings .ls-steps, #view-listings .ls-stepper { margin-top: 22px; }
+.ls-rv-box h3, .ls-ph-h { font-family: var(--font-body); font-weight: 700; letter-spacing: -0.005em; }
+.ls-back-btn { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 18px; padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid #C9DDF5; background: #EAF2FD; color: #0B4F94; font-size: 13px; font-weight: 600; text-decoration: none; }
+.ls-back-btn:hover, .ls-back-btn:focus-visible { background: #DCEAFB; }
+.ls-live-btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: var(--radius-sm); background: var(--navy); color: #fff; font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.ls-live-btn:hover, .ls-live-btn:focus-visible { background: var(--navy-soft); }
+.ls-ico { font-size: 15px; line-height: 1; }
+.ls-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ls-manage-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; }
+@media (max-width: 560px) { .ls-live-btn { width: 100%; justify-content: center; } }
