@@ -743,13 +743,13 @@ function withdrawCard(ro, active) {
   return lsEl('div', { class: 'ls-rv-box ls-danger-box', id: 'ls-withdraw' },
     lsEl('h3', { text: 'Withdraw this listing' }),
     !LS.withdrawOpen
-      ? lsEl('div', null, lsEl('p', { class: 'ls-sub', text: 'Takes the listing out of public marketing. Use it when the property should no longer be advertised at all. Selling status (Available, Under offer, Sold) is changed above, not here.' }),
+      ? lsEl('div', null, lsEl('p', { class: 'ls-sub', text: 'Permanently takes the listing out of public marketing. Use it when the property should no longer be advertised at all. Selling status (Available, Under offer, Sold) is changed above, not here.' }),
         lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-withdraw-open', disabled: busy, onclick: () => { LS.withdrawOpen = true; lsRefreshReview(); }, text: 'Withdraw this listing...' }))
       : lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm withdrawal' },
-        lsEl('p', null, lsEl('strong', { text: 'This removes the listing from public marketing.' })),
+        lsEl('p', null, lsEl('strong', { text: 'This permanently removes the listing from public marketing.' })),
         lsEl('ul', { class: 'ls-sub' }, [
           'The page is removed: its address will answer "not found".', 'It disappears from the catalogue and from the sitemap.',
-          'The photographs stay stored and reachable only by their exact web addresses. Search engines may keep a copy for a while.', 'The listing and its history stay here, so it can be reinstated.'].map((t) => lsEl('li', { text: t }))),
+          'The photograph files are kept and may remain reachable through their direct web addresses. Search engines may keep a copy for a while.', 'The draft, its history and the private record stay here. Withdrawal is permanent in the Listings Manager: there is no undo.'].map((t) => lsEl('li', { text: t }))),
         lsEl('label', { class: 'ls-sub', for: 'ls-withdraw-reason', text: 'Reason (private: it is recorded in the audit trail and is never published)' }),
         lsEl('textarea', { id: 'ls-withdraw-reason', class: 'ls-input', rows: '3', maxlength: '300', value: LS.withdrawReason || '', oninput: (e) => { LS.withdrawReason = e.target.value; lsWithdrawBtn(); } }),
         lsEl('label', { class: 'ls-sub', for: 'ls-withdraw-address' }, 'To confirm, type the public address of the listing: ', lsEl('strong', { text: LS.jobs.websiteAddress || '(not available)' })),
@@ -770,7 +770,7 @@ function withdrawnView(ro, latest) {
       unconf ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', id: 'ls-withdraw-unconfirmed' }, 'The withdrawal was merged into the website, but the page being gone has not been confirmed yet. It is not shown as Withdrawn until it is.')
         : lsEl('div', { class: 'ls-banner', role: 'status', id: 'ls-withdrawn-note' }, badge('Withdrawn', 'ls-badge-muted'), ' The page, the catalogue entry and the sitemap entry are removed. Its address answers "not found".'),
       LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
-      lsEl('p', { class: 'ls-sub', text: 'Publishing and status changes are switched off while a listing is withdrawn. The draft, its history and the photographs are kept. Reinstating a listing is not available in the Listings Manager yet: ask an administrator.' }),
+      lsEl('p', { class: 'ls-sub', text: 'Publishing and status changes are switched off while a listing is withdrawn. The draft, its history and the private record are kept. Withdrawal is permanent in the Listings Manager. Marketing this property again is a separate administrative process: ask an administrator.' }),
       unconf && !ro ? lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-withdraw-recheck', disabled: LS.jobBusy, onclick: () => lsStartWithdraw(true), text: LS.jobBusy ? 'Checking...' : 'Re-check withdrawal' }) : null,
       !ro && trail.length ? lsEl('div', { id: 'ls-withdraw-trail' }, lsEl('h4', { class: 'ls-rv-title', text: 'Private record (Publishers and administrators only)' }),
         lsEl('ul', { class: 'ls-sub' }, trail.map((r) => lsEl('li', { text: when(r.at) + ', ' + String(r.by).split('@')[0] + ': ' + r.reason })))) : null,

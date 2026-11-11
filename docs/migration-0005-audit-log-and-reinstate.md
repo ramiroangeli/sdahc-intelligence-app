@@ -9,7 +9,7 @@
    - Immutability at the database level: triggers refuse every update, delete and truncate, for the app role **and** the table owner. The timestamp (`at`) and the writing role (`recorded_by`) are stamped by the database, so a caller cannot backdate or impersonate.
    - Access: only `listings_app` can select and insert, through row-level security with no update or delete policy. `anon`, `authenticated` and `service_role` have nothing.
    - Rules enforced by the database as well as the code: a withdrawal needs a reason; a status change needs two different valid statuses; a reinstatement needs a status; emails are lower case; the listing id has the public format.
-2. **`publish_jobs.kind` also allows `reinstate`.** Widening a check cannot invalidate a row, so existing jobs, idempotency keys and the one-active-job-per-listing index are untouched.
+2. **`publish_jobs.kind` also allows `reinstate`** (permitted but unused: reinstatement was cancelled by decision on 11 Nov 2026, and the migration is not rolled back). Widening a check cannot invalidate a row, so existing jobs, idempotency keys and the one-active-job-per-listing index are untouched.
 
 Only the `listings` schema is touched. Nothing in raw, history, analytics, public or rfi.
 

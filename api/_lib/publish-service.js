@@ -46,8 +46,8 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   requireId(id);
   if (!ENABLED_KINDS.includes(kind)) throw new HttpError(400, 'mode_not_enabled');
   if (!Number.isInteger(expectedVersion)) throw new HttpError(400, 'expected_version_required');
-  // a withdrawn listing is not published, updated, re-statused or rehearsed until it is reinstated
-  if ((await websiteState(cfg, id, fetchImpl))?.withdrawn === true) throw new HttpError(409, 'withdrawn', { reasons: ['This listing is withdrawn from public marketing. It cannot be published or changed until it is reinstated.'] });
+  // a withdrawn listing is not published, updated, re-statused or rehearsed: withdrawal is permanent in the Listings Manager
+  if ((await websiteState(cfg, id, fetchImpl))?.withdrawn === true) throw new HttpError(409, 'withdrawn', { reasons: ['This listing is withdrawn from public marketing. Withdrawal is permanent in the Listings Manager, so it cannot be published or changed.'] });
   // Commercial status (Publisher only, which the route already requires). Asked for as "set to X"; X must be a real status, and the Publisher must
   // say which status they saw, so a stale tab cannot silently undo someone else's change.
   let statusChange = null;

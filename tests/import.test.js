@@ -653,3 +653,29 @@ test('WITHDRAWAL UI: the confirm button needs a reason and the exact public addr
   assert.match(src, /Re-check withdrawal/);
   assert.ok(!/GitHub|pull request|workflow|sitemap.*payload/.test(src.slice(src.indexOf('const WITHDRAW_ERR_TEXT'), src.indexOf('const errText =')).replace(/GitHub's/g, '')), 'plain wording in the withdrawal errors');
 });
+
+// ---- Final scope: withdrawal is permanent; no reinstatement anywhere a user can see; the documented limits are locked in by tests ----
+test('SCOPE: nothing user-facing suggests reinstatement, and withdrawal is described as permanent with no undo', async () => {
+  const src = readFileSync('listings.js', 'utf8');
+  assert.ok(!/reinstat|reactivat|undo withdraw/i.test(src.replace(/there is no undo/gi, '')), 'the browser file never mentions reinstating');
+  assert.match(src, /Withdrawal is permanent in the Listings Manager/);
+  assert.match(src, /Marketing this property again is a separate administrative process/);
+  const ctx = await imported(); tombstone(ctx);
+  const r = await publishWith(ctx, 'update');
+  assert.equal(r.status, 409); assert.ok(!/reinstat/i.test(r.raw), 'the API refusal does not promise reinstatement');
+  assert.ok(!/reinstate/i.test(readFileSync('api/_lib/publish-service.js', 'utf8').replace(/\/\/.*$/gm, '')), 'no reinstate code path exists in the publication service');
+  const route = readFileSync('api/_lib/routes.js', 'utf8') + readFileSync('api/_lib/withdrawal.js', 'utf8');
+  assert.ok(!/reinstate/i.test(route.replace(/\/\/.*$/gm, '')), 'no route or service accepts a reinstate request');
+});
+
+test('DOCUMENTED LIMIT: for a withdrawn property, Create draft and Import published listing are refused, so normal Create Listing must not be promised', async () => {
+  const ctx = await setup(); ctx.w.state.withdrawn = [{ listingId: ID_RG, withdrawnAt: '2026-11-11T05:00:00.000Z', withdrawnBy: 'SDA Home Choices', reason: 'withdrawn' }]; resetCaches();
+  const create = await call(draftRoute, ctx.w, ctx.db, ALI_N, { method: 'POST', fetch: ctx.fetch, body: { propertyId: ID_RG } });
+  assert.equal(create.status, 409); assert.equal(create.json.error, 'already_published');
+  const imp = await importAs(ctx, ALI_N);
+  assert.equal(imp.status, 409);
+  assert.equal((await drafts(ctx.db)).length, 0, 'nothing is created');
+  const docs = readFileSync('docs/real-publication-setup.md', 'utf8');
+  assert.match(docs, /Do \*\*not\*\* expect Create Listing to work for it/); assert.match(docs, /public photograph files are \*\*kept\*\*|Public photograph files are retained after a withdrawal/i);
+  assert.match(docs, /anyone who has an exact URL can still open them/);
+});

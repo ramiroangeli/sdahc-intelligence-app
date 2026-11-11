@@ -1,5 +1,7 @@
 # Listing status and withdrawal: functional specification
 
+**SCOPE DECISION, 11 Nov 2026: reinstatement is cancelled and will not be built.** Withdrawal is permanent in the Listings Manager. Wherever this document describes reinstatement (the state diagram, the action table, decisions 2 and 5, the increments), read it as cancelled. The `reinstate` values in migration 0005 stay unused. Marketing a withdrawn property again is a separate manual administrative process, documented in `docs/real-publication-setup.md`, with its limits.
+
 Status: **approved 10 Nov 2026 (decisions in section 12).** Implementation proceeds in increments: 1 Commercial Status, 2 Migration 0005 (prepared, not executed until approved), 3 Withdrawal, 4 Reinstatement and recovery. Prepared from the code of both repositories at their `main`. Withdrawal reasons are private and are never committed to the public website repository (sections 4, 6, 7 and 9).
 
 ## 1. Summary
