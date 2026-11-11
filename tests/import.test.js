@@ -343,7 +343,7 @@ test('NO CHANGES: Viewers and Editors still cannot start anything, and a new lis
 function uiBrowser() {
   const ctx = { window: { addEventListener() {}, __lsPhotoTimings: [] }, document: { getElementById: () => null, createElement: () => ({}), body: { append() {} }, querySelectorAll: () => [], querySelector: () => null }, console, URL, performance, setTimeout, clearTimeout };
   vm.createContext(ctx);
-  vm.runInContext(`${readFileSync('listings.js', 'utf8')}\n;globalThis.__u = { jobNoChange, errText, ERR_TEXT, lsNoChanges, LS };`, ctx);
+  vm.runInContext(`${readFileSync('listings.js', 'utf8')}\n;globalThis.__u = { jobNoChange, errText, ERR_TEXT, lsNoChanges, lsStatusChange, lsStatusFields, LS };`, ctx);
   return ctx.__u;
 }
 const noChangeJob = (over = {}) => ({ status: 'failed', kind: 'dry_run', error: { code: 'engine_refused', message: 'the engine would not publish this listing (unchanged, 0 issue(s))' }, steps: [{ step: 'requested', status: 'ok' }, { step: 'engine', status: 'failed', detail: { kind: 'unchanged', issues: [] } }], ...over });
@@ -376,4 +376,97 @@ test('UI: staff-facing error text is plain (no GitHub, engine, workflow, payload
   const src = readFileSync('listings.js', 'utf8');
   assert.match(src, /Technical details/); assert.match(src, /Dry run \(optional\)/); assert.match(src, /you can publish without running one/);
   assert.ok(!/GitHub access token/.test(src), 'no stale instruction about the removed personal token');
+});
+
+// ---- Commercial status: Available, Under offer, Sold (a Publisher's request; the website keeps its status unless one is asked for) ----
+const publishWith = async (ctx, mode, extra = {}, who = ALI_N) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: (await ctx.db.unsafe('select version from listings.drafts where public_id = $1', [ID_RG]))[0].version, mode, ...extra } });
+const payloadOfJob = async (ctx, id) => (await ctx.db.unsafe('select payload from listings.publish_jobs where id = $1', [id]))[0].payload;
+const setWebsiteStatus = (ctx, status) => { ctx.w.state.snapshots[0] = { ...ctx.w.state.snapshots[0], commercialStatus: status }; resetCaches(); };
+
+test('STATUS: a Publisher can change the public status of a published listing with nothing else to publish; only the change travels in the payload', async () => {
+  const ctx = await imported();
+  assert.equal((await history(ctx)).websiteStatus, 'available');
+  const r = await publishWith(ctx, 'update', { commercialStatus: 'under_offer', expectedStatus: 'available' });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.job.kind, 'update'); assert.equal(ctx.gh.dispatches.at(-1).body.inputs.mode, 'update');
+  const p = await payloadOfJob(ctx, r.json.job.id);
+  assert.equal(p.content.commercialStatus, 'under_offer');
+  assert.equal(p.approver.id, 'listings-manager'); assert.ok(!JSON.stringify(p).includes('@'), 'nobody is named in the payload');
+  assert.equal((await jobRows(ctx.db)).length, 1);
+});
+
+test('STATUS: publishing content without choosing a status never carries one, so the website keeps the status it shows', async () => {
+  const ctx = await imported();
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const r = await publishWith(ctx, 'update');
+  assert.equal(r.status, 200);
+  assert.ok(!('commercialStatus' in (await payloadOfJob(ctx, r.json.job.id)).content));
+  const ctx2 = await imported(); await save(ctx2, { title: 'Established Improved Liveability SDA Investment, refreshed again' });
+  const same = await publishWith(ctx2, 'update', { commercialStatus: 'available', expectedStatus: 'available' });
+  assert.equal(same.status, 200);
+  assert.ok(!('commercialStatus' in (await payloadOfJob(ctx2, same.json.job.id)).content), 'asking for the status it already has is not a change');
+});
+
+test('STATUS: a stale page cannot undo someone else\'s change (409 status_changed), an invalid status is refused, and a first publication can only be Available', async () => {
+  const ctx = await imported();
+  setWebsiteStatus(ctx, 'sold');
+  const stale = await publishWith(ctx, 'update', { commercialStatus: 'available', expectedStatus: 'available' });
+  assert.equal(stale.status, 409); assert.equal(stale.json.error, 'status_changed'); assert.equal(stale.json.current, 'sold');
+  const noExpected = await publishWith(ctx, 'update', { commercialStatus: 'available' });
+  assert.equal(noExpected.status, 409, 'the status the person saw is required');
+  assert.equal((await publishWith(ctx, 'update', { commercialStatus: 'for_sale', expectedStatus: 'sold' })).status, 400);
+  assert.equal((await publishWith(ctx, 'publish', { commercialStatus: 'sold', expectedStatus: 'available' })).json.error, 'status_not_allowed');
+  assert.equal((await jobRows(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0); assert.equal(ctx.w.publicBlob.mem.size, 0);
+});
+
+test('STATUS: only Publishers can change it (Editors and Viewers are refused), and an unreadable website stops it with nothing recorded', async () => {
+  const ctx = await imported();
+  for (const who of [EDITOR, VIEWER]) assert.equal((await publishWith(ctx, 'update', { commercialStatus: 'sold', expectedStatus: 'available' }, who)).status, 403);
+  assert.equal((await jobRows(ctx.db)).length, 0);
+  const down = ctx.gh.fetch;
+  ctx.gh.fetch = async (u, o) => (String(u).includes('/approved') ? { ok: false, status: 500 } : down(u, o));
+  resetCaches();
+  const r = await publishWith(ctx, 'update', { commercialStatus: 'sold', expectedStatus: 'available' });
+  assert.equal(r.status, 503); assert.equal(r.json.error, 'website_unreadable');
+  assert.equal((await jobRows(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0);
+});
+
+test('STATUS: a status change at a version that is already live is a new job, repeating it returns that job, and "no changes" does not hide it', async () => {
+  const ctx = await imported();
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const a = await publishWith(ctx, 'update'); await live(ctx, a.json.job.id, 2);
+  assert.equal((await history(ctx)).noChanges, true);
+  assert.equal((await publishWith(ctx, 'dry_run')).status, 409, 'content is unchanged');
+  const s = await publishWith(ctx, 'update', { commercialStatus: 'sold', expectedStatus: 'available' });
+  assert.equal(s.status, 200, JSON.stringify(s.json)); assert.equal(s.json.existing, false); assert.notEqual(s.json.job.id, a.json.job.id);
+  assert.equal(ctx.gh.dispatches.length, 2);
+  const again = await publishWith(ctx, 'update', { commercialStatus: 'sold', expectedStatus: 'available' });
+  assert.equal(again.json.existing, true); assert.equal(again.json.job.id, s.json.job.id); assert.equal(ctx.gh.dispatches.length, 2);
+  assert.equal((await publishWith(ctx, 'dry_run', { commercialStatus: 'under_offer', expectedStatus: 'available' })).status, 409, 'a second job for the listing cannot start while one runs');
+  await live(ctx, s.json.job.id, 2);
+  setWebsiteStatus(ctx, 'sold');
+  const h = await history(ctx);
+  assert.equal(h.websiteStatus, 'sold'); assert.equal(h.noChanges, true);
+  const back = await publishWith(ctx, 'update', { commercialStatus: 'available', expectedStatus: 'sold' });
+  assert.equal(back.status, 200); assert.equal(back.json.existing, false, 'moving back is a new job');
+});
+
+test('STATUS: a listing that is not on the website has no status', async () => {
+  const w2 = world(); const db2 = await database(); resetCaches();
+  const h = await call(draftPublishRoute, w2, db2, ALI_N, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV });
+  assert.equal(h.json.websiteStatus, null);
+});
+
+test('UI: the status choice is a change only when it differs from the website, it is sent with the expected status, and Sold needs an explicit confirmation', () => {
+  const u = uiBrowser();
+  u.LS.jobs = { websiteStatus: 'available', noChanges: true, active: null }; u.LS.d = { notion: { changed: [] } };
+  assert.equal(u.lsStatusChange(), null); assert.equal(u.lsNoChanges(), true);
+  u.LS.statusChoice = 'sold';
+  assert.equal(u.lsStatusChange(), 'sold'); assert.equal(u.lsNoChanges(), false, 'a status change is something to publish');
+  assert.deepEqual(JSON.parse(JSON.stringify(u.lsStatusFields())), { commercialStatus: 'sold', expectedStatus: 'available' });
+  u.LS.statusChoice = 'available'; assert.equal(u.lsStatusChange(), null); assert.deepEqual(JSON.parse(JSON.stringify(u.lsStatusFields())), {});
+  u.LS.jobs = { websiteStatus: null, noChanges: false }; u.LS.statusChoice = 'sold'; assert.equal(u.lsStatusChange(), null, 'no status to change when the listing is not on the website');
+  const src = readFileSync('listings.js', 'utf8');
+  assert.match(src, /Publish status change/); assert.match(src, /id: 'ls-sold-confirm'/); assert.match(src, /disabled: sc === 'sold' && !LS\.soldConfirmed/);
+  assert.match(src, /LS\.statusChoice = null; LS\.soldConfirmed = false;/, 'the choice never survives a change of page');
 });

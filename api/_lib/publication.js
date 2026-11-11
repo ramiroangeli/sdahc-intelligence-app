@@ -46,7 +46,9 @@ export function preflight(view) {
 
 const PRICING_MODES = ['asking_price', 'price_guide', 'eoi', 'contact_agent'];
 /** The frozen PUBLIC content the Publisher approved. Nothing internal. */
-export function buildPayload({ jobId, view, draft, staff, kind }) {
+export const COMMERCIAL_STATUSES = ['available', 'under_offer', 'sold'];
+/** `commercialStatus` is set only when the Publisher is CHANGING the status; otherwise the website keeps the status it already shows. */
+export function buildPayload({ jobId, view, draft, kind, commercialStatus }) {
   const c = view.draft.content;
   if (!PRICING_MODES.includes(c.pricingMode)) throw new HttpError(409, 'not_ready', { reasons: ['Choose a pricing mode.'] });
   const needsPrice = c.pricingMode === 'asking_price' || c.pricingMode === 'price_guide';
@@ -55,16 +57,17 @@ export function buildPayload({ jobId, view, draft, staff, kind }) {
     version: 1, jobId, mode: kind, publicId: draft.public_id,
     // approval is made in the Listings Manager by a Publisher of the app's own staff list; the website job accepts it because the request is signed
     authority: 'listings_manager',
-    content: { title: c.title, description: c.description, publicAddress: c.publicAddress, pricingMode: c.pricingMode, displayPrice: Number.isFinite(price) ? price : null, featured: c.featured === true },
+    content: { title: c.title, description: c.description, publicAddress: c.publicAddress, pricingMode: c.pricingMode, displayPrice: Number.isFinite(price) ? price : null, featured: c.featured === true, ...(commercialStatus ? { commercialStatus } : {}) },
     manifest: {
       version: 1,
       // privacyReviewed is true because the Publisher approves the listing with its photographs and the automatic checks passed (preflight);
       // nothing is stored per photograph
       photos: canonical(draft.photos).map((p) => ({ id: p.id, alt: (p.alt ?? '').trim(), width: p.width, height: p.height, accent: p.accent, privacyReviewed: true, ...(p.kind === 'floorplan' ? { kind: 'floorplan' } : {}), files: p.files.map((f) => ({ w: f.w, file: f.file })) })),
     },
-    // a display name for the public snapshot (never an email address); the id only has to be stable per person
-    approver: { id: staff.notionUserId ?? `app-${createHash('sha256').update(staff.email).digest('hex').slice(0, 12)}`, name: staff.displayName ?? 'SDA Home Choices', notionUserId: staff.notionUserId ?? null },
-    approval: { by: staff.email, at: new Date().toISOString() },
+    // Nobody is named. The website's snapshots and pull requests are public, so the approver is always this constant identity and the
+    // person who acted is recorded only privately (the job record and the audit log).
+    approver: { id: 'listings-manager', name: 'SDA Home Choices', notionUserId: null },
+    approval: { by: 'listings_manager', at: new Date().toISOString() },
   };
   return { payload: body, hash: sha(body.content) + ':' + sha(body.manifest.photos.map((p) => [p.id, p.alt, p.kind ?? 'photo'])) };
 }

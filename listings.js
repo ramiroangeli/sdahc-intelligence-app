@@ -53,7 +53,7 @@ function renderListingsPage() { lsRouteChanged(); }
 
 async function lsRouteChanged() {
   lsStopPolling(); LS.jobFlash = null;
-  LS.flash = null; LS.notionConflict = null; LS.verifyOpen = null; LS.confirm = null; LS.photoMsg = null; LS.removeAsk = null;
+  LS.flash = null; LS.notionConflict = null; LS.verifyOpen = null; LS.confirm = null; LS.photoMsg = null; LS.removeAsk = null; LS.statusChoice = null; LS.soldConfirmed = false;
   const r = lsRoute();
   if (r.name === 'list') return lsLoadList();
   if (r.name === 'new') return lsLoadPicker();
@@ -681,19 +681,36 @@ function lsSchedulePoll() {
 }
 function lsRefreshReview() { const h = document.getElementById('ls-review-host'); if (h) h.replaceWith(reviewContent()); }
 
+/* Commercial status. Available, Under offer and Sold all stay public; a Sold page stops offering the property. Publishers choose it on the publish card. */
+const STATUS_LABEL = { available: 'Available', under_offer: 'Under offer', sold: 'Sold' };
+const lsWebsiteStatus = () => (LS.jobs && STATUS_LABEL[LS.jobs.websiteStatus] ? LS.jobs.websiteStatus : null);
+/** The status the Publisher is changing to, or null when nothing is being changed (the choice equals what the website shows). */
+const lsStatusChange = () => { const cur = lsWebsiteStatus(); const c = LS.statusChoice; return cur && STATUS_LABEL[c] && c !== cur ? c : null; };
+/** What is sent with a dry run or a publication: the new status and the status the person saw, only when it is being changed. */
+const lsStatusFields = () => { const c = lsStatusChange(); return c ? { commercialStatus: c, expectedStatus: lsWebsiteStatus() } : {}; };
+
+/** The public status line on the publish card: what the website shows now and, for a Publisher, a choice. */
+function statusRow(ro, current, change) {
+  const label = lsEl('div', { class: 'ls-sub', id: 'ls-status-now', text: 'Public status on the website now: ' + STATUS_LABEL[current] + '.' });
+  if (ro) return label;
+  const sel = lsEl('select', { id: 'ls-status-select', class: 'ls-input', 'aria-label': 'Public status', onchange: (e) => { LS.statusChoice = e.target.value === current ? null : e.target.value; LS.soldConfirmed = false; LS.confirmPublish = false; lsRefreshReview(); } },
+    Object.keys(STATUS_LABEL).map((k) => lsEl('option', { value: k, selected: k === (change || current), text: STATUS_LABEL[k] })));
+  return lsEl('div', { class: 'ls-statusrow' }, label, lsEl('label', { class: 'ls-sub', for: 'ls-status-select', text: 'Change the public status: ' }), sel,
+    change ? lsEl('div', { class: 'ls-banner', id: 'ls-status-pending', role: 'status' }, 'The status will change to ' + STATUS_LABEL[change] + ' when you publish below.' + (change === 'sold' ? ' A Sold page stays public but no longer offers the property for enquiry.' : '')) : null);
+}
 /** A dry run that found the content identical to what is already published is not a failure: there is simply nothing to publish. */
 function jobNoChange(j) {
   const s = (j.steps || []).find((x) => x.status === 'failed');
   return j.status === 'failed' && !!j.error && j.error.code === 'engine_refused' && !!s && s.step === 'engine' && !!s.detail && s.detail.kind === 'unchanged' && !(s.detail.issues && s.detail.issues.length);
 }
 /** Nothing public changed since the version on the website, and Notion has not moved: no action is offered. */
-const lsNoChanges = () => !!(LS.jobs && LS.jobs.noChanges && LS.d && LS.d.notion && LS.d.notion.changed.length === 0 && !(LS.jobs.active));
+const lsNoChanges = () => !!(LS.jobs && LS.jobs.noChanges && LS.d && LS.d.notion && LS.d.notion.changed.length === 0 && !(LS.jobs.active) && !lsStatusChange());
 
 async function lsStartDryRun() {
   if (LS.jobBusy) return;
   LS.jobBusy = true; LS.jobFlash = null; lsRefreshReview();
   try {
-    const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: 'dry_run' });
+    const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: 'dry_run', ...lsStatusFields() });
     LS.jobFlash = { ok: out.existing ? 'A dry run for this version already exists.' : 'Dry run started. It runs on the server: you can close this page.' };
     await lsLoadJobs();
   } catch (e) {
@@ -701,6 +718,7 @@ async function lsStartDryRun() {
     LS.jobFlash = e.status === 409 && b.error === 'no_changes' ? { ok: 'No changes to publish. This listing already matches what is on the website.' } : { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
       : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
       : e.status === 409 && b.error === 'job_active' ? 'A publication is already running for this listing.'
+      : e.status === 409 && b.error === 'status_changed' ? 'The status on the website has changed since you opened this page. Reload the page and check it.'
       : e.status === 503 ? 'Publishing is not set up correctly. An administrator needs to check the publishing settings.'
       : e.status === 502 ? 'The check could not be started. Nothing was published. Try again shortly, and if it keeps happening ask an administrator.' : e.status === 403 ? 'Only a Publisher can run this.' : 'The check could not be started. Try again, and if it keeps happening ask an administrator.' };
     await lsLoadJobs().catch(() => {});
@@ -716,7 +734,7 @@ async function lsStartPublish() {
   const kind = lsIsPublished() ? 'update' : 'publish';
   LS.jobBusy = true; LS.jobFlash = null; LS.confirmPublish = false; lsRefreshReview();
   try {
-    const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: kind });
+    const out = await lsApi('POST', '/api/listings/draft-publish', { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, mode: kind, ...lsStatusFields() });
     LS.jobFlash = { ok: out.existing ? 'This version has already been published.' : 'Publishing started. It runs on the server: you can close this page. The listing shows as Live only after the website has been checked.' };
     await lsLoadJobs();
   } catch (e) {
@@ -724,6 +742,8 @@ async function lsStartPublish() {
     LS.jobFlash = { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
       : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
       : e.status === 409 && b.error === 'job_active' ? 'A publication is already running for this listing.'
+      : e.status === 409 && b.error === 'status_changed' ? 'The status on the website has changed since you opened this page. Reload the page and check it.'
+      : e.status === 409 && b.error === 'status_not_allowed' ? 'A first publication is always Available. Change the status after the listing is live.'
       : e.status === 409 && b.error === 'already_published' ? 'This listing is already published on the website. Reload: the button now publishes your changes as an update.'
       : e.status === 409 && b.error === 'already_live' ? 'This listing is already live. Reload the page: the button will publish your changes as an update.'
       : (b.error === 'media_failed') ? 'The photographs could not be prepared for the website. Nothing has been published. Try again, and if it keeps happening ask an administrator.'
@@ -785,19 +805,22 @@ function reviewContent() {
   const live = jobs && jobs.live; const stuck = jobs && jobs.mergedUnverified;
   const realActive = !!(active && isReal(active));
   const onSite = !live && !!(jobs && jobs.publishedOnWebsite);
-  const verb = stuck ? 'Re-check and finish publishing' : live || onSite ? 'Publish update' : 'Approve and publish';
+  const sc = lsStatusChange(); const curStatus = lsWebsiteStatus();
+  const verb = stuck ? 'Re-check and finish publishing' : sc && LS.jobs && LS.jobs.noChanges ? 'Publish status change' : live || onSite ? 'Publish update' : 'Approve and publish';
   const publishCard = lsEl('div', { class: 'ls-rv-box', id: 'ls-publish' },
     lsEl('h3', { text: live ? 'Live on the website' : onSite ? 'Publish update' : 'Approve and publish' }),
     stuck && !(active && isReal(active)) ? lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'Merged, not yet confirmed live. The last publication merged into the website but the live page could not be verified. It is not shown as Live. Use the button below to re-check it.') : null,
     live ? lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Verified on the website ', when(live.since), live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open the live page' })] : null) : null,
     onSite && !nochg ? lsEl('div', { class: 'ls-banner', id: 'ls-on-website', role: 'status' }, 'This listing is already on the website. Publishing sends your saved changes as an update and keeps the existing page address. It shows as Live here once the update has been checked.') : null,
+    (live || onSite) && curStatus ? statusRow(ro, curStatus, sc) : null,
     lsEl('p', { class: 'ls-sub', text: live || onSite ? 'Changes saved after publishing are not public until you publish an update. The live page keeps showing the last verified version until the update has been checked.'
       : 'Publishing makes this exact saved version public. The images are copied to the public store, a pull request with only this listing is checked and merged, and the listing shows as Live here only after the live page, its images and the catalogue have been checked. If anything fails, the current website is left untouched.' }),
     nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-no-changes', role: 'status' }, 'No changes to publish. This listing already matches what is on the website. Edit and save the draft when something needs to change.')
       : ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
       : LS.confirmPublish ? lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm publication' },
-        lsEl('p', null, lsEl('strong', { text: live || onSite ? 'Publish this version as an update to the live listing?' : 'Publish this listing to the live website?' }), ' It will be visible to the public once checked.'),
-        lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-confirm', onclick: lsStartPublish, text: 'Yes, publish' }), ' ',
+        lsEl('p', null, lsEl('strong', { text: sc ? 'Change the public status to ' + STATUS_LABEL[sc] + (LS.jobs && LS.jobs.noChanges ? '?' : ' and publish your saved changes?') : live || onSite ? 'Publish this version as an update to the live listing?' : 'Publish this listing to the live website?' }), ' It will be visible to the public once checked.'),
+        sc === 'sold' ? lsEl('label', { class: 'ls-sold-confirm' }, lsEl('input', { type: 'checkbox', id: 'ls-sold-confirm', checked: !!LS.soldConfirmed, onchange: (e) => { LS.soldConfirmed = e.target.checked; lsRefreshReview(); } }), ' I confirm the property has sold. The listing page will say so and stop offering the property for enquiry.') : null,
+        lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-confirm', disabled: sc === 'sold' && !LS.soldConfirmed, onclick: lsStartPublish, text: sc ? 'Yes, change the status' : 'Yes, publish' }), ' ',
         lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-publish-cancel', onclick: () => { LS.confirmPublish = false; lsRefreshReview(); }, text: 'Cancel' }))
       : lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: () => { LS.confirmPublish = true; lsRefreshReview(); },
         text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'A job is running.' : verb }),

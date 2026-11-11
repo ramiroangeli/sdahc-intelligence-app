@@ -27,24 +27,25 @@ const dry = async (c, who = c.who) => { const v = (await open(c, who)).json.draf
 const payloadOf = async (c) => (await c.db.unsafe('select payload from listings.publish_jobs order by created_at desc limit 1'))[0].payload;
 
 /* ---------- 1. the Listings Manager is the authority ---------- */
-test('AUTHORITY: the approval travels with the payload as the Listings Manager approval; the public approver is a display name, never an email', async () => {
+test('AUTHORITY: the approval travels with the payload as the Listings Manager approval; the public approver is one constant identity, nobody is named', async () => {
   const c = await ready(staff('ali@sdahomechoices.com.au', ['listings.view', 'listings.edit', 'listings.publish']));
   assert.equal((await dry(c)).status, 200, 'a Publisher without a Notion user id can approve: no Notion setup is needed');
   const p = await payloadOf(c);
   assert.equal(p.authority, 'listings_manager');
-  assert.match(p.approver.id, /^app-[a-f0-9]{12}$/); assert.equal(p.approver.name, 'SDA Home Choices'); assert.equal(p.approver.notionUserId, null);
-  assert.ok(!JSON.stringify(p.approver).includes('@'));
-  assert.equal(p.approval.by, 'ali@sdahomechoices.com.au');
+  assert.equal(p.approver.id, 'listings-manager'); assert.equal(p.approver.name, 'SDA Home Choices'); assert.equal(p.approver.notionUserId, null);
+  assert.ok(!JSON.stringify(p).includes('@') && !JSON.stringify(p).includes('app-'), 'no email and no per-person identifier anywhere in the payload');
+  assert.equal(p.approval.by, 'listings_manager');
 });
 
-test('AUTHORITY: a Publisher can have a public display name; an email-like or markup name is refused at configuration; the id is stable per person', async () => {
+test('AUTHORITY: a configured display name is accepted but never made public; every person gets the same constant approver; bad names are still refused at configuration', async () => {
   const c = await ready({ ...ALI, displayName: 'Ali Example', notionUserId: null });
   await dry(c);
   const p = await payloadOf(c);
-  assert.equal(p.approver.name, 'Ali Example');
-  const c2 = await ready({ ...ALI, displayName: 'Ali Example', notionUserId: null });
+  assert.equal(p.approver.name, 'SDA Home Choices', 'a person\'s name is never sent to the public website');
+  assert.ok(!JSON.stringify(p).includes('Ali Example'));
+  const c2 = await ready({ ...ALI, email: 'someone.else@sdahomechoices.com.au', displayName: 'Someone Else', notionUserId: null });
   await dry(c2);
-  assert.equal((await payloadOf(c2)).approver.id, p.approver.id, 'the same person always gets the same id');
+  assert.equal((await payloadOf(c2)).approver.id, p.approver.id, 'two different people produce the same approver identity');
   for (const bad of ['ali@sdahomechoices.com.au', '<b>x</b>', 'x'.repeat(61), 5]) assert.throws(() => parseStaff(JSON.stringify([{ email: 'a@b.co', capabilities: ['listings.view'], displayName: bad }])), /displayName/);
   assert.equal(parseStaff(JSON.stringify([{ email: 'a@b.co', capabilities: ['listings.view'], displayName: 'Ali Example' }]))[0].displayName, 'Ali Example');
 });
