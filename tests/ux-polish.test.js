@@ -159,7 +159,7 @@ test('HISTORY: collapsed when a listing opens; the heading is a real button with
   assert.match(code, /const hOpen = !!LS\.historyOpen;/);
   assert.match(code, /'aria-expanded': hOpen \? 'true' : 'false', 'aria-controls': 'ls-hist-panel', onclick: lsToggleHistory/);
   assert.match(code, /id: 'ls-hist-panel', class: 'ls-hist-panel', role: 'region', 'aria-labelledby': 'ls-hist-toggle', hidden: !hOpen/);
-  assert.match(code, /if \(!LS\.d \|\| LS\.d\.draft\.id !== id\) LS\.historyOpen = false;/, 'a newly opened listing starts collapsed');
+  assert.match(code, /LS\.historyOpen = false; LS\.jobs = null;/, 'a newly opened listing starts collapsed');
 });
 
 test('HISTORY: one click opens it, one click closes it; the heading stays', () => {
@@ -277,4 +277,58 @@ test('FLOW: three steps (Prepare, Preview and check, Publish) with ONE primary a
   const pub = code.slice(code.indexOf('function reviewContent()'), code.indexOf("/* The website engine's own wording"));
   assert.equal((pub.match(/class: 'btn btn-primary'/g) || []).length, 1, 'the Publish step has exactly one primary button');
   assert.match(pub, /Publish to website/); assert.match(pub, /Publish changes/); assert.ok(!/Yes, publish|Approve and publish|Publish update/.test(pub));
+});
+
+/* ---------- UX PR 4: Manage, with publication state and selling status kept apart ---------- */
+function manageBrowser() {
+  const ctx = { window: { addEventListener() {}, __lsPhotoTimings: [] }, document: { getElementById: () => null, createElement: () => ({}), body: { append() {} }, querySelectorAll: () => [], querySelector: () => null }, console, URL, performance, setTimeout, clearTimeout };
+  vm.createContext(ctx);
+  vm.runInContext(`${code}\n;globalThis.__m = { lsPublicationState, lsHistory, PUBLICATION_LABEL, COMMERCIAL_LABEL };`, ctx);
+  return ctx.__m;
+}
+
+test('TWO STATUSES: a listing is Live AND Under offer; the publication state and the selling status never collapse into one', () => {
+  const m = manageBrowser();
+  const live = { live: { kind: 'update' }, publishedOnWebsite: true, websiteStatus: 'under_offer', changes: { count: 0, items: [] }, active: null, withdrawn: false };
+  assert.equal(m.lsPublicationState(live, { publishable: true }), 'live', 'publication state says Live whatever the selling status is');
+  assert.equal(live.websiteStatus, 'under_offer', 'and the selling status is separate data');
+  assert.equal(m.lsPublicationState({ ...live, changes: { count: 2, items: [] } }, {}), 'live_changes');
+  assert.equal(m.lsPublicationState({ ...live, active: { kind: 'update' } }, {}), 'publishing');
+  assert.equal(m.lsPublicationState({ ...live, withdrawn: true }, {}), 'withdrawn');
+  assert.equal(m.lsPublicationState({ live: null, publishedOnWebsite: false, active: null }, { publishable: true }), 'ready');
+  assert.equal(m.lsPublicationState(null, { publishable: false }), 'draft');
+  assert.equal(m.lsPublicationState({ live: null, publishedOnWebsite: true, changes: null, active: null }, {}), 'live', 'an unreadable comparison is never reported as changes');
+  const manage = code.slice(code.indexOf('function manageContent()'), code.indexOf("/* ---- the Publish step"));
+  assert.match(manage, /publicationBadge\(state\)/); assert.match(manage, /commercialBadge\(cur\)/);
+});
+
+test('MANAGE: history is plain words (jobs for everyone, who changed the status only for Publishers); dry runs and running jobs are not history', () => {
+  const m = manageBrowser();
+  const jobs = {
+    jobs: [
+      { kind: 'update', status: 'succeeded', finishedAt: '2026-11-10T10:23:00Z', requestedBy: 'ramiro@x.com', active: false },
+      { kind: 'dry_run', status: 'succeeded', finishedAt: '2026-11-10T10:20:00Z', requestedBy: 'ramiro@x.com', active: false },
+      { kind: 'update', status: 'failed', finishedAt: '2026-11-09T10:00:00Z', requestedBy: 'ali@x.com', active: false },
+      { kind: 'update', status: 'running', createdAt: '2026-11-11T01:00:00Z', requestedBy: 'ali@x.com', active: true },
+    ],
+    audit: [{ action: 'status_change', at: '2026-11-10T11:00:00Z', by: 'ali@x.com', from: 'available', to: 'under_offer' }, { action: 'withdraw', at: '2026-11-10T12:00:00Z', by: 'ali@x.com', reason: 'PRIVATE' }],
+  };
+  const h = J(m.lsHistory(jobs, [{ at: '2026-11-08T09:00:00Z', by: 'ramiro@x.com', fields: ['importedFromPublished', 'photos'] }]));
+  assert.deepEqual(h.map((x) => x.text), ['Status changed from Available to Under offer', 'Published changes', 'Publishing changes did not complete', 'Brought in from the live website']);
+  assert.deepEqual(h.map((x) => x.by), ['ali', 'ramiro', 'ali', 'ramiro'], 'a first name only, never an email address');
+  assert.ok(!JSON.stringify(h).includes('PRIVATE') && !JSON.stringify(h).includes('@'), 'no private reason and no email reaches the history');
+  assert.equal(h[2].bad, true);
+  const noAudit = J(m.lsHistory({ jobs: jobs.jobs }, []));
+  assert.ok(!noAudit.some((x) => /Status changed/.test(x.text)), 'without the private trail (Viewers, Editors) no status history appears');
+  assert.ok(!/GitHub|pull request|workflow|deployment|engine/i.test(JSON.stringify(h)));
+});
+
+test('MANAGE: selling status, edit, history and Withdraw live here; the Publish step no longer carries status or withdrawal; Manage is the fourth step', () => {
+  const publishFn = code.slice(code.indexOf('function reviewContent()'), code.indexOf("/* The website engine's own wording"));
+  assert.ok(!/statusRow\(|withdrawCard\(|lsStatusChange\(\)/.test(publishFn), 'status and withdrawal are not on the Publish step');
+  const manage = code.slice(code.indexOf('function manageContent()'), code.indexOf("/* ---- the Publish step"));
+  for (const part of ['Selling status', 'Edit this listing', 'History', 'withdrawCard(ro, active)', "id: 'ls-edit-btn'", 'Update status to ']) assert.ok(manage.includes(part), `Manage is missing ${part}`);
+  assert.equal((manage.match(/btn btn-primary/g) || []).length, 1, 'one primary button on Manage (Edit details); the status update is secondary');
+  assert.match(code, /\['manage', 'Manage', published \?/);
+  assert.match(manage, /will be published together with this status/, 'a status change says that saved changes go with it');
 });

@@ -368,7 +368,7 @@ test('BROWSER FILES hold no credentials, no signing code and no GitHub token nam
 test('REVIEW SCREEN: a third tab, read-only polling, a dry run, and a confirmed publish that asks for publish or update only', async () => {
   const { readFileSync } = await import('node:fs');
   const code = readFileSync('listings.js', 'utf8');
-  assert.match(code, /\(\\\/preview\|\\\/review\)\?\$/);
+  assert.match(code, /\(\\\/preview\|\\\/review\|\\\/manage\)\?\$/);
   assert.match(code, /'Publish', '#\/listings\/draft\/' \+ id \+ '\/review'/);
   assert.match(code, /mode: 'dry_run'/);
   assert.equal((code.match(/mode: 'withdraw'/g) || []).length, 2, 'withdrawal is requested in exactly one function (a withdrawal, or a re-check of one), and only after the typed-address confirmation');
