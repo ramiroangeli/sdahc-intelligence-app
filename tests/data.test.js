@@ -55,15 +55,18 @@ test('Notion errors never carry the token or the response body', async () => {
   const fetchImpl = async () => ({ ok: false, status: 403, json: async () => ({ code: 'restricted_resource', message: 'secret-token leaked?' }) });
   await assert.rejects(fetchManagedProperties({ token: 'secret-token', dataSourceId: 'ds', version: 'v' }, { fetchImpl }), (e) => { assert.ok(!e.message.includes('secret-token') && !e.message.includes('leaked')); return true; });
 });
-test('combine keeps Notion intent and live deployment apart', () => {
+test('combine keeps the CRM record and the live deployment apart: the CRM status is reference only and never raises a warning', () => {
   const notion = mapPage(page('Published'));
   const live = combine({ notion, snapshot: pickSnapshot({ ...SNAP, content: { slug: SNAP.slug, title: 'T' } , commercialStatus: 'available', version: 1 }), withdrawn: false, live: { state: 'live', httpStatus: 200, checkedAt: 'x' }, url: 'u' });
   assert.equal(live.deployment.state, 'live'); assert.equal(live.inSync, true);
   const missing = combine({ notion, snapshot: null, withdrawn: false, live: null, url: null });
   assert.equal(missing.deployment.state, 'not_published');
-  assert.match(missing.notes[0], /Notion says this is live/);
+  assert.deepEqual(missing.notes, [], 'a CRM status of Published with nothing on the website is not a warning: the CRM is not the authority');
   const down = combine({ notion, snapshot: pickSnapshot({ listingId: SNAP.listingId, version: 1, commercialStatus: 'available', content: { slug: SNAP.slug } }), withdrawn: false, live: { state: 'not_live', httpStatus: 404, checkedAt: 'x' }, url: 'u' });
-  assert.equal(down.deployment.state, 'not_live');
+  assert.equal(down.deployment.state, 'not_live'); assert.match(down.notes[0], /not responding/);
+  const crmOnly = combine({ notion: mapPage(page('Not Published')), snapshot: pickSnapshot({ listingId: SNAP.listingId, version: 1, commercialStatus: 'sold', content: { slug: SNAP.slug } }), withdrawn: false, live: { state: 'live', httpStatus: 200, checkedAt: 'x' }, url: 'u' });
+  assert.deepEqual(crmOnly.notes, [], 'a CRM status that disagrees with the website (even Sold versus Not Published) is not shown as a problem');
+  assert.ok(!JSON.stringify([live, missing, down, crmOnly]).includes('Notion says'), 'no sentence blames the CRM');
   const wd = combine({ notion, snapshot: pickSnapshot({ listingId: SNAP.listingId, version: 1, commercialStatus: 'available', content: { slug: SNAP.slug } }), withdrawn: true, live: null, url: 'u' });
   assert.equal(wd.deployment.state, 'withdrawn');
 });

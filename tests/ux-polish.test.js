@@ -185,3 +185,35 @@ test('HISTORY: the content is unchanged (versions, actions, who, when, changed f
   assert.ok(ratio('#FFFFFF', vars.navy) >= 7);
   assert.match(css, /\.ls-hist-toggle:focus-visible \{ outline/, 'a visible keyboard focus');
 });
+
+/* ---------- UX PR 1: plain vocabulary, two separate statuses, a header that tells the truth ---------- */
+function uxBrowser() {
+  const ctx = { window: { addEventListener() {}, __lsPhotoTimings: [] }, document: { getElementById: () => null, createElement: () => ({}), body: { append() {} }, querySelectorAll: () => [], querySelector: () => null }, console, URL, performance, setTimeout, clearTimeout };
+  vm.createContext(ctx);
+  vm.runInContext(`${code}\n;globalThis.__x = { PUBLICATION_LABEL, COMMERCIAL_LABEL, lsListingName, LS };`, ctx);
+  return ctx.__x;
+}
+
+test('VOCABULARY: publication state and selling status are separate sets (a listing can be Live and Under offer), in plain words', () => {
+  const x = uxBrowser();
+  assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.PUBLICATION_LABEL))), ['Draft', 'Ready to publish', 'Publishing', 'Live', 'Live, changes not published', 'Withdrawn']);
+  assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.COMMERCIAL_LABEL))), ['Available', 'Under offer', 'Sold']);
+  assert.ok(!Object.values(x.PUBLICATION_LABEL).some((l) => /offer|sold|available/i.test(l)), 'publication states never contain a selling status');
+  assert.ok(!Object.values(x.COMMERCIAL_LABEL).some((l) => /live|draft|withdrawn/i.test(l)), 'selling statuses never contain a publication state');
+});
+
+test('VOCABULARY: no "Web ..." field labels, no Notion-first sentences and no "Add next listing"; the CRM is named as reference data', () => {
+  for (const bad of ['Web title', 'Web description', 'Web public address', 'Web pricing mode', 'Display price (AUD)', 'Web featured', 'Add next listing', 'Notion holds the commercial decision', 'Property facts (read only, from Notion)', 'private, not on the website']) assert.ok(!code.includes(bad), `still says "${bad}"`);
+  for (const good of ["'Title'", "'Description'", "'Address shown on the website'", "'Price shown as'", "'Price shown (AUD)'", "text: 'Add listing'", "text: 'From the CRM'", 'reference only, never published', 'Changes you save here are not public until you publish']) assert.ok(code.includes(good), `missing "${good}"`);
+});
+
+test('HEADER: the listing is named by the address visitors see; the CRM address (with its house number) is a reference line', () => {
+  const x = uxBrowser();
+  x.LS.d = { draft: { content: { publicAddress: ' Rutherford Grove, Armstrong Creek VIC 3217 ' }, label: 'Rutherford Grove' }, property: { suggestedPublicAddress: 'Suggested Street, Town VIC 3000', fullName: '3/19 Rutherford Grove, Armstrong Creek VIC 3217' } };
+  assert.equal(x.lsListingName(), 'Rutherford Grove, Armstrong Creek VIC 3217');
+  x.LS.d.draft.content.publicAddress = '';
+  assert.equal(x.lsListingName(), 'Suggested Street, Town VIC 3000', 'until a public address is written the suggestion (house number already removed) is used');
+  x.LS.d.property.suggestedPublicAddress = '';
+  assert.equal(x.lsListingName(), 'Rutherford Grove');
+  assert.ok(!/lsEl\('h2', \{ class: 'panel-title', text: LS\.d\.property\.fullName/.test(code), 'the internal address is never the page title');
+});
