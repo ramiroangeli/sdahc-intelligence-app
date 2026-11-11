@@ -1,5 +1,6 @@
 // Test harness for the draft workflow: real SQL (PGlite running the actual migration), the REAL authorisation path,
 // and a fake Notion + GitHub + website that records every outbound call so tests can prove nothing is written.
+import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { clearPropertyCache } from '../api/_lib/property.js';
@@ -116,18 +117,44 @@ export async function callSigned(route, db, { method = 'GET', url, body, secret,
   return { status: r.statusCode, json: r.body ? JSON.parse(r.body) : null, raw: r.body };
 }
 export const SECRET = 'callback-secret-for-tests-0123456789abcdef';
-export const GH_TOKEN = 'ghp_TESTTOKEN_0123456789abcdefghijklmnopqrstuv';
-export const PUBLISH_ENV = { LISTINGS_GITHUB_DISPATCH_TOKEN: GH_TOKEN, LISTINGS_CALLBACK_SECRET: SECRET };
+// GitHub App credentials for the tests: a key generated here, never a real one. The "installation token" GitHub would hand back is GH_TOKEN.
+export const GH_TOKEN = ['ghs', 'INSTALLATIONTOKEN0123456789abcdefghijklmn'].join('_');
+export const INSTALL_TOKEN = GH_TOKEN;
+export const APP_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 });
+export const APP_PEM = APP_KEY.privateKey.export({ type: 'pkcs1', format: 'pem' });
+export const APP_ENV = { LISTINGS_CALLBACK_SECRET: SECRET, LISTINGS_GITHUB_APP_ID: '123456', LISTINGS_GITHUB_APP_INSTALLATION_ID: '9876543', LISTINGS_GITHUB_APP_PRIVATE_KEY: APP_PEM };
+export const PUBLISH_ENV = APP_ENV;
 
-/** GitHub as the app sees it: records workflow dispatches, answers run lookups. */
+/** GitHub's token endpoint: verifies the JWT with the public key and records exactly what was asked for. Wraps another fetch. */
+export function appGithub(inner, { status = 201, ttlMs = 3600 * 1000, now = () => Date.now() } = {}) {
+  const g = { mints: [], status, token: GH_TOKEN };
+  g.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes('/app/installations/') && u.endsWith('/access_tokens')) {
+      const jwt = String(opts.headers.Authorization).replace(/^Bearer /, ''); const [h, b, sig] = jwt.split('.');
+      const valid = createVerify('RSA-SHA256').update(`${h}.${b}`).verify(APP_KEY.publicKey, Buffer.from(sig, 'base64url'));
+      g.mints.push({ url: u, valid, claims: JSON.parse(Buffer.from(b, 'base64url').toString()), head: JSON.parse(Buffer.from(h, 'base64url').toString()), body: JSON.parse(opts.body) });
+      if (g.status === 'throw') throw new Error('network');
+      if (g.status !== 201) return { status: g.status, ok: false, json: async () => ({ message: `Bad credentials ${g.token} ${APP_PEM.slice(0, 40)}` }), headers: { get: () => null } };
+      return { status: 201, ok: true, json: async () => ({ token: g.token, expires_at: new Date(now() + ttlMs).toISOString(), permissions: { actions: 'write', metadata: 'read' }, repository_selection: 'selected', repositories: [{ full_name: 'o/r' }] }), headers: { get: () => null } };
+    }
+    if (u.includes('/actions/workflows/') && !u.includes('/dispatches') && !u.includes('/runs')) return { status: 200, ok: true, json: async () => ({ state: 'active' }), headers: { get: () => null } };
+    return inner(url, opts);
+  };
+  return g;
+}
+
+/** GitHub as the app sees it: records workflow dispatches, answers run lookups, and hands out App installation tokens. */
 export function github(w) {
   const gh = { dispatches: [], status: 204, runs: [], lookups: 0, body: {}, accepted: null };
-  gh.fetch = async (url, opts = {}) => {
+  const inner = async (url, opts = {}) => {
     const u = String(url);
     if (u.includes('api.github.com/repos/') && u.includes('/dispatches')) { gh.dispatches.push({ url: u, headers: opts.headers, body: JSON.parse(opts.body) }); if (gh.status === 'throw') throw new Error('network'); return { status: gh.status, ok: gh.status < 300, json: async () => gh.body, headers: { get: (k) => (k.toLowerCase() === 'x-accepted-github-permissions' ? gh.accepted : null) } }; }
     if (u.includes('/actions/workflows/') && u.includes('/runs')) { gh.lookups += 1; return { ok: true, status: 200, json: async () => ({ workflow_runs: gh.runs }) }; }
     return w.fetch(url, opts);
   };
+  const app = appGithub(inner);
+  gh.app = app; gh.mints = app.mints; gh.fetch = app.fetch;
   return gh;
 }
 export const ALI_N = staff('ali@sdahomechoices.com.au', ['listings.view', 'listings.edit', 'listings.publish'], '2e1d872b-594c-8122-be15-00028acc4f13');

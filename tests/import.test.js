@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import sharp from 'sharp';
 import * as core from '../api/_lib/vendor/listings-core.mjs';
 import { draftPublishRoute, draftRoute, publishCallbackRoute } from '../api/_lib/routes.js';
@@ -267,4 +268,112 @@ test('IMPORTED PUBLICATION: an unreadable website does not change first publicat
   g2.fetch = async (u, o) => (String(u).includes('/approved') ? { ok: false, status: 500 } : orig(u, o));
   const read = await call(draftPublishRoute, w2, db2, ALI_N, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV, fetch: g2.fetch });
   assert.equal(read.status, 200); assert.equal(read.json.publishedOnWebsite, null, 'unknown, not guessed');
+});
+
+// ---- Nothing to publish: unchanged content is a plain "No changes to publish", not a failed job ----
+const save = async (ctx, content) => {
+  const cur = (await call(draftRoute, ctx.w, ctx.db, ALI_N, { url: `/api/listings/draft?id=${ID_RG}` })).json;
+  return call(draftRoute, ctx.w, ctx.db, ALI_N, { method: 'PUT', body: { id: ID_RG, expectedVersion: cur.draft.version, content: { ...cur.draft.content, ...content } } });
+};
+const live = async (ctx, jobId, version) => {
+  const send = (step, status, detail) => callSigned(publishCallbackRoute, ctx.db, { method: 'POST', url: '/api/listings/publish-callback', secret: SECRET, body: JSON.stringify({ jobId, step, status, ...(detail ? { detail } : {}) }) });
+  for (const step of ['started', 'payload', 'notion_read', 'engine', 'tests', 'build', 'media', 'pull_request', 'checks', 'merge', 'deploy', 'verify']) await send(step, 'ok');
+  return send('finished', 'succeeded', { dryRun: false, live: true, slug: 'rutherford-grove-armstrong-creek-vic', kind: 'update', version, url: 'https://sdahomechoices.com.au/opportunities/rutherford-grove-armstrong-creek-vic/', mergeCommit: 'a'.repeat(40), photos: 6 });
+};
+
+test('NO CHANGES: an imported listing nobody has edited reports noChanges, and a dry run is refused with a plain answer and no job', async () => {
+  const ctx = await imported();
+  assert.equal((await history(ctx)).noChanges, true);
+  const r = await publishAs(ctx, 'dry_run');
+  assert.equal(r.status, 409); assert.equal(r.json.error, 'no_changes'); assert.match(r.json.reasons.join(' '), /No changes to publish/);
+  assert.equal((await jobRows(ctx.db)).length, 0, 'no job is recorded, so nothing shows as Failed'); assert.equal(ctx.gh.dispatches.length, 0);
+});
+
+test('NO CHANGES: any saved public change turns it off (text, price, even if changed back); notes do not', async () => {
+  const ctx = await imported();
+  const note = await call(draftRoute, ctx.w, ctx.db, ALI_N, { method: 'PUT', body: { id: ID_RG, expectedVersion: 1, content: undefined, addNote: 'checked the address with the agent' } });
+  assert.equal(note.status, 200, JSON.stringify(note.json));
+  assert.equal((await history(ctx)).noChanges, true, 'a note is not a public change');
+  const title = (await call(draftRoute, ctx.w, ctx.db, ALI_N, { url: `/api/listings/draft?id=${ID_RG}` })).json.draft.content.title;
+  assert.equal((await save(ctx, { title: title + ' updated' })).status, 200);
+  assert.equal((await history(ctx)).noChanges, false);
+  assert.equal((await publishAs(ctx, 'dry_run')).status, 200, 'a changed draft can be rehearsed');
+  // restoring the old wording is still a saved change: the rule is conservative and never hides an update
+  const ctx2 = await imported();
+  await save(ctx2, { title: title + ' updated' }); await save(ctx2, { title });
+  assert.equal((await history(ctx2)).noChanges, false);
+});
+
+test('NO CHANGES: an acknowledged Notion change or a photograph change counts as a change', async () => {
+  const drafts = await import('../api/_lib/drafts-repo.js');
+  const ctx = await imported();
+  const row = await drafts.getDraft(ctx.db, ID_RG);
+  await drafts.updateDraft(ctx.db, { publicId: ID_RG, expectedVersion: row.version, action: 'refresh_base', patch: { baseFacts: { ...row.base_facts, designCategory: 'changed' } }, actor: { email: ALI_N.email }, current: row });
+  assert.equal((await history(ctx)).noChanges, false, 'the engine reads Notion facts again, so this is not "nothing"');
+  const ctx2 = await imported();
+  const r2 = await drafts.getDraft(ctx2.db, ID_RG);
+  await drafts.updateDraft(ctx2.db, { publicId: ID_RG, expectedVersion: r2.version, action: 'update', patch: { photos: [...r2.photos].reverse() }, actor: { email: ALI_N.email }, current: r2 });
+  assert.equal((await history(ctx2)).noChanges, false);
+});
+
+test('NO CHANGES: once Live, an unchanged draft refuses a dry run and answers an update with the job that already published it; a saved change allows them; a merged-but-unconfirmed or running job is never "no changes"', async () => {
+  const ctx = await imported();
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const u = await publishAs(ctx, 'update'); assert.equal(u.status, 200, JSON.stringify(u.json));
+  assert.equal((await history(ctx)).noChanges, false, 'a running job is never "no changes"');
+  await live(ctx, u.json.job.id, 2);
+  const h = await history(ctx); assert.ok(h.live); assert.equal(h.noChanges, true);
+  const dry = await publishAs(ctx, 'dry_run'); assert.equal(dry.status, 409); assert.equal(dry.json.error, 'no_changes');
+  const again = await publishAs(ctx, 'update'); assert.equal(again.status, 200); assert.equal(again.json.existing, true, 'the same version is answered with the job that already published it');
+  assert.equal((await jobRows(ctx.db)).length, 1, 'no extra job for either');
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed again' });
+  assert.equal((await history(ctx)).noChanges, false);
+  assert.equal((await publishAs(ctx, 'update')).status, 200);
+});
+
+test('NO CHANGES: Viewers and Editors still cannot start anything, and a new listing is untouched by the rule', async () => {
+  const ctx = await imported();
+  for (const who of [EDITOR, VIEWER]) assert.equal((await publishAs(ctx, 'dry_run', who)).status, 403);
+  const w2 = world(); const db2 = await database(); resetCaches();
+  const fresh = await call(draftPublishRoute, w2, db2, ALI_N, { url: `/api/listings/draft-publish?id=${ID_7B}`, env: PUBLISH_ENV });
+  assert.equal(fresh.json.noChanges, false);
+});
+
+/* ---- the browser file: plain wording, and a no-change dry run is not a failure ---- */
+function uiBrowser() {
+  const ctx = { window: { addEventListener() {}, __lsPhotoTimings: [] }, document: { getElementById: () => null, createElement: () => ({}), body: { append() {} }, querySelectorAll: () => [], querySelector: () => null }, console, URL, performance, setTimeout, clearTimeout };
+  vm.createContext(ctx);
+  vm.runInContext(`${readFileSync('listings.js', 'utf8')}\n;globalThis.__u = { jobNoChange, errText, ERR_TEXT, lsNoChanges, LS };`, ctx);
+  return ctx.__u;
+}
+const noChangeJob = (over = {}) => ({ status: 'failed', kind: 'dry_run', error: { code: 'engine_refused', message: 'the engine would not publish this listing (unchanged, 0 issue(s))' }, steps: [{ step: 'requested', status: 'ok' }, { step: 'engine', status: 'failed', detail: { kind: 'unchanged', issues: [] } }], ...over });
+
+test('UI: a dry run that found nothing to publish is "No changes", any other engine refusal is still a failure', () => {
+  const u = uiBrowser();
+  assert.equal(u.jobNoChange(noChangeJob()), true);
+  assert.equal(u.jobNoChange(noChangeJob({ steps: [{ step: 'engine', status: 'failed', detail: { kind: 'unchanged', issues: ['Victorian pricing compliance'] } }] })), false);
+  assert.equal(u.jobNoChange(noChangeJob({ steps: [{ step: 'engine', status: 'failed', detail: { kind: 'not_ready', issues: [] } }] })), false);
+  assert.equal(u.jobNoChange(noChangeJob({ error: { code: 'tests_failed' } })), false);
+  assert.equal(u.jobNoChange(noChangeJob({ status: 'succeeded' })), false);
+});
+
+test('UI: no action is offered when there are no changes, unless Notion moved or a job is running', () => {
+  const u = uiBrowser();
+  u.LS.d = { notion: { changed: [] } }; u.LS.jobs = { noChanges: true, active: null };
+  assert.equal(u.lsNoChanges(), true);
+  u.LS.d = { notion: { changed: ['x'] } }; assert.equal(u.lsNoChanges(), false);
+  u.LS.d = { notion: { changed: [] } }; u.LS.jobs = { noChanges: true, active: { id: 'j' } }; assert.equal(u.lsNoChanges(), false);
+  u.LS.jobs = { noChanges: false, active: null }; assert.equal(u.lsNoChanges(), false);
+});
+
+test('UI: staff-facing error text is plain (no GitHub, engine, workflow, payload or pull request wording), covers every code, and never relies on the raw message', () => {
+  const u = uiBrowser();
+  for (const [code, text] of Object.entries(u.ERR_TEXT)) assert.ok(!/GitHub|engine|workflow|dispatch|payload|manifest|pull request|parity|\bdeploy|\bjob\b|Notion/i.test(text), `${code}: "${text}"`);
+  for (const code of ['dispatch_failed', 'workflow_ended', 'no_report', 'timed_out', 'engine_refused', 'parity_failed', 'tests_failed', 'build_failed', 'media_failed', 'media_missing', 'checks_failed', 'merge_refused', 'deploy_failed', 'verify_failed', 'wrong_mode', 'unexpected_files', 'not_configured', 'manifest_invalid', 'property_not_found', 'mode_not_enabled', 'payload_mismatch']) assert.ok(u.ERR_TEXT[code], code);
+  const e = { code: 'merge_refused', message: 'GitHub HTTP 405: Repository rule violations found' };
+  assert.ok(!u.errText(e).includes('405') && !u.errText(e).includes('rule violations'), 'the raw message goes under Technical details only');
+  assert.match(u.errText({ code: 'something_new' }), /did not complete/);
+  const src = readFileSync('listings.js', 'utf8');
+  assert.match(src, /Technical details/); assert.match(src, /Dry run \(optional\)/); assert.match(src, /you can publish without running one/);
+  assert.ok(!/GitHub access token/.test(src), 'no stale instruction about the removed personal token');
 });

@@ -181,3 +181,5 @@ textarea.ls-input { resize: vertical; line-height: 1.5; }
 /* Second step of publishing: an explicit confirmation before anything becomes public */
 .ls-confirm { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--navy); border-radius: var(--radius-md); background: #fff; }
 .ls-confirm p { margin: 0 0 10px; }
+.ls-tech { margin: 0 24px 12px; font-size: 12px; color: var(--ink-mute); }
+.ls-tech summary { cursor: pointer; }

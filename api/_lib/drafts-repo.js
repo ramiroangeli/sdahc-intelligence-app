@@ -23,6 +23,19 @@ export async function getHistory(db, draftId, limit = 25) {
   return db.unsafe('select version, action, changed_fields, changed_by, changed_at from listings.draft_history where draft_id = $1 order by id desc limit $2', [draftId, limit]);
 }
 
+/** The history fields that can change what the public sees (content, photographs, a refreshed Notion baseline). Notes, verification and photo review cannot. */
+const PUBLIC_FIELDS = ['title', 'description', 'publicAddress', 'pricingMode', 'displayPrice', 'featured', 'photos', 'notionBaseline'];
+/** Has anything public changed in this draft after `version`? Reads the draft history only. */
+export async function publicChangesSince(db, draftId, version) {
+  const rows = await db.unsafe(`select 1 from listings.draft_history where draft_id = $1 and version > $2 and action in ('update','refresh_base') and changed_fields && $3::text[] limit 1`, [draftId, version, PUBLIC_FIELDS]);
+  return rows.length > 0;
+}
+/** The version at which this draft was imported from the website, or null. */
+export async function importedVersion(db, draftId) {
+  const rows = await db.unsafe(`select version from listings.draft_history where draft_id = $1 and 'importedFromPublished' = any(changed_fields) order by id limit 1`, [draftId]);
+  return rows[0]?.version ?? null;
+}
+
 // NOTE jsonb parameters are cast through text ($n::text::jsonb): postgres.js re-serialises a string bound to a jsonb
 // parameter, which stored the JSON text as a jsonb string scalar. Passing text keeps the value an object.
 export async function createDraft(db, { publicId, notionPageId, label, content, baseFacts, baseEditedAt, actor, photos = [], extraFields = [] }) {

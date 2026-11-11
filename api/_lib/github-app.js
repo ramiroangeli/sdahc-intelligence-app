@@ -108,7 +108,6 @@ export async function checkGithubApp({ env = process.env, repo, workflow, fetchI
   let app;
   try { app = loadAppConfig(env); } catch (e) { return { ok: false, verdict: `NOT CONFIGURED: ${e.message}` }; }
   if (!app) return { ok: false, verdict: 'NOT CONFIGURED: the GitHub App variables are not set on this deployment.' };
-  const mode = val(env, 'LISTINGS_GITHUB_AUTH') || 'token';
   try {
     const t = await installationToken(app, { repo, fetchImpl, now });
     const res = await fetchImpl(`${API}/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}`, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${t.token}`, 'User-Agent': 'sdahc-listings-manager' }, signal: AbortSignal.timeout(15000) });
@@ -116,13 +115,13 @@ export async function checkGithubApp({ env = process.env, repo, workflow, fetchI
     const scoped = t.repositories.length === 1 && t.repositories[0] === repo;
     const ok = res.status === 200 && wf?.state === 'active' && t.permissions.actions === 'write' && scoped;
     return {
-      ok, mode, tokenIssued: true, repositories: t.repositories, permissions: t.permissions, repositorySelection: t.repositorySelection,
+      ok, tokenIssued: true, repositories: t.repositories, permissions: t.permissions, repositorySelection: t.repositorySelection,
       workflowFound: res.status === 200, workflowState: wf?.state ?? null,
-      verdict: ok ? `APP TOKEN OK: scoped to ${repo} with Actions write; the publication workflow is visible. Dispatch currently uses ${mode === 'app' ? 'the App' : 'the personal token (set LISTINGS_GITHUB_AUTH=app to switch)'}.`
+      verdict: ok ? `APP TOKEN OK: scoped to ${repo} with Actions write; the publication workflow is visible..`
         : `APP TOKEN ISSUED BUT NOT SUFFICIENT: workflow lookup HTTP ${res.status}, actions=${t.permissions.actions ?? 'none'}, repositories=${t.repositories.length}.`,
     };
   } catch (e) {
-    if (e instanceof GithubAppError) return { ok: false, mode, tokenIssued: false, verdict: `FAILED: ${e.reason}` };
-    return { ok: false, mode, tokenIssued: false, verdict: 'FAILED: the check could not be completed.' };
+    if (e instanceof GithubAppError) return { ok: false, tokenIssued: false, verdict: `FAILED: ${e.reason}` };
+    return { ok: false, tokenIssued: false, verdict: 'FAILED: the check could not be completed.' };
   }
 }

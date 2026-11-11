@@ -6,10 +6,12 @@ import sharp from 'sharp';
 import { draftPhotosRoute, draftPublishRoute, draftRoute, draftVerifyRoute, publishCallbackRoute, publishPayloadRoute } from '../api/_lib/routes.js';
 import { reconcile, sanitiseEvent } from '../api/_lib/publication.js';
 import * as jobsRepo from '../api/_lib/jobs-repo.js';
-import { ALI, ALI_N, EDITOR, GH_TOKEN, ID_7B, PUBLISHER, PUBLISH_ENV, SECRET, VIEWER, call, callSigned, database, github, resetCaches, world } from './drafts-harness.js';
+import { ALI, ALI_N, APP_ENV, APP_KEY, APP_PEM, EDITOR, GH_TOKEN, ID_7B, INSTALL_TOKEN, PUBLISHER, PUBLISH_ENV, SECRET, VIEWER, appGithub, call, callSigned, database, github, resetCaches, world } from './drafts-harness.js';
+import { clearInstallationTokens } from '../api/_lib/github-app.js';
+import { loadPublishConfig } from '../api/_lib/config.js';
 
 // built at run time so the repository scan for token-shaped strings stays meaningful
-const FAKE_PAT = ['github', 'pat', '11ABCDEFG0123456789', 'abcdefghijklmnopqrstuvwxyz'].join('_');
+const FAKE_PAT = ['github', 'pat', '11ABCDEFG0123456789', 'abcdefghijklmnopqrstuvwxyz'].join('_'); // a token shape that must be scrubbed if GitHub ever echoed one
 const GOOD = { title: 'Established Improved Liveability SDA Investment', description: 'An improved liveability SDA house in Exampleton with three participant places and onsite overnight assistance.', publicAddress: 'Wattle Street, Exampleton VIC 3999', pricingMode: 'contact_agent', displayPrice: '', featured: false };
 const jpeg = (n, w = 1600) => sharp({ create: { width: w + n * 10, height: 1000, channels: 3, background: { r: (n * 37) % 255, g: (n * 91) % 255, b: (n * 151) % 255 } } }).jpeg().toBuffer();
 const upload = (w, db, bytes, kind) => call(draftPhotosRoute, w, db, ALI_N, { method: 'POST', body: bytes, headers: { 'x-image-type': 'image/jpeg' }, url: `/api/listings/draft-photos?id=${ID_7B}${kind ? `&kind=${kind}` : ''}` });
@@ -59,7 +61,8 @@ test('PREFLIGHT: an incomplete draft or no photographs stops the dry run with pl
 
 test('missing or weak server configuration fails closed with 503 and records nothing', async () => {
   const ctx = await ready();
-  for (const env of [{}, { LISTINGS_CALLBACK_SECRET: SECRET }, { LISTINGS_GITHUB_DISPATCH_TOKEN: GH_TOKEN }, { ...PUBLISH_ENV, LISTINGS_CALLBACK_SECRET: 'short' }]) {
+  const { LISTINGS_CALLBACK_SECRET: _secret, ...appOnly } = PUBLISH_ENV;
+  for (const env of [{}, { LISTINGS_CALLBACK_SECRET: SECRET }, { LISTINGS_GITHUB_DISPATCH_TOKEN: 'a-personal-token-is-never-read', LISTINGS_CALLBACK_SECRET: SECRET }, appOnly, { ...PUBLISH_ENV, LISTINGS_CALLBACK_SECRET: 'short' }]) {
     const r = await start(ctx, ALI_N, { env });
     assert.equal(r.status, 503); assert.equal(r.json.error, 'not_configured');
   }
@@ -144,9 +147,9 @@ test('the database allows only one active job per listing, and jobs are never de
   }
 });
 
-test('DISPATCH FAILURE: a refused token, a missing workflow or an unreachable GitHub fails the job with a clear reason, leaks nothing, and retry makes attempt 2', async () => {
+test('DISPATCH FAILURE: a refused App token, a missing workflow or an unreachable GitHub fails the job with a clear reason, leaks nothing, and retry makes attempt 2', async () => {
   const ctx = await ready();
-  for (const [status, re] of [[401, /not valid \(expired, revoked or mistyped\)/], [404, /not found for this token/], [422, /on the main branch/], ['throw', /could not be reached/]]) {
+  for (const [status, re] of [[401, /did not accept the App token/], [404, /not found for the GitHub App/], [422, /on the main branch/], ['throw', /could not be reached/]]) {
     ctx.gh.status = status;
     const r = await start(ctx);
     assert.equal(r.status, 502); assert.equal(r.json.error, 'dispatch_failed'); assert.match(r.json.reason, re);
@@ -160,7 +163,7 @@ test('DISPATCH FAILURE: a refused token, a missing workflow or an unreachable Gi
   assert.equal(ok.status, 200); assert.equal(ok.json.job.attempt, 5); assert.equal(ok.json.job.status, 'dispatched');
 });
 
-test('THE REPORTED INCIDENT: a valid token without "Actions: Read and write" is reported exactly (HTTP 403, GitHub\'s message, the permission needed) and the credential never appears anywhere', async () => {
+test('THE REPORTED INCIDENT: an App without "Actions: Read and write" is reported exactly (HTTP 403, GitHub\'s message, the permission needed) and the credential never appears anywhere', async () => {
   const { setAuditSink } = await import('../api/_lib/audit.js');
   const lines = []; setAuditSink((l) => lines.push(l));
   const ctx = await ready();
@@ -184,9 +187,9 @@ test('THE REPORTED INCIDENT: a valid token without "Actions: Read and write" is 
   assert.equal(ok.status, 200); assert.equal(ok.json.job.attempt, 2); assert.equal(ok.json.job.status, 'dispatched');
 });
 
-test('OTHER GITHUB REFUSALS stay distinguishable: an invalid token, a 403 that is not a permission problem, a hidden repository', async () => {
+test('OTHER GITHUB REFUSALS stay distinguishable: a rejected App token, a 403 that is not a permission problem, a hidden repository', async () => {
   const ctx = await ready();
-  const cases = [[401, 'Bad credentials', null, /not valid/], [403, 'API rate limit exceeded', null, /^GitHub refused the request\. \(GitHub HTTP 403: API rate limit exceeded\)$/], [404, 'Not Found', null, /not found for this token/]];
+  const cases = [[401, 'Bad credentials', null, /did not accept the App token/], [403, 'API rate limit exceeded', null, /^GitHub refused the request\. \(GitHub HTTP 403: API rate limit exceeded\)$/], [404, 'Not Found', null, /not found for the GitHub App/]];
   for (const [status, message, accepted, re] of cases) {
     ctx.gh.status = status; ctx.gh.body = { message }; ctx.gh.accepted = accepted;
     const r = await start(ctx);
@@ -304,7 +307,7 @@ test('PAYLOAD: served only to a signed request for an ACTIVE job; the signature 
 test('RECOVERY: a run that ended without reporting, a run that finished without its result arriving, and a job that never finishes are all closed out; a finished job is never touched', async () => {
   const ctx = await ready();
   const { job } = (await start(ctx)).json;
-  const publish = { githubToken: GH_TOKEN, workflow: 'publish-listing.yml' };
+  const publish = loadPublishConfig(PUBLISH_ENV);
   const R = (j, now, runs) => { ctx.gh.runs = runs; return reconcile(j, { db: ctx.db, publish, repo: 'o/r', fetchImpl: ctx.gh.fetch, now }); };
   const row = () => jobsRepo.getJob(ctx.db, job.id);
   const t0 = new Date((await row()).updated_at).getTime();
@@ -358,7 +361,7 @@ test('BROWSER FILES hold no credentials, no signing code and no GitHub token nam
   const { readFileSync } = await import('node:fs');
   for (const f of ['listings.js', 'listings.css', 'index.html']) {
     const s = readFileSync(f, 'utf8');
-    for (const re of [/LISTINGS_GITHUB_DISPATCH_TOKEN/, /LISTINGS_CALLBACK_SECRET/, /x-listings-signature/, /api\.github\.com/, /ghp_[A-Za-z0-9]/, /github_pat_/, /createHmac/]) assert.ok(!re.test(s), `${f} matches ${re}`);
+    for (const re of [/LISTINGS_GITHUB_DISPATCH_TOKEN/, /LISTINGS_GITHUB_APP_PRIVATE_KEY/, /BEGIN (RSA )?PRIVATE KEY/, /LISTINGS_CALLBACK_SECRET/, /x-listings-signature/, /api\.github\.com/, /ghp_[A-Za-z0-9]/, /github_pat_/, /createHmac/]) assert.ok(!re.test(s), `${f} matches ${re}`);
   }
 });
 
@@ -396,29 +399,6 @@ test('the status read marks nothing as Live: a dry run never changes the dashboa
   const after = (await call(listRoute, ctx.w, ctx.db, VIEWER, { env: PUBLISH_ENV })).json.listings.find((l) => l.id === ID_7B);
   assert.deepEqual(after.deployment, before.deployment); assert.equal(after.website, null); assert.equal(after.notion?.statusKey ?? null, before.notion?.statusKey ?? null);
   assert.equal(after.deployment.state, 'not_published');
-});
-
-test('TOKEN CHECK SCRIPT: separates an invalid token, no repository access, a missing Actions permission and a good token; never prints the token', async () => {
-  const { checkToken } = await import('../scripts/check-github-dispatch-token.mjs');
-  const T = GH_TOKEN;
-  const world = (repo, wf, dispatch) => async (url, opts = {}) => {
-    const u = String(url); const pick = u.includes('/dispatches') ? dispatch : u.includes('/actions/workflows/') ? wf : repo;
-    return { status: pick[0], ok: pick[0] < 300, json: async () => ({ message: pick[1] }), headers: { get: (k) => (/accepted/.test(k) ? pick[2] ?? null : /expiration/.test(k) ? '2026-12-08 15:55:26 UTC' : null) } };
-  };
-  const run = (...a) => checkToken({ token: T, fetchImpl: world(...a) });
-  const a = await run([401, 'Bad credentials'], [401, 'Bad credentials'], [401, 'Bad credentials']);
-  assert.match(a.verdict, /^INVALID/);
-  assert.match((await run([404, 'Not Found'], [404, 'Not Found'], [404, 'Not Found'])).verdict, /^NO ACCESS/);
-  assert.match((await run([200, ''], [404, 'Not Found'], [404, 'Not Found'])).verdict, /^WORKFLOW NOT FOUND/);
-  const perm = await run([200, ''], [200, ''], [403, `Resource not accessible by personal access token ${T}`, 'actions=write']);
-  assert.match(perm.verdict, /^MISSING PERMISSION: .*Actions: Read and write/); assert.equal(perm.dispatch.needs, 'actions=write'); assert.equal(perm.ok, false);
-  const good = await run([200, ''], [200, ''], [422, 'No ref found for: token-check-no-such-ref-nothing-will-run']);
-  assert.equal(good.ok, true); assert.match(good.verdict, /Nothing was started/); assert.equal(good.expires, '2026-12-08 15:55:26 UTC');
-  assert.ok(!JSON.stringify([a, perm, good]).includes(T), 'the token is never in the output');
-  // it can never start a run: the ref it asks for does not exist, and it sends no other write
-  const calls = []; await checkToken({ token: T, fetchImpl: async (u, o = {}) => { calls.push([o.method, String(u), o.body]); return { status: 422, json: async () => ({}), headers: { get: () => null } }; } });
-  assert.deepEqual(calls.map((c) => c[0]), ['GET', 'GET', 'POST']);
-  assert.match(calls[2][2], /token-check-no-such-ref-nothing-will-run/);
 });
 
 /* ---------------------------------------------------------------- real publication (publish, update) */
@@ -562,7 +542,7 @@ test('a real job that is stuck is closed out later than a dry run (40 minutes), 
   const a = (await startReal(ctx)).json.job;
   const row = await jobsRepo.getJob(ctx.db, a.id);
   const at = (min) => Date.now() + min * 60 * 1000;
-  const same = await reconcile(row, { db: ctx.db, publish: { workflow: 'publish-listing.yml', githubToken: GH_TOKEN }, repo: 'o/r', fetchImpl: ctx.gh.fetch, now: at(30) });
+  const same = await reconcile(row, { db: ctx.db, publish: loadPublishConfig(PUBLISH_ENV), repo: 'o/r', fetchImpl: ctx.gh.fetch, now: at(30) });
   assert.ok(jobsRepo.isActive(same), 'at 30 minutes a real job is still allowed to run');
   const closed = await reconcile(row, { db: ctx.db, publish: null, repo: 'o/r', fetchImpl: ctx.gh.fetch, now: at(41) });
   assert.equal(closed.status, 'failed'); assert.equal(closed.error_code, 'timed_out');
@@ -613,31 +593,7 @@ test('PUBLIC STORE CHECK: administrators only; GET reads, POST also writes a pro
   assert.equal(none.ok, false); assert.match(none.verdict, /NOT CONNECTED/);
 });
 
-// ---- GitHub App authentication for the workflow dispatch (replaces the expiring personal token) ----
-const APP_KEY = (await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 2048 });
-const APP_PEM = APP_KEY.privateKey.export({ type: 'pkcs1', format: 'pem' });
-const APP_ENV = { LISTINGS_CALLBACK_SECRET: SECRET, LISTINGS_GITHUB_AUTH: 'app', LISTINGS_GITHUB_APP_ID: '123456', LISTINGS_GITHUB_APP_INSTALLATION_ID: '9876543', LISTINGS_GITHUB_APP_PRIVATE_KEY: APP_PEM };
-const INSTALL_TOKEN = ['ghs', 'INSTALLATIONTOKEN0123456789abcdefghijklmn'].join('_');
-/** GitHub's token endpoint: verifies the JWT with the public key and records exactly what was asked for. */
-function appGithub(inner, { status = 201, ttlMs = 3600 * 1000, now = () => Date.now() } = {}) {
-  const g = { mints: [], status, token: INSTALL_TOKEN };
-  g.fetch = async (url, opts = {}) => {
-    const u = String(url);
-    if (u.includes('/app/installations/') && u.endsWith('/access_tokens')) {
-      const jwt = String(opts.headers.Authorization).replace(/^Bearer /, ''); const [h, b, s] = jwt.split('.');
-      const { createVerify } = await import('node:crypto');
-      const valid = createVerify('RSA-SHA256').update(`${h}.${b}`).verify(APP_KEY.publicKey, Buffer.from(s, 'base64url'));
-      g.mints.push({ url: u, valid, claims: JSON.parse(Buffer.from(b, 'base64url').toString()), head: JSON.parse(Buffer.from(h, 'base64url').toString()), body: JSON.parse(opts.body) });
-      if (g.status === 'throw') throw new Error('network');
-      if (g.status !== 201) return { status: g.status, ok: false, json: async () => ({ message: `Bad credentials ${g.token} ${APP_PEM.slice(0, 40)}` }), headers: { get: () => null } };
-      return { status: 201, ok: true, json: async () => ({ token: g.token, expires_at: new Date(now() + ttlMs).toISOString(), permissions: { actions: 'write', metadata: 'read' }, repository_selection: 'selected', repositories: [{ full_name: 'o/r' }] }), headers: { get: () => null } };
-    }
-    if (u.includes('/actions/workflows/') && !u.includes('/dispatches') && !u.includes('/runs')) return { status: 200, ok: true, json: async () => ({ state: 'active' }), headers: { get: () => null } };
-    return inner(url, opts);
-  };
-  return g;
-}
-
+// ---- GitHub App authentication for the workflow dispatch (the only method) ----
 test('GITHUB APP: the key is accepted as a PEM, a PEM with escaped line breaks, or base64; anything else is refused without echoing it', async () => {
   const { parsePrivateKey, loadAppConfig } = await import('../api/_lib/github-app.js');
   for (const raw of [APP_PEM, APP_PEM.replace(/\n/g, '\\n'), `"${APP_PEM.replace(/\n/g, '\\n')}"`, Buffer.from(APP_PEM).toString('base64')]) assert.equal(parsePrivateKey(raw).asymmetricKeyType, 'rsa');
@@ -683,32 +639,31 @@ test('GITHUB APP: the installation token is limited to the website repository an
   g.status = 201; const ok = await get(); assert.equal(ok.token, INSTALL_TOKEN, 'a failure is not remembered');
 });
 
-test('GITHUB APP: configuration. Default stays the personal token; app mode needs the App variables and not the personal token; a bad mode fails closed', async () => {
-  const { loadPublishConfig } = await import('../api/_lib/config.js');
-  const tok = loadPublishConfig(PUBLISH_ENV); assert.equal(tok.authMode, 'token'); assert.equal(tok.githubToken, GH_TOKEN); assert.equal(tok.githubApp, null);
-  const both = loadPublishConfig({ ...PUBLISH_ENV, ...APP_ENV, LISTINGS_GITHUB_AUTH: undefined }); assert.equal(both.authMode, 'token', 'App variables alone never switch the mode');
-  const app = loadPublishConfig(APP_ENV); assert.equal(app.authMode, 'app'); assert.equal(app.githubToken, ''); assert.ok(app.githubApp);
-  assert.throws(() => loadPublishConfig({ LISTINGS_CALLBACK_SECRET: SECRET, LISTINGS_GITHUB_AUTH: 'app' }), /LISTINGS_GITHUB_APP_ID/);
-  assert.throws(() => loadPublishConfig({ ...APP_ENV, LISTINGS_GITHUB_AUTH: 'pat' }), /"token" or "app"/);
+test('GITHUB APP: configuration. The App is the only method; a personal token is never read; a stale or bad mode fails closed', async () => {
+  const app = loadPublishConfig(APP_ENV); assert.ok(app.githubApp); assert.equal(app.githubApp.appId, '123456'); assert.equal(app.workflow, 'publish-listing.yml');
+  assert.ok(!('githubToken' in app) && !('authMode' in app), 'no personal-token path exists in the configuration');
+  assert.ok(loadPublishConfig({ ...APP_ENV, LISTINGS_GITHUB_AUTH: 'app' }).githubApp, 'the value Production already has is accepted');
+  assert.ok(loadPublishConfig({ ...APP_ENV, LISTINGS_GITHUB_DISPATCH_TOKEN: 'a-personal-token-is-never-read' }).githubApp, 'a leftover token variable is ignored, not an error');
+  assert.throws(() => loadPublishConfig({ LISTINGS_CALLBACK_SECRET: SECRET, LISTINGS_GITHUB_DISPATCH_TOKEN: 'a-personal-token-is-never-read' }), /LISTINGS_GITHUB_APP_ID/, 'a personal token alone is not a configuration');
+  assert.throws(() => loadPublishConfig({ LISTINGS_CALLBACK_SECRET: SECRET }), /LISTINGS_GITHUB_APP_ID/);
+  for (const mode of ['token', 'pat', 'TOKEN']) assert.throws(() => loadPublishConfig({ ...APP_ENV, LISTINGS_GITHUB_AUTH: mode }), /no longer used/);
   assert.throws(() => loadPublishConfig({ ...APP_ENV, LISTINGS_CALLBACK_SECRET: 'short' }), /LISTINGS_CALLBACK_SECRET/);
+  assert.throws(() => loadPublishConfig({ ...APP_ENV, LISTINGS_PUBLISH_WORKFLOW: '../x' }), /workflow file name/);
 });
 
-test('GITHUB APP DISPATCH: with LISTINGS_GITHUB_AUTH=app the workflow is dispatched with the installation token, the personal token is not used, and the job is recorded as usual', async () => {
-  const { clearInstallationTokens } = await import('../api/_lib/github-app.js');
+test('GITHUB APP DISPATCH: the workflow is dispatched with the installation token, a personal token in the environment is never used, and the job is recorded as usual', async () => {
   clearInstallationTokens();
-  const ctx = await ready(); const g = appGithub(ctx.gh.fetch); ctx.gh.fetch = g.fetch;
-  const r = await start(ctx, ALI_N, { env: { ...APP_ENV, LISTINGS_GITHUB_DISPATCH_TOKEN: GH_TOKEN } });
+  const ctx = await ready();
+  const FAKE = ['gh', 'p_', 'LEFTOVERpersonalTOKEN0123456789abcdefghij'].join('');
+  const r = await start(ctx, ALI_N, { env: { ...APP_ENV, LISTINGS_GITHUB_DISPATCH_TOKEN: FAKE } });
   assert.equal(r.status, 200, r.raw);
   assert.equal(ctx.gh.dispatches.length, 1);
   assert.equal(ctx.gh.dispatches[0].headers.Authorization, `Bearer ${INSTALL_TOKEN}`);
-  assert.ok(![...ctx.gh.dispatches].some((d) => JSON.stringify(d.headers).includes(GH_TOKEN)), 'the personal token is not used in app mode');
+  assert.ok(![...ctx.gh.dispatches].some((d) => JSON.stringify(d.headers).includes(FAKE)), 'the personal token is not used');
   assert.deepEqual(ctx.gh.dispatches[0].body.inputs.mode, 'dry_run');
-  assert.equal(g.mints.length, 1, 'one token served both the dispatch and the run lookup');
+  assert.equal(ctx.gh.mints.length, 1, 'one token served both the dispatch and the run lookup');
   assert.equal((await jobs(ctx.db)).length, 1);
-  for (const text of [r.raw, JSON.stringify(await jobs(ctx.db))]) assert.ok(!text.includes(INSTALL_TOKEN) && !text.includes('BEGIN RSA') && !text.includes(APP_PEM.slice(40, 80)), 'no token or key is ever returned or stored');
-  // and the default mode still dispatches with the personal token
-  const ctx2 = await ready(); const r2 = await start(ctx2);
-  assert.equal(r2.status, 200); assert.equal(ctx2.gh.dispatches[0].headers.Authorization, `Bearer ${GH_TOKEN}`);
+  for (const text of [r.raw, JSON.stringify(await jobs(ctx.db))]) assert.ok(!text.includes(INSTALL_TOKEN) && !text.includes('BEGIN RSA') && !text.includes(APP_PEM.slice(40, 80)) && !text.includes(FAKE), 'no token or key is ever returned or stored');
 });
 
 test('GITHUB APP DISPATCH: a refused token or a refused dispatch fails the job with a plain reason and echoes nothing from GitHub\'s body', async () => {
