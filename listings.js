@@ -66,8 +66,8 @@ const COMMERCIAL_LABEL = { available: 'Available', under_offer: 'Under offer', s
 /* TWO separate things, never merged into one status:
    PUBLICATION state: is the listing on the website, and does the website match the saved draft?
    COMMERCIAL status: what the public page says about the sale (only meaningful once published). A listing can be Live AND Under offer. */
-const PUBLICATION_LABEL = { draft: 'Draft', ready: 'Ready to publish', publishing: 'Publishing', live: 'Live', live_changes: 'Live, changes not published', withdrawn: 'Withdrawn' };
-const PUBLICATION_CLASS = { draft: 'ls-badge-draft', ready: 'ls-badge-notion', publishing: 'ls-badge-warn', live: 'ls-badge-live', live_changes: 'ls-badge-warn', withdrawn: 'ls-badge-bad' };
+const PUBLICATION_LABEL = { draft: 'Draft', review: 'Ready for review', publishing: 'Publishing', live: 'Live', live_changes: 'Live, changes not published', withdrawn: 'Withdrawn' };
+const PUBLICATION_CLASS = { draft: 'ls-badge-draft', review: 'ls-badge-notion', publishing: 'ls-badge-warn', live: 'ls-badge-live', live_changes: 'ls-badge-warn', withdrawn: 'ls-badge-bad' };
 const COMMERCIAL_CLASS = { available: 'ls-badge-live', under_offer: 'ls-badge-warn', sold: 'ls-badge-draft' };
 const publicationBadge = (state) => badge(PUBLICATION_LABEL[state] || 'Draft', PUBLICATION_CLASS[state] || 'ls-badge-muted');
 const commercialBadge = (status) => (COMMERCIAL_LABEL[status] ? badge(COMMERCIAL_LABEL[status], COMMERCIAL_CLASS[status]) : null);
@@ -926,7 +926,7 @@ function lsPublicationState(jobs, validation) {
   if (jobs && jobs.withdrawn === true) return 'withdrawn';
   if (jobs && jobs.active && (jobs.active.kind === 'publish' || jobs.active.kind === 'update' || jobs.active.kind === 'withdraw')) return 'publishing';
   if (jobs && (jobs.live || jobs.publishedOnWebsite)) return jobs.changes && jobs.changes.count > 0 ? 'live_changes' : 'live';
-  return validation && validation.publishable ? 'ready' : 'draft';
+  return validation && validation.publishable ? 'review' : 'draft';
 }
 /** What happened to this listing, in plain words, newest first. Jobs show for everyone; who changed the status (private audit) only for Publishers. Pure. */
 function lsHistory(jobs, history) {

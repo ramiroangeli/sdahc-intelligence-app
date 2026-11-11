@@ -196,7 +196,7 @@ function uxBrowser() {
 
 test('VOCABULARY: publication state and selling status are separate sets (a listing can be Live and Under offer), in plain words', () => {
   const x = uxBrowser();
-  assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.PUBLICATION_LABEL))), ['Draft', 'Ready to publish', 'Publishing', 'Live', 'Live, changes not published', 'Withdrawn']);
+  assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.PUBLICATION_LABEL))), ['Draft', 'Ready for review', 'Publishing', 'Live', 'Live, changes not published', 'Withdrawn']);
   assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.COMMERCIAL_LABEL))), ['Available', 'Under offer', 'Sold']);
   assert.ok(!Object.values(x.PUBLICATION_LABEL).some((l) => /offer|sold|available/i.test(l)), 'publication states never contain a selling status');
   assert.ok(!Object.values(x.COMMERCIAL_LABEL).some((l) => /live|draft|withdrawn/i.test(l)), 'selling statuses never contain a publication state');
@@ -295,7 +295,7 @@ test('TWO STATUSES: a listing is Live AND Under offer; the publication state and
   assert.equal(m.lsPublicationState({ ...live, changes: { count: 2, items: [] } }, {}), 'live_changes');
   assert.equal(m.lsPublicationState({ ...live, active: { kind: 'update' } }, {}), 'publishing');
   assert.equal(m.lsPublicationState({ ...live, withdrawn: true }, {}), 'withdrawn');
-  assert.equal(m.lsPublicationState({ live: null, publishedOnWebsite: false, active: null }, { publishable: true }), 'ready');
+  assert.equal(m.lsPublicationState({ live: null, publishedOnWebsite: false, active: null }, { publishable: true }), 'review');
   assert.equal(m.lsPublicationState(null, { publishable: false }), 'draft');
   assert.equal(m.lsPublicationState({ live: null, publishedOnWebsite: true, changes: null, active: null }, {}), 'live', 'an unreadable comparison is never reported as changes');
   const manage = code.slice(code.indexOf('function manageContent()'), code.indexOf("/* ---- the Publish step"));
