@@ -45,9 +45,10 @@ export function combine({ notion, snapshot, withdrawn, live, url }) {
   return {
     id: notion?.id ?? snapshot.listingId,
     name: notion?.name ?? snapshot?.title ?? '(unknown)',
-    state: notion?.state ?? null,
-    designCategories: notion?.designCategories ?? [],
-    buildType: notion?.buildType ?? null,
+    // the CRM is the source; the approved public listing fills in only what the CRM record does not provide here
+    state: notion?.state ?? snapshot?.state ?? null,
+    designCategories: notion?.designCategories?.length ? notion.designCategories : (snapshot?.designCategories ?? []),
+    buildType: notion?.buildType ?? snapshot?.buildType ?? null,
     notion: notion ? { status: notion.webStatus.label, statusKey: notion.webStatus.key, archived: notion.archived, editedAt: notion.editedAt } : null,
     website: snapshot ? { version: snapshot.version, slug: snapshot.slug, title: snapshot.title, commercialStatus: snapshot.commercialStatus, approvedAt: snapshot.approvedAt, firstPublishedAt: snapshot.firstPublishedAt, url } : null,
     deployment,

@@ -83,7 +83,9 @@ function errorPanel(status, retry) {
     lsEl('div', { class: 'ls-actions ls-center' }, retry ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: retry, text: 'Try again' }) : null,
       lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => lsGo('#/listings'), text: 'Back to Listings' })));
 }
-const back = (text, hash) => lsEl('a', { class: 'ls-back', href: hash, text });
+const back = (text, hash) => lsEl('a', { class: 'ls-back-btn', href: hash }, lsEl('span', { class: 'ls-ico', 'aria-hidden': 'true', text: '\u2190' }), text);
+/** The public page: one dark button, the same everywhere it is offered. */
+const liveButton = (url) => lsEl('a', { class: 'ls-live-btn', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'View the live page', lsEl('span', { class: 'ls-ico', 'aria-hidden': 'true', text: '\u2197' }), lsEl('span', { class: 'ls-sr', text: ' (opens in a new tab)' }));
 
 /* ------------------------------------------------------------------ dashboard */
 async function lsLoadList() {
@@ -143,8 +145,8 @@ function paintList(root) {
   const shown = d.listings.filter((l) => lsListMatches(l, key));
   root.append(lsEl('div', { class: 'panel' },
     lsEl('div', { class: 'panel-head' },
-      lsEl('div', null, lsEl('h2', { class: 'panel-title', text: 'Listings' }),
-        lsEl('div', { class: 'panel-sub', text: 'What is on the website, and what is being prepared for it. Nothing changes on the website until you publish.' })),
+      lsEl('div', null, lsEl('h2', { class: 'panel-title ls-page-title', text: 'Listings' }),
+        lsEl('div', { class: 'panel-sub ls-page-sub', text: 'What is on the website, and what is being prepared for it. Nothing changes on the website until you publish.' })),
       lsEl('div', { class: 'ls-actions' },
         lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: lsLoadList, text: LS.listLoading ? 'Checking...' : 'Refresh' }),
         lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-add-btn', disabled: !canEdit, title: canEdit ? '' : 'You need the Editor capability to add a listing', onclick: () => lsGo('#/listings/new'), text: 'Add listing' }))),
@@ -210,7 +212,7 @@ function paintPicker(root) {
       badge(p.unnamed ? 'No address in the CRM' : label, p.unnamed ? 'ls-badge-muted' : cls));
   });
   root.append(lsEl('div', { class: 'panel' },
-    lsEl('div', { class: 'panel-head' }, lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: 'Add listing' }),
+    lsEl('div', { class: 'panel-head' }, lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title ls-page-title', text: 'Add listing' }),
       lsEl('div', { class: 'panel-sub', text: 'Which property is this listing for? Properties come from the CRM. The CRM is never changed, and nothing goes on the website until you publish.' }))),
     lsEl('div', { class: 'ls-pad' }, lsEl('label', { class: 'ls-label', for: 'ls-search', text: 'Search by address' }), search),
     LS.flash ? lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: LS.flash }) : null,
@@ -250,7 +252,7 @@ async function lsLoadDraft(id) {
 
 const FIELD_HELP = {
   title: 'Optional. Leave blank to use "SDA property, <suburb>". 5 to 90 characters.',
-  description: 'The only text published. Separate paragraphs with a blank line. Do not include house numbers, prices, income or contact details.',
+  description: 'Text published. Separate paragraphs with a blank line.',
   publicAddress: 'Street name, suburb, state, postcode. Never a house or unit number.',
 };
 
@@ -455,9 +457,9 @@ function paintDraft(root) {
   const pendingChange = LS.d.notion.changed.length && !LS.notionConflict ? lsEl('div', { class: 'ls-banner' }, 'The Notion record has changed since this draft started (' + LS.d.notion.changed.join(', ') + '). You will be asked to confirm when you save.') : null;
   root.append(lsEl('div', { class: 'panel' },
     lsEl('div', { class: 'panel-head' },
-      lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title', text: lsListingName() }),
-        lsEl('div', { class: 'ls-sub', id: 'ls-crm-ref', text: 'From the CRM: ' + LS.d.property.fullName + ' (reference only, never published)' }),
-        lsEl('div', { class: 'panel-sub', id: 'ls-ver-label', text: 'Saved by ' + d.updatedBy.split('@')[0] + ' ' + when(d.updatedAt) + '. Changes you save here are not public until you publish.' })),
+      lsEl('div', null, back('Back to Listings', '#/listings'), lsEl('h2', { class: 'panel-title ls-page-title', text: lsListingName() }),
+        lsEl('div', { class: 'ls-sub ls-hdr-line', id: 'ls-crm-ref', text: 'From the CRM: ' + LS.d.property.fullName + ' (reference only, never published)' }),
+        lsEl('div', { class: 'panel-sub ls-hdr-line', id: 'ls-ver-label', text: 'Saved by ' + d.updatedBy.split('@')[0] + ' ' + when(d.updatedAt) + '. Changes you save here are not public until you publish.' })),
       r.tab === 'edit' ? lsEl('div', { class: 'ls-actions' }, lsEl('span', { id: 'ls-save-state', class: 'ls-sub', text: ro ? 'Read only' : LS.dirty ? 'Unsaved changes' : 'All changes saved' }),
         ro ? null : lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-save-btn', disabled: LS.saving, onclick: () => lsSave(false), text: LS.saving ? 'Saving...' : 'Save' })) : null),
     lsStepper(r.tab, d.id),
@@ -687,9 +689,10 @@ function photoCard(p, idx, items, ro) {
       lsEl('span', { class: 'ls-ph-pos', text: String(idx + 1) }),
       cover ? lsEl('span', { class: 'ls-ph-flag', text: 'Cover' }) : plan ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null),
     lsEl('div', { class: 'ls-ph-body' },
-      lsEl('label', { class: 'ls-label', for: 'ls-alt-' + p.id, text: 'Description (optional)' }),
-      lsEl('input', { id: 'ls-alt-' + p.id, class: 'ls-input', type: 'text', maxlength: '200', value: p.alt, disabled: ro || busy, placeholder: 'Optional, e.g. Kitchen',
+      lsEl('label', { class: 'ls-label', for: 'ls-alt-' + p.id, text: 'Image description (accessibility)' }),
+      lsEl('input', { id: 'ls-alt-' + p.id, class: 'ls-input', type: 'text', maxlength: '200', value: p.alt, disabled: ro || busy, placeholder: 'e.g. Open kitchen with a stone island bench',
         onchange: (e) => { if (e.target.value.trim() !== (p.alt || '').trim()) lsSetAlt(p.id, e.target.value); } }),
+      lsEl('div', { class: 'ls-help', text: 'Helps screen readers and search engines understand the photograph. Describe only what is visible.' }),
       lsEl('label', { class: 'ls-check-row ls-ph-row', title: cover ? 'The cover must be a photograph. Make another photo the cover first.' : '' },
         lsEl('input', { type: 'checkbox', checked: plan, disabled: ro || busy || cover, onchange: (e) => lsSetKind(p.id, e.target.checked) }), cover ? ' Floorplan (not available for the cover)' : ' This is a floorplan (always last)'),
       p.issues.length ? lsEl('ul', { class: 'ls-ferr ls-ph-issues' }, p.issues.map((i) => lsEl('li', { text: i.message }))) : (p.alt ? lsEl('div', { class: 'ls-ph-ok', text: 'Description OK' }) : lsEl('div', { class: 'ls-sub ls-ph-fallback', text: 'No description. The website will say: "' + p.altText + '"' })),
@@ -714,7 +717,7 @@ function photosSection() {
     lsEl('strong', { text: LS.queue.some((q) => q.state !== 'failed') ? 'Uploading... you can keep working' : 'Add photographs' }), lsEl('span', { text: 'Drag images here or click to choose. JPG, PNG or WebP, at least 960 pixels wide.' }));
   return lsEl('div', { class: 'ls-photos', id: 'ls-photos' },
     lsEl('h3', { class: 'ls-ph-h', text: 'Photographs' }),
-    lsEl('div', { class: 'ls-help', text: 'Private: only signed-in staff can see these. Nothing here is published. Location data is removed from every image. Originals are not kept. The first photograph is the cover; floorplans are always last.' }),
+    lsEl('div', { class: 'ls-help', text: 'The first photograph is the cover; floorplans are always last.' }),
     LS.photoMsg ? lsEl('div', { class: 'ls-banner ' + (LS.photoMsg.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.photoMsg.bad ? 'alert' : 'status', text: LS.photoMsg.bad || LS.photoMsg.ok }) : null,
     ph.readiness.gallery.length ? lsEl('ul', { class: 'ls-ferr ls-ph-gal' }, ph.readiness.gallery.map((g) => lsEl('li', { text: g.message }))) : null,
     zone,
@@ -827,7 +830,7 @@ function withdrawCard(ro, active) {
   return lsEl('div', { class: 'ls-rv-box ls-danger-box', id: 'ls-withdraw' },
     lsEl('h3', { text: 'Withdraw this listing' }),
     !LS.withdrawOpen
-      ? lsEl('div', null, lsEl('p', { class: 'ls-sub', text: 'Permanently takes the listing out of public marketing. Use it when the property should no longer be advertised at all. Selling status (Available, Under offer, Sold) is changed above, not here.' }),
+      ? lsEl('div', null, lsEl('p', { class: 'ls-sub', text: 'Permanently takes the listing out of public marketing. Use it when the property should no longer be advertised at all.' }),
         lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-withdraw-open', disabled: busy, onclick: () => { LS.withdrawOpen = true; lsRefreshReview(); }, text: 'Withdraw this listing...' }))
       : lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm withdrawal' },
         lsEl('p', null, lsEl('strong', { text: 'This permanently removes the listing from public marketing.' })),
@@ -955,8 +958,8 @@ function manageContent() {
   const url = live && live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? live.url : null;
 
   const head = lsEl('div', { class: 'ls-rv-box', id: 'ls-manage-head' },
-    lsEl('div', { class: 'ls-manage-pills' }, lsEl('span', { class: 'ls-sub', text: 'On the website: ' }), publicationBadge(state), cur ? lsEl('span', { class: 'ls-sub', text: ' Selling status: ' }) : null, cur ? commercialBadge(cur) : null,
-      url ? lsEl('a', { class: 'ls-link', href: url, target: '_blank', rel: 'noopener noreferrer', text: 'View the live page' }) : null),
+    lsEl('div', { class: 'ls-manage-head' }, lsEl('div', { class: 'ls-manage-pills' }, lsEl('span', { class: 'ls-sub', text: 'On the website: ' }), publicationBadge(state), cur ? lsEl('span', { class: 'ls-sub', text: ' Selling status: ' }) : null, cur ? commercialBadge(cur) : null),
+      url ? liveButton(url) : null),
     waiting ? lsEl('div', { class: 'ls-banner', id: 'ls-waiting', role: 'status' }, lsEl('strong', { text: changes.count + (changes.count === 1 ? ' change is' : ' changes are') + ' waiting to be published: ' }), changes.items.map((i) => i.label).join(', ') + '. ',
       lsEl('a', { class: 'ls-link', href: '#/listings/draft/' + d.draft.id + '/review', text: 'Review and publish' })) : null,
     LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
@@ -1058,13 +1061,13 @@ function reviewContent() {
     summary.push(lsEl('p', { class: 'ls-sub', text: 'These changes will go on the website once it has checked them:' }));
     summary.push(lsEl('ul', { class: 'ls-changes', id: 'ls-changes' }, changes.items.map((i) => lsEl('li', null, lsEl('strong', { text: i.label }), i.detail ? ' (' + i.detail + ')' : ''))));
   } else if (!published) {
-    summary.push(lsEl('p', { class: 'ls-sub', text: 'Publishing makes this listing public at /opportunities/' + (v.slug || '...') + '/ once the website has checked it. It is shown as Live here only after that.' }));
+    summary.push(lsEl('p', { class: 'ls-sub', text: 'Publishing makes this listing public at /opportunities/' + (v.slug || '...') + '/ once the website has checked it.' }));
   }
 
   const body = [];
   if (stuck && !realActive) body.push(lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'The last publication reached the website but could not be confirmed yet. It is not shown as Live. Press the button to check it again.'));
   if (live) body.push(lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Checked on the website ', when(live.since),
-    live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', lsEl('a', { class: 'ls-link', href: live.url, target: '_blank', rel: 'noopener noreferrer', text: 'View the live page' })] : null));
+    live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', liveButton(live.url)] : null));
   if (LS.jobFlash) body.push(lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }));
   if (LS.jobErr) body.push(lsEl('div', { class: 'ls-banner ls-banner-bad', role: 'alert', text: 'The progress could not be read right now. Reload the page in a moment.' }));
   if (jobs && !jobs.configured) body.push(lsEl('div', { class: 'ls-banner', text: 'Publishing is not set up correctly: an administrator needs to check the publishing settings.' }));

@@ -145,8 +145,8 @@ test('END TO END: a typed description with a house number still blocks publicati
 });
 
 test('UI: descriptions are labelled optional, the preview uses the effective text, and no minimum-length wording remains', () => {
-  assert.match(code, /text: 'Description \(optional\)'/);
-  assert.match(code, /placeholder: 'Optional, e\.g\. Kitchen'/);
+  assert.match(code, /text: 'Image description \(accessibility\)'/);
+  assert.match(code, /placeholder: 'e\.g\. Open kitchen with a stone island bench'/);
   assert.match(code, /No description\. The website will say:/);
   assert.match(code, /lsPhotoImg\(lead\.id, 960, lead\.altText\)/);
   assert.ok(!/at least 8 characters|too short|Describe the image in at least/i.test(code));
