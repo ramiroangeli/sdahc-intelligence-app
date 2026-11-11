@@ -49,7 +49,11 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   if (!ENABLED_KINDS.includes(kind)) throw new HttpError(400, 'mode_not_enabled');
   if (!Number.isInteger(expectedVersion)) throw new HttpError(400, 'expected_version_required');
   // a withdrawn listing is not published, updated, re-statused or rehearsed: withdrawal is permanent in the Listings Manager
-  if ((await websiteState(cfg, id, fetchImpl))?.withdrawn === true) throw new HttpError(409, 'withdrawn', { reasons: ['This listing is withdrawn from public marketing. Withdrawal is permanent in the Listings Manager, so it cannot be published or changed.'] });
+  const siteNow = await websiteState(cfg, id, fetchImpl);
+  // The website cannot be read, so whether this is a first publication, an update, or a withdrawn listing is unknown: a real publication or status change waits
+  // until the website can be verified (a test without publishing does not change anything, so it is still allowed). Nothing is recorded.
+  if (siteNow === null && REAL_KINDS.includes(kind)) throw new HttpError(503, 'website_unreadable', { reasons: ['Unable to verify the website right now, so publishing is paused. Nothing was changed. Try again in a minute.'] });
+  if (siteNow?.withdrawn === true) throw new HttpError(409, 'withdrawn', { reasons: ['This listing is withdrawn from public marketing. Withdrawal is permanent in the Listings Manager, so it cannot be published or changed.'] });
   // Commercial status (Publisher only, which the route already requires). Asked for as "set to X"; X must be a real status, and the Publisher must
   // say which status they saw, so a stale tab cannot silently undo someone else's change.
   let statusChange = null;
@@ -157,5 +161,5 @@ export async function jobsFor({ cfg, db, id, fetchImpl, env, canPublish = false 
   const audit = canPublish ? (await readAudit(db, id, 20)).map((r) => ({ id: r.id, at: r.at, by: r.actor_email, action: r.action, from: r.status_from, to: r.status_to, reason: r.reason, jobId: r.job_id })) : null;
   const changes = await changesFor(db, await drafts.getDraft(db, id), { site, live });
   const noChanges = !!changes && changes.count === 0 && !stuck && !out.some((j) => j.active);
-  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, websiteStatus, changes, websiteAddress: site?.approved?.address ?? null, withdrawn, withdrawal, ...(audit ? { audit } : {}), noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
+  return { jobs: out, active: out.find((j) => j.active) ?? null, configured: Boolean(publish), publishedOnWebsite, websiteStatus, changes, websiteVerified: site !== null, websiteAddress: site?.approved?.address ?? null, withdrawn, withdrawal, ...(audit ? { audit } : {}), noChanges, enabledKinds: ENABLED_KINDS, live: live ? liveView(live) : null, mergedUnverified: stuck ? { jobId: stuck.id, kind: stuck.kind, draftVersion: stuck.draft_version, at: stuck.finished_at } : null };
 }

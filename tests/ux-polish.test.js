@@ -196,7 +196,7 @@ function uxBrowser() {
 
 test('VOCABULARY: publication state and selling status are separate sets (a listing can be Live and Under offer), in plain words', () => {
   const x = uxBrowser();
-  assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.PUBLICATION_LABEL))), ['Draft', 'Ready for review', 'Publishing', 'Live', 'Live, changes not published', 'Withdrawn']);
+  assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.PUBLICATION_LABEL))), ['Draft', 'Ready for review', 'Publishing', 'Unable to verify website status', 'Live', 'Live, changes not published', 'Withdrawn']);
   assert.deepEqual(Object.values(JSON.parse(JSON.stringify(x.COMMERCIAL_LABEL))), ['Available', 'Under offer', 'Sold']);
   assert.ok(!Object.values(x.PUBLICATION_LABEL).some((l) => /offer|sold|available/i.test(l)), 'publication states never contain a selling status');
   assert.ok(!Object.values(x.COMMERCIAL_LABEL).some((l) => /live|draft|withdrawn/i.test(l)), 'selling statuses never contain a publication state');

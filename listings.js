@@ -66,8 +66,8 @@ const COMMERCIAL_LABEL = { available: 'Available', under_offer: 'Under offer', s
 /* TWO separate things, never merged into one status:
    PUBLICATION state: is the listing on the website, and does the website match the saved draft?
    COMMERCIAL status: what the public page says about the sale (only meaningful once published). A listing can be Live AND Under offer. */
-const PUBLICATION_LABEL = { draft: 'Draft', review: 'Ready for review', publishing: 'Publishing', live: 'Live', live_changes: 'Live, changes not published', withdrawn: 'Withdrawn' };
-const PUBLICATION_CLASS = { draft: 'ls-badge-draft', review: 'ls-badge-notion', publishing: 'ls-badge-warn', live: 'ls-badge-live', live_changes: 'ls-badge-warn', withdrawn: 'ls-badge-bad' };
+const PUBLICATION_LABEL = { draft: 'Draft', review: 'Ready for review', publishing: 'Publishing', unverified: 'Unable to verify website status', live: 'Live', live_changes: 'Live, changes not published', withdrawn: 'Withdrawn' };
+const PUBLICATION_CLASS = { draft: 'ls-badge-draft', review: 'ls-badge-notion', publishing: 'ls-badge-warn', unverified: 'ls-badge-warn', live: 'ls-badge-live', live_changes: 'ls-badge-warn', withdrawn: 'ls-badge-bad' };
 const COMMERCIAL_CLASS = { available: 'ls-badge-live', under_offer: 'ls-badge-warn', sold: 'ls-badge-draft' };
 const publicationBadge = (state) => badge(PUBLICATION_LABEL[state] || 'Draft', PUBLICATION_CLASS[state] || 'ls-badge-muted');
 const commercialBadge = (status) => (COMMERCIAL_LABEL[status] ? badge(COMMERCIAL_LABEL[status], COMMERCIAL_CLASS[status]) : null);
@@ -105,27 +105,29 @@ const lsPub = (l) => (l.publication && l.publication.state) || 'draft';
 function lsListMatches(l, key) {
   const st = lsPub(l);
   if (key === 'all') return true;
-  if (key === 'attention') return !!((l.publication && l.publication.attention) || (l.deployment && l.deployment.state === 'not_live'));
-  if (key === 'draft') return !l.website && st !== 'withdrawn';
-  if (key === 'live') return !!l.website && st !== 'withdrawn';
+  if (key === 'attention') return !!((l.publication && l.publication.attention) || st === 'unverified' || (l.deployment && l.deployment.state === 'not_live'));
+  if (key === 'draft') return !l.website && st !== 'withdrawn' && st !== 'unverified';
+  if (key === 'live') return !!l.website && st !== 'withdrawn' && st !== 'unverified';
   if (key === 'withdrawn') return st === 'withdrawn';
   return true;
 }
-const lsListHref = (l) => '#/listings/draft/' + l.id + (l.website || lsPub(l) === 'withdrawn' ? '/manage' : '');
-const lsListAction = (l) => (lsPub(l) === 'withdrawn' ? 'View' : l.website ? 'Manage' : 'Continue');
+const lsLastKnownLive = (l) => lsPub(l) === 'unverified' && l.publication.lastKnown === 'live';
+const lsListHref = (l) => '#/listings/draft/' + l.id + (l.website || lsPub(l) === 'withdrawn' || lsLastKnownLive(l) || (lsPub(l) === 'unverified' && l.publication.lastKnown === 'withdrawn') ? '/manage' : '');
+const lsListAction = (l) => (lsPub(l) === 'withdrawn' || (lsPub(l) === 'unverified' && l.publication.lastKnown === 'withdrawn') ? 'View' : l.website || lsLastKnownLive(l) ? 'Manage' : 'Continue');
 
 function listingRow(l) {
   const st = lsPub(l); const p = l.publication || { changesCount: 0, attention: false };
   const sub = [];
   if (l.draft && !l.website) sub.push('Saved by ' + l.draft.updatedBy.split('@')[0] + ' ' + when(l.draft.updatedAt));
+  if (st === 'unverified') sub.push('Last known: ' + ({ live: 'Live', withdrawn: 'Withdrawn' }[p.lastKnown] || 'not recorded') + ' (unverified)');
   if (st === 'live_changes') sub.push(p.changesCount + (p.changesCount === 1 ? ' change' : ' changes') + ' not published yet');
   if (l.draft && l.draft.openNotes) sub.push(l.draft.openNotes + ' note' + (l.draft.openNotes > 1 ? 's' : '') + ' to review');
-  const trouble = p.attention ? 'The last update did not complete. Open it for what to do.' : l.deployment && l.deployment.state === 'not_live' ? 'The page is not responding on the website.' : null;
+  const trouble = st === 'unverified' ? null : p.attention ? 'The last update did not complete. Open it for what to do.' : l.deployment && l.deployment.state === 'not_live' ? 'The page is not responding on the website.' : null;
   return [lsEl('tr', { class: 'ls-lrow' + (p.attention ? ' ls-lrow-attn' : '') },
     lsEl('td', null, lsEl('a', { class: 'ls-name ls-link-strong', href: lsListHref(l), text: l.name }), lsEl('div', { class: 'ls-sub', text: [l.state, l.designCategories.join(', '), l.buildType].filter(Boolean).join(' · ') }),
       sub.length ? lsEl('div', { class: 'ls-sub', text: sub.join(' · ') }) : null, trouble ? lsEl('div', { class: 'ls-sub ls-warn-text', text: trouble }) : null),
     lsEl('td', null, publicationBadge(st)),
-    lsEl('td', null, l.website && st !== 'withdrawn' ? commercialBadge(l.website.commercialStatus) : lsEl('span', { class: 'ls-sub', text: l.website ? '' : 'Not published' })),
+    lsEl('td', null, l.website && st !== 'withdrawn' ? commercialBadge(l.website.commercialStatus) : lsEl('span', { class: 'ls-sub', text: st === 'unverified' ? 'Not verified' : l.website ? '' : 'Not published' })),
     lsEl('td', { class: 'ls-lrow-act' }, lsEl('a', { class: 'btn btn-secondary btn-sm', href: lsListHref(l), text: lsListAction(l) })))];
 }
 
@@ -137,7 +139,7 @@ function paintList(root) {
   const warns = [];
   if (d.sources.notion.state === 'not_configured') warns.push('The CRM is not connected to this service, so only what is already on the website is shown.');
   if (d.sources.notion.state === 'error') warns.push(d.sources.notion.message + '. Showing the website state only.');
-  if (d.sources.website.state === 'error') warns.push(d.sources.website.message + '. What is live cannot be confirmed.');
+  if (d.sources.website.state === 'error') warns.push(d.sources.website.message + '. Each listing shows its last known state, marked unverified, and publishing is paused until the website can be checked. Press Refresh to try again.' + (d.sources.website.detail ? ' Technical detail: ' + d.sources.website.detail + '.' : ''));
   if (d.sources.website.state === 'warning') warns.push(d.sources.website.message);
   if (d.sources.drafts && d.sources.drafts.state === 'error') warns.push('Drafts could not be read right now.');
   if (d.sources.drafts && d.sources.drafts.state === 'not_configured') warns.push('Drafts are not enabled yet: the drafts database is not configured.');
@@ -771,6 +773,12 @@ function lsSchedulePoll() {
   if (!onTab() || !LS.jobs || !LS.jobs.active) return;
   lsPollTimer = setTimeout(async () => { await lsLoadJobs(); if (onTab()) { lsRefreshReview(); lsRefreshSteps(); lsSchedulePoll(); } }, 5000);
 }
+/** The website could not be read: publishing and status changes pause, nothing is assumed, and a retry is one click. */
+const lsUnverified = () => !!(LS.jobs && LS.jobs.websiteVerified === false);
+async function lsRetryVerify() { await lsLoadJobs().catch(() => {}); lsRefreshReview(); lsRefreshSteps(); }
+const unverifiedBanner = () => lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-unverified', role: 'alert' }, lsEl('strong', { text: 'Unable to verify website status. ' }),
+  'Publishing and status changes are paused until the website can be checked. Nothing has been changed. ', lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-unverified-retry', onclick: lsRetryVerify, text: 'Try again' }));
+
 function lsRefreshReview() { const h = document.getElementById('ls-review-host'); if (h) h.replaceWith(lsRoute().tab === 'manage' ? manageContent() : reviewContent()); }
 function lsRefreshSteps() { const n = document.getElementById('ls-steps'); if (n && LS.d && lsRoute().name === 'draft') n.replaceWith(lsStepper(lsRoute().tab, LS.d.draft.id)); }
 
@@ -831,7 +839,7 @@ function withdrawCard(ro, active) {
     lsEl('h3', { text: 'Withdraw this listing' }),
     !LS.withdrawOpen
       ? lsEl('div', null, lsEl('p', { class: 'ls-sub', text: 'Permanently takes the listing out of public marketing. Use it when the property should no longer be advertised at all.' }),
-        lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-withdraw-open', disabled: busy, onclick: () => { LS.withdrawOpen = true; lsRefreshReview(); }, text: 'Withdraw this listing...' }))
+        lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-withdraw-open', disabled: busy || lsUnverified(), onclick: () => { LS.withdrawOpen = true; lsRefreshReview(); }, text: 'Withdraw this listing...' }))
       : lsEl('div', { class: 'ls-confirm', role: 'group', 'aria-label': 'Confirm withdrawal' },
         lsEl('p', null, lsEl('strong', { text: 'This permanently removes the listing from public marketing.' })),
         lsEl('ul', { class: 'ls-sub' }, [
@@ -906,6 +914,7 @@ async function lsStartPublish() {
   } catch (e) {
     const b = e.body || {};
     LS.jobFlash = { bad: e.status === 409 && b.error === 'not_ready' ? 'Not ready yet: ' + (b.reasons || []).join(' ')
+      : e.status === 503 && b.error === 'website_unreadable' ? 'Unable to verify website status, so publishing is paused. Nothing was changed. Try again in a minute.'
       : e.status === 409 && b.error === 'draft_changed' ? 'The draft changed. Reload and review the latest version.'
       : e.status === 409 && b.error === 'job_active' ? 'A publication is already running for this listing.'
       : e.status === 409 && b.error === 'status_changed' ? 'The status on the website has changed since you opened this page. Reload the page and check it.'
@@ -928,6 +937,7 @@ async function lsStartPublish() {
 function lsPublicationState(jobs, validation) {
   if (jobs && jobs.withdrawn === true) return 'withdrawn';
   if (jobs && jobs.active && (jobs.active.kind === 'publish' || jobs.active.kind === 'update' || jobs.active.kind === 'withdraw')) return 'publishing';
+  if (jobs && jobs.websiteVerified === false) return 'unverified';
   if (jobs && (jobs.live || jobs.publishedOnWebsite)) return jobs.changes && jobs.changes.count > 0 ? 'live_changes' : 'live';
   return validation && validation.publishable ? 'review' : 'draft';
 }
@@ -960,6 +970,7 @@ function manageContent() {
   const head = lsEl('div', { class: 'ls-rv-box', id: 'ls-manage-head' },
     lsEl('div', { class: 'ls-manage-head' }, lsEl('div', { class: 'ls-manage-pills' }, lsEl('span', { class: 'ls-sub', text: 'On the website: ' }), publicationBadge(state), cur ? lsEl('span', { class: 'ls-sub', text: ' Selling status: ' }) : null, cur ? commercialBadge(cur) : null),
       url ? liveButton(url) : null),
+    lsUnverified() ? unverifiedBanner() : null,
     waiting ? lsEl('div', { class: 'ls-banner', id: 'ls-waiting', role: 'status' }, lsEl('strong', { text: changes.count + (changes.count === 1 ? ' change is' : ' changes are') + ' waiting to be published: ' }), changes.items.map((i) => i.label).join(', ') + '. ',
       lsEl('a', { class: 'ls-link', href: '#/listings/draft/' + d.draft.id + '/review', text: 'Review and publish' })) : null,
     LS.jobFlash ? lsEl('div', { class: 'ls-banner ' + (LS.jobFlash.bad ? 'ls-banner-bad' : 'ls-banner-ok'), role: LS.jobFlash.bad ? 'alert' : 'status', text: LS.jobFlash.bad || LS.jobFlash.ok }) : null,
@@ -970,13 +981,13 @@ function manageContent() {
   const statusCard = cur ? lsEl('div', { class: 'ls-rv-box', id: 'ls-status-card' }, lsEl('h3', { text: 'Selling status' }),
     lsEl('p', { class: 'ls-sub', text: 'Shown on the listing page. The page stays public whichever you choose. A Sold page says so and stops offering the property for enquiry.' }),
     ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can change it.' }) : lsEl('div', null,
-      lsEl('div', { class: 'ls-seg', role: 'group', 'aria-label': 'Selling status' }, Object.keys(COMMERCIAL_LABEL).map((k) => lsEl('button', { type: 'button', class: 'ls-seg-b' + (k === (sc || cur) ? ' on' : ''), 'data-status': k, 'aria-pressed': k === (sc || cur) ? 'true' : 'false', disabled: !!active || LS.jobBusy,
+      lsEl('div', { class: 'ls-seg', role: 'group', 'aria-label': 'Selling status' }, Object.keys(COMMERCIAL_LABEL).map((k) => lsEl('button', { type: 'button', class: 'ls-seg-b' + (k === (sc || cur) ? ' on' : ''), 'data-status': k, 'aria-pressed': k === (sc || cur) ? 'true' : 'false', disabled: !!active || LS.jobBusy || lsUnverified(),
         onclick: () => { LS.statusChoice = k === cur ? null : k; LS.soldConfirmed = false; lsRefreshReview(); }, text: COMMERCIAL_LABEL[k] }))),
       sc ? lsEl('div', { class: 'ls-status-confirm' },
         waiting ? lsEl('div', { class: 'ls-banner', id: 'ls-status-with-changes', role: 'status' }, 'Your ' + changes.count + (changes.count === 1 ? ' saved change' : ' saved changes') + ' (' + changes.items.map((i) => i.label).join(', ') + ') will be published together with this status.') : null,
         sc === 'sold' ? lsEl('label', { class: 'ls-sold-confirm' }, lsEl('input', { type: 'checkbox', id: 'ls-sold-confirm', checked: !!LS.soldConfirmed, onchange: (e) => { LS.soldConfirmed = e.target.checked; lsRefreshReview(); } }), ' I confirm the property has sold. The listing page will say so and stop offering the property for enquiry.') : null,
         lsEl('div', { class: 'ls-step-footer' }, lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-status-cancel', onclick: () => { LS.statusChoice = null; LS.soldConfirmed = false; lsRefreshReview(); }, text: 'Cancel' }), ' ',
-          lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-status-go', disabled: !!active || LS.jobBusy || (sc === 'sold' && !LS.soldConfirmed), onclick: lsStartPublish, text: LS.jobBusy ? 'Updating...' : (waiting ? 'Update status and publish changes' : 'Update status to ' + COMMERCIAL_LABEL[sc]) }))) : null)) : null;
+          lsEl('button', { class: 'btn btn-secondary', type: 'button', id: 'ls-status-go', disabled: !!active || LS.jobBusy || lsUnverified() || (sc === 'sold' && !LS.soldConfirmed), onclick: lsStartPublish, text: LS.jobBusy ? 'Updating...' : (waiting ? 'Update status and publish changes' : 'Update status to ' + COMMERCIAL_LABEL[sc]) }))) : null)) : null;
 
   const edit = lsEl('div', { class: 'ls-rv-box', id: 'ls-edit-card' }, lsEl('h3', { text: 'Edit this listing' }),
     lsEl('p', { class: 'ls-sub', text: 'Change the text, price or photographs. Nothing changes on the website until you publish.' }),
@@ -1065,6 +1076,7 @@ function reviewContent() {
   }
 
   const body = [];
+  if (lsUnverified()) body.push(unverifiedBanner());
   if (stuck && !realActive) body.push(lsEl('div', { class: 'ls-banner ls-banner-bad', id: 'ls-merged-unverified', role: 'alert' }, 'The last publication reached the website but could not be confirmed yet. It is not shown as Live. Press the button to check it again.'));
   if (live) body.push(lsEl('div', { class: 'ls-banner ls-banner-ok', role: 'status' }, badge('Live', 'ls-badge-live'), ' Checked on the website ', when(live.since),
     live.url && /^https:\/\/(www\.)?sdahomechoices\.com\.au\//.test(live.url) ? [' ', liveButton(live.url)] : null));
@@ -1077,7 +1089,7 @@ function reviewContent() {
   const action = nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-no-changes', role: 'status' }, 'No changes to publish. This listing already matches what is on the website. Go back to "Prepare" when something needs to change.')
     : ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
     : lsEl('div', { class: 'ls-publish-action' },
-      lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: lsStartPublish,
+      lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: lsUnverified() || !startable || !!active || LS.jobBusy || (jobs && !jobs.configured), onclick: lsStartPublish,
         text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'Please wait...' : button }),
       !startable ? lsEl('ul', { class: 'ls-ferr', id: 'ls-publish-reasons' }, pf.map((m) => lsEl('li', { text: m }))) : null);
 
