@@ -60,17 +60,19 @@ test('the same text carries a specific publication warning, not the old vague ke
   assert.match(w.message, /"\$164,435 p\.a\."/);
   assert.match(w.message, /"yield"/);
   assert.match(w.message, /Gross income: \$164,435 p\.a\. \(FY26\)/, 'it quotes a line so the person can find it');
-  assert.match(w.message, /Investment details/, 'it says where the information belongs');
+  assert.match(w.message, /Publisher must approve this exact text/, 'it says how it can be published');
+  assert.match(w.message, /record the source/);
   assert.ok(!/outside the approved price/.test(JSON.stringify(s.json)), 'the vague wording is gone');
   assert.equal(s.json.validation.publishable, false);
 });
 
-test('Victoria: the warning says income and yield cannot be published at all for now', async () => {
+test('Victoria: the warning says the approval also records a business authorisation, not a legal classification', async () => {
   const c = await ready('VIC', 'Wattle Street, Exampleton VIC 3999');
   const s = await save(c, FIGURES);
   const w = s.json.validation.blockers.find((x) => x.code === 'description_financial');
   assert.match(w.message, /Victorian listing/);
-  assert.match(w.message, /cannot be published at all/);
+  assert.match(w.message, /business authorisation/);
+  assert.match(w.message, /does not classify the property/);
 });
 
 test('free text cannot get figures published: a publication request for such a description is refused and nothing is recorded', async () => {

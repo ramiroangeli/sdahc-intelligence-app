@@ -7,7 +7,7 @@ import { HttpError, PUBLIC_ID_RE } from './http.js';
 import { changedGroups, getProperty, listAllProperties } from './property.js';
 import { loadCompliance, loadSnapshots } from './site.js';
 import { systemItems, verificationState } from './verification.js';
-import { APPROVAL_KEY, stable, approvalState, approveInvestment, stateOf, withoutApproval, optionalChoices } from './optional-fields.js';
+import { APPROVAL_KEY, DESC_KEY, stable, approvalState, approveInvestment, approveDescription, descriptionApprovalState, stateOf, withoutApproval, withoutDescriptionApproval, optionalChoices } from './optional-fields.js';
 import { photoReadiness, photoView, photosForRules, streetOf } from './photos.js';
 
 const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
@@ -58,7 +58,8 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
     validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, blockers: blockersAll, slug: validation.slug, complete, publishable: complete && blockersAll.length === 0 },
     verification: { system: ver.system, notes: ver.staff, open: ver.blocking },
     preview: validation.preview,
-    optional: { approval: { ...approvalState(draft), stateCode: stateOf(content.publicAddress) }, choices: optionalChoices(), crmOccupancy: prop.facts.occupancy ?? null },
+    optional: { approval: { ...approvalState(draft), stateCode: stateOf(content.publicAddress), ...(canPublish && draft.verification?.[APPROVAL_KEY]?.source ? { source: draft.verification[APPROVAL_KEY].source } : {}) },
+      descriptionApproval: { ...descriptionApprovalState(draft), stateCode: stateOf(content.publicAddress), ...(canPublish && draft.verification?.[DESC_KEY]?.source ? { source: draft.verification[DESC_KEY].source } : {}) }, choices: optionalChoices(), crmOccupancy: prop.facts.occupancy ?? null },
     history: (history ?? []).map((h) => ({ version: h.version, action: h.action, fields: h.changed_fields, by: h.changed_by, at: h.changed_at })),
     permissions: { canEdit, canPublish },
   };
@@ -114,6 +115,11 @@ export async function saveDraftFor({ cfg, db, body, actor, fetchImpl, caps }) {
   const patch = { content };
   // Editing the commercial values withdraws their approval. The record is also removed (visibly) so a later edit back to the old values cannot revive it.
   if (draft.verification?.[APPROVAL_KEY] && stable(content.investment) !== stable(draft.content.investment)) patch.verification = withoutApproval(draft.verification);
+  // An approved description is bound to its exact text and to the commercial values it was approved with: a change to either removes the record (visibly).
+  {
+    const after = { ...draft, content, verification: patch.verification ?? draft.verification };
+    if (after.verification?.[DESC_KEY] && descriptionApprovalState(after).state === 'stale') patch.verification = withoutDescriptionApproval(after.verification);
+  }
   let action = 'update';
   if (typeof body.addNote === 'string' && body.addNote.trim()) {
     const text = body.addNote.trim();
@@ -139,14 +145,28 @@ export async function verifyDraftFor({ cfg, db, body, actor, fetchImpl, caps }) 
   if (!prop) throw new HttpError(409, 'property_unavailable');
   const patch = {};
   const at = new Date().toISOString();
+  if (body.description === 'approve' || body.description === 'withdraw') {
+    // Publisher only (the route's capability). Built here from the STORED draft and the session; nothing in the request is trusted except the confirmations and the source text.
+    if (body.description === 'approve') {
+      const rec = approveDescription(draft, { actor, now: new Date(at), state: stateOf(draft.content.publicAddress), confirmed: body.confirmed === true, source: body.source, victorianAcknowledged: body.victorianAcknowledged === true });
+      patch.verification = { ...draft.verification, [DESC_KEY]: { ...rec, note } };
+    } else {
+      if (!draft.verification?.[DESC_KEY]) throw new HttpError(409, 'nothing_to_withdraw');
+      patch.verification = withoutDescriptionApproval(draft.verification);
+    }
+    const savedD = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: 'verify', patch, actor, current: draft });
+    const [ctxD, historyD] = await Promise.all([context(cfg, prop, { fetchImpl }), repo.getHistory(db, savedD.id)]);
+    return view({ draft: savedD, prop, ctx: ctxD, history: historyD, ...caps });
+  }
   if (body.investment === 'approve' || body.investment === 'withdraw') {
     // Publisher only (the route's capability). The record is built here from the STORED values and the session: nothing in the request is trusted.
     if (body.investment === 'approve') {
-      const rec = approveInvestment(draft, { actor, now: new Date(at), state: stateOf(draft.content.publicAddress), provider: body.providerAuthorised === true, confirmed: body.confirmed === true, crmOccupancy: prop.facts.occupancy });
+      const rec = approveInvestment(draft, { actor, now: new Date(at), state: stateOf(draft.content.publicAddress), provider: body.providerAuthorised === true, confirmed: body.confirmed === true, crmOccupancy: prop.facts.occupancy, existingAdvertisement: body.existingAdvertisement === true, source: body.source });
       patch.verification = { ...draft.verification, [APPROVAL_KEY]: { ...rec, note } };
     } else {
       if (!draft.verification?.[APPROVAL_KEY]) throw new HttpError(409, 'nothing_to_withdraw');
       patch.verification = withoutApproval(draft.verification);
+      if (patch.verification[DESC_KEY]) patch.verification = withoutDescriptionApproval(patch.verification);
     }
     const savedI = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: 'verify', patch, actor, current: draft });
     const [ctxI, historyI] = await Promise.all([context(cfg, prop, { fetchImpl }), repo.getHistory(db, savedI.id)]);

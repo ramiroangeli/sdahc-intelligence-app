@@ -759,3 +759,43 @@ test('OPTIONAL: the signed payload route returns only what was frozen, and the V
   assert.ok(!/annualIncome|yieldPct|incomeType|yieldType/.test(text), 'Victoria (this listing) never carries income or yield');
   assert.ok(/fully_leased/.test(text));
 });
+
+// ---- Approved commercial description and the Victorian business authorisation: imported and Sold listings ----
+const FIG_VALUES = { leaseStatus: 'fully_leased', occupancyStatus: 'partially_occupied', annualIncomeAud: 164435, incomeType: 'gross', yieldPct: 11.1, yieldType: 'net', basis: 'actual' };
+const sealV = (values, victorian) => ({ ...values, approval: { valuesHash: core.investmentValuesHash({ ...values, approval: { valuesHash: '0'.repeat(64), ...(victorian ? { victorian: true } : {}) } }), ...(victorian ? { victorian: true } : {}) } });
+const DESC = ['An established Improved Liveability SDA investment in Armstrong Creek.', 'Investment summary:\n- Gross income: $164,435 p.a. (FY26)\n- Net yield: 11.1%'];
+const approvedSnap = (investment, approval) => ({ description: DESC, investment, descriptionApproval: approval });
+
+test('APPROVED DESCRIPTION IMPORT: a published, hash-verified approval and Victorian authorisation are carried over, so an update does not drop live figures', async () => {
+  const inv = sealV(FIG_VALUES, true);
+  const ctx = await importedWith(approvedSnap(inv, { textHash: core.descriptionApprovalHash(DESC, inv), victorian: true }));
+  assert.equal(ctx.first.optional.approval.state, 'approved'); assert.equal(ctx.first.optional.approval.victorian, true);
+  assert.equal(ctx.first.optional.descriptionApproval.state, 'approved'); assert.equal(ctx.first.optional.descriptionApproval.imported, true);
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const r = await publishWith(ctx, 'update');
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const p = await payloadOfJob(ctx, r.json.job.id);
+  assert.equal(p.content.optional.investment.annualIncomeAud, 164435);
+  assert.equal(p.content.optional.investment.approval.victorian, true);
+  assert.deepEqual(p.content.optional.descriptionApproval, { textHash: core.descriptionApprovalHash(DESC, inv), victorian: true });
+  assert.ok(!/@/.test(JSON.stringify(p)), 'nobody is named');
+});
+
+test('APPROVED DESCRIPTION IMPORT: an approval whose hash does not verify is not trusted', async () => {
+  const inv = sealV(FIG_VALUES, true);
+  const ctx = await importedWith(approvedSnap(inv, { textHash: 'a'.repeat(64), victorian: true }));
+  assert.equal(ctx.first.optional.descriptionApproval.state, 'unapproved');
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const r = await publishWith(ctx, 'update');
+  assert.equal(r.status, 409, 'the text carries figures and has no valid approval, so publication is refused');
+});
+
+test('APPROVED DESCRIPTION SOLD: a listing whose description carries figures cannot be marked Sold until the text is edited', async () => {
+  const inv = sealV(FIG_VALUES, true);
+  const ctx = await importedWith(approvedSnap(inv, { textHash: core.descriptionApprovalHash(DESC, inv), victorian: true }));
+  const r = await publishWith(ctx, 'update', { commercialStatus: 'sold', expectedStatus: 'available' });
+  assert.equal(r.status, 409, JSON.stringify(r.json));
+  assert.equal(r.json.error, 'not_ready');
+  assert.match(r.json.reasons[0], /Sold listing carries no commercial figures/);
+  assert.equal((await jobRows(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0);
+});

@@ -11,7 +11,7 @@ Scope: the Listings Manager can hold optional property, SDA, commercial and mark
 ## What is private and what needs approval
 - Property, SDA and agency details are descriptive facts: they publish with the listing.
 - The commercial block is stored privately and is published only while a Publisher's approval matches its exact values. Nothing from the CRM is ever copied into these fields.
-- Victoria: income and yield cannot be approved or published (the website's conservative restriction, not a legal determination). Lease and occupancy can be. The Victorian pricing compliance check is untouched.
+- Victoria: income and yield are published only with a recorded business authorisation (the Publisher confirms SDAHC already authorised these exact figures and records the source). It is bound into the approval hash and is not a legal classification. Without it the restriction applies. Lease and occupancy do not need it. The Victorian pricing compliance check is untouched.
 - A Sold listing never carries the commercial block.
 
 ## How the approval cannot be forged
@@ -28,3 +28,5 @@ No database schema, new function or new secret is involved: `verification` is an
 - Saving, previewing, publishing, updating, status changes and withdrawal behave as before. "Changes since live" now also compares the optional groups.
 - Adopting an already published listing carries its optional groups; if its published approval hash verifies, that approval is carried over (marked as imported) so the next update does not silently remove live figures.
 - Requires website PR 78 (the publish engine accepts the optional groups from the signed request) to be merged and deployed first. Until then, do not publish a listing that has optional details.
+
+An exact commercial description is approved the same way (record `description_disclosure`); see `docs/description-editing.md`.

@@ -254,7 +254,7 @@ async function lsLoadDraft(id) {
 
 const FIELD_HELP = {
   title: 'Optional. Leave blank to use "SDA property, <suburb>". 5 to 90 characters.',
-  description: 'Write it as long as you need, in plain text. A blank line starts a new paragraph. Lines starting with "- " make a bullet list (a line ending in a colon above a list is its label). A short line on its own is a heading. Dollar amounts, income and yield can be drafted and previewed here, but the text cannot be published while they are in it.',
+  description: 'Write it as long as you need, in plain text. A blank line starts a new paragraph. Lines starting with "- " make a bullet list (a line ending in a colon above a list is its label). A short line on its own is a heading. Dollar amounts, income and yield can be drafted and previewed here. To publish them, a Publisher approves this exact text (the panel appears below once the text mentions them).',
   publicAddress: 'Street name, suburb, state, postcode. Never a house or unit number.',
 };
 
@@ -393,6 +393,7 @@ function editForm() {
   return lsEl('div', { class: 'ls-form' },
     field('Title', 'title', lsEl('input', { id: 'ls-f-title', class: 'ls-input', type: 'text', maxlength: '200', value: f.title, disabled: ro, oninput: onEdit('title', (e) => e.target.value) }), FIELD_HELP.title),
     field('Description', 'description', lsEl('textarea', { id: 'ls-f-description', class: 'ls-input ls-desc-input', rows: '16', disabled: ro, oninput: onEdit('description', (e) => e.target.value), text: f.description }), FIELD_HELP.description),
+    descriptionApprovalPanel(),
     field('Address shown on the website', 'publicAddress', lsEl('input', { id: 'ls-f-publicAddress', class: 'ls-input', type: 'text', value: f.publicAddress, disabled: ro, placeholder: 'Street Name, Suburb VIC 3000', oninput: onEdit('publicAddress', (e) => e.target.value) }), FIELD_HELP.publicAddress),
     !ro && sugg && sugg !== f.publicAddress ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.form.publicAddress = sugg; LS.dirty = true; lsPaint(); lsLive(); }, text: 'Use suggested: ' + sugg }) : null,
     lsEl('div', { class: 'ls-row' }, field('Price shown as', 'pricingMode', sel), priceField),
@@ -458,7 +459,7 @@ function investmentBody(ch) {
     lsEl('div', { class: 'ls-row' }, optSelect('investment', 'leaseStatus', 'Lease status', ch.lease), optSelect('investment', 'occupancyStatus', 'Occupancy status', ch.occupancy)),
     lsEl('div', { class: 'ls-help', text: 'Lease and occupancy are separate: a property can be fully leased and only partly occupied.' }),
     optInput('investment', 'tenure', 'Tenure', { max: '120', placeholder: 'e.g. Long term lease to a registered provider' }),
-    vic ? lsEl('div', { class: 'ls-banner ls-banner-bad', text: 'Income and yield are not published on Victorian listings until the advertising obligations are confirmed. They are kept private and cannot be approved. Lease and occupancy can be.' }) : null,
+    vic ? lsEl('div', { class: 'ls-banner', id: 'ls-vic-note', text: 'Victorian listing. Income and yield stay private unless a Publisher records that SDAHC has already authorised these exact figures for public advertising (for example an existing public listing), with its source. That is a business authorisation, not a legal classification. Lease and occupancy do not need it.' }) : null,
     lsEl('div', { class: 'ls-row' }, optInput('investment', 'annualIncomeAud', 'Annual income (AUD)', { numeric: true, max: '9' }), optSelect('investment', 'incomeType', 'Income type', ch.incomeTypes)),
     lsEl('div', { class: 'ls-row' }, optInput('investment', 'yieldPct', 'Yield (%)', { numeric: true, max: '5' }), optSelect('investment', 'yieldType', 'Yield type', ch.incomeTypes)),
     optSelect('investment', 'basis', 'Figures are', ch.bases),
@@ -483,11 +484,12 @@ function approvalPanel(a, copy) {
     const vicFig = a.stateCode === 'VIC' && (inv.annualIncomeAud != null || inv.yieldPct != null || inv.incomeType || inv.yieldType);
     kids.push(lsEl('div', { class: 'ls-note-add' },
       lsEl('div', { class: 'ls-sub', text: 'You are approving exactly these saved values for public advertising: ' + approvalSummary(inv) + '.' }),
-      vicFig ? lsEl('div', { class: 'ls-ferr-line', text: 'Victorian listings cannot publish income or yield. Remove them to approve the rest.' }) : null,
       lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-appr-confirm' }), ' These details are verified and approved for public advertising'),
+      vicFig ? lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-appr-existing' }), ' SDAHC has already authorised these exact figures for public advertising (business authorisation, not a legal classification)') : null,
+      vicFig ? lsEl('input', { id: 'ls-appr-source', class: 'ls-input', type: 'text', maxlength: '300', placeholder: 'Source of the authorisation, e.g. the web address of the existing public listing' }) : null,
       inv.providerArrangement ? lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-appr-provider' }), ' I also authorise the provider arrangement wording') : null,
       lsEl('textarea', { id: 'ls-appr-note', class: 'ls-input', rows: '2', maxlength: '500', placeholder: 'What was checked, and against what (for example the signed lease)?' }),
-      lsEl('div', { class: 'ls-actions' }, lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-appr-go', disabled: vicFig, onclick: () => lsApproval('approve'), text: 'Approve for publication' }), lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.apprOpen = false; lsPaint(); }, text: 'Cancel' }))));
+      lsEl('div', { class: 'ls-actions' }, lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-appr-go', onclick: () => lsApproval('approve'), text: 'Approve for publication' }), lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.apprOpen = false; lsPaint(); }, text: 'Cancel' }))));
   }
   if (a.state === 'approved' || a.state === 'stale') kids.push(lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-appr-withdraw', disabled: unsaved, onclick: () => lsApproval('withdraw'), text: 'Withdraw approval' }));
   return lsEl('div', { class: 'ls-appr', id: 'ls-appr' }, ...kids);
@@ -504,8 +506,50 @@ async function lsApproval(kind) {
     if (!(document.getElementById('ls-appr-confirm') || {}).checked) { LS.flash = { bad: 'Tick the confirmation to approve.' }; lsPaint(); return; }
     if (body.note.length < 5) { LS.flash = { bad: 'Write what was checked (at least 5 characters).' }; lsPaint(); return; }
     body.confirmed = true; body.providerAuthorised = !!(document.getElementById('ls-appr-provider') || {}).checked;
+    if (document.getElementById('ls-appr-existing')) {
+      if (!document.getElementById('ls-appr-existing').checked) { LS.flash = { bad: 'Victorian income and yield: tick that SDAHC has already authorised these figures, and record the source.' }; lsPaint(); return; }
+      body.existingAdvertisement = true; body.source = ((document.getElementById('ls-appr-source') || {}).value || '').trim();
+    }
   }
   try { LS.d = await lsApi('POST', '/api/listings/draft-verify', body); LS.live = LS.d; LS.apprOpen = false; LS.flash = { ok: kind === 'approve' ? 'Investment details approved for publication.' : 'Approval withdrawn. The details are private again.' }; }
+  catch (e) { const r = e.body && e.body.reasons; LS.flash = { bad: r && r.length ? r.join(' ') : 'Could not complete that (' + e.message + ').' }; }
+  lsPaint();
+}
+
+/* ---- Approval of an exact commercial description (Publisher only). The record is built on the server; this only collects the confirmations and the source. ---- */
+function descriptionApprovalPanel() {
+  const o = LS.d.optional; const a = o && o.descriptionApproval; if (!a) return null;
+  if (a.state === 'none') return null;
+  const can = LS.d.permissions.canPublish; const unsaved = LS.dirty; const vic = a.stateCode === 'VIC';
+  const copy = { unapproved: ['Commercial wording: not approved, cannot be published', 'ls-badge-warn'], stale: ['Changed since approval: cannot be published', 'ls-badge-warn'], approved: ['Exact text approved for publication', 'ls-badge-live'] }[a.state];
+  const kids = [lsEl('div', { class: 'ls-appr-h' }, badge(copy[0], copy[1]))];
+  if (a.state !== 'approved') kids.push(lsEl('div', { class: 'ls-sub', text: 'This text mentions income, yield or other commercial wording. You can save and preview it. To publish it, a Publisher must approve this exact text when SDAHC has already authorised it for public advertising.' + (a.state === 'stale' ? ' It was approved before, but the text or the commercial values have changed since.' : '') }));
+  if (a.state === 'approved') kids.push(lsEl('div', { class: 'ls-sub', text: (a.imported ? 'Carried over from the version already on the website' : 'Approved by ' + String(a.by || '').split('@')[0] + ' ' + when(a.at)) + '. Any change to the text or the commercial values withdraws it.' + (can && a.source ? ' Source: ' + a.source : '') }));
+  if (!can) { kids.push(lsEl('div', { class: 'ls-help', text: 'Only a Publisher can approve this text for publication.' })); return lsEl('div', { class: 'ls-appr ls-dappr', id: 'ls-dappr' }, ...kids); }
+  if (unsaved) kids.push(lsEl('div', { class: 'ls-help', text: 'Save the draft first. The approval applies to the saved text.' }));
+  const asking = LS.dapprOpen === true && !unsaved;
+  if (a.state !== 'approved' && !asking) kids.push(lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-dappr-open', disabled: unsaved, onclick: () => { LS.dapprOpen = true; lsPaint(); }, text: 'Review and approve this exact text' }));
+  if (asking) kids.push(lsEl('div', { class: 'ls-note-add' },
+    lsEl('div', { class: 'ls-sub', text: 'You are approving the saved description exactly as written (' + String((LS.d.draft.content.description || '').length) + ' characters)' + (LS.d.draft.content.investment ? ' together with the approved commercial values' : '') + '. Changing a word afterwards withdraws the approval.' }),
+    lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-dappr-confirm' }), ' SDAHC has approved this exact text for public advertising'),
+    vic ? lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-dappr-vic' }), ' This is a Victorian listing: I am recording a business authorisation, not a legal classification of the property') : null,
+    lsEl('input', { id: 'ls-dappr-source', class: 'ls-input', type: 'text', maxlength: '300', placeholder: 'Source of the authorisation, e.g. the web address of the existing public listing' }),
+    lsEl('textarea', { id: 'ls-dappr-note', class: 'ls-input', rows: '2', maxlength: '500', placeholder: 'What was checked, and against what?' }),
+    lsEl('div', { class: 'ls-actions' }, lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-dappr-go', onclick: () => lsDescApproval('approve'), text: 'Approve this exact text' }), lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.dapprOpen = false; lsPaint(); }, text: 'Cancel' }))));
+  if (a.state === 'approved' || a.state === 'stale') kids.push(lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-dappr-withdraw', disabled: unsaved, onclick: () => lsDescApproval('withdraw'), text: 'Withdraw approval' }));
+  return lsEl('div', { class: 'ls-appr ls-dappr', id: 'ls-dappr' }, ...kids);
+}
+async function lsDescApproval(kind) {
+  const val = (id) => ((document.getElementById(id) || {}).value || '').trim();
+  const body = { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, description: kind, note: kind === 'approve' ? val('ls-dappr-note') : 'Approval withdrawn by a Publisher.' };
+  if (kind === 'approve') {
+    if (!(document.getElementById('ls-dappr-confirm') || {}).checked) { LS.flash = { bad: 'Tick the confirmation to approve.' }; lsPaint(); return; }
+    if (document.getElementById('ls-dappr-vic') && !document.getElementById('ls-dappr-vic').checked) { LS.flash = { bad: 'Tick the Victorian acknowledgement to approve.' }; lsPaint(); return; }
+    if (val('ls-dappr-source').length < 8) { LS.flash = { bad: 'Record the source of the authorisation.' }; lsPaint(); return; }
+    if (body.note.length < 5) { LS.flash = { bad: 'Write what was checked (at least 5 characters).' }; lsPaint(); return; }
+    body.confirmed = true; body.source = val('ls-dappr-source'); body.victorianAcknowledged = !!(document.getElementById('ls-dappr-vic') || {}).checked;
+  }
+  try { LS.d = await lsApi('POST', '/api/listings/draft-verify', body); LS.live = LS.d; LS.dapprOpen = false; LS.flash = { ok: kind === 'approve' ? 'This exact text is approved for publication.' : 'Approval withdrawn. The text cannot be published while it carries commercial wording.' }; }
   catch (e) { const r = e.body && e.body.reasons; LS.flash = { bad: r && r.length ? r.join(' ') : 'Could not complete that (' + e.message + ').' }; }
   lsPaint();
 }
@@ -532,6 +576,11 @@ function previewFacts() {
   if (p.landAreaM2) out.push(lsEl('span', { text: 'Land area: ' + p.landAreaM2 + ' m²' }));
   return out;
 }
+function previewDescriptionLine() {
+  const a = LS.d && LS.d.optional && LS.d.optional.descriptionApproval; if (!a || a.state === 'none') return null;
+  const ok = a.state === 'approved';
+  return lsEl('div', { class: 'ls-pv-inv ' + (ok ? 'ok' : 'no'), id: 'ls-pv-desc', text: ok ? 'Description: exact text approved, shown on the website.' : 'Description: commercial wording not approved, so it cannot be published.' });
+}
 function previewInvestmentLine(pv) {
   const st = pv.investment; if (!st || st === 'none') return null;
   const ok = st === 'approved';
@@ -551,7 +600,7 @@ function previewContent() {
     lsEl('h3', { text: pv.title || '(no title yet)' }), lsEl('div', { class: 'ls-pv-addr', text: pv.addressLine || '(no address yet)' }),
     lsEl('div', { class: 'ls-pv-price', text: pv.pricing || '(no pricing mode yet)' }),
     lsEl('div', { class: 'ls-pv-facts' }, pv.design.length ? lsEl('span', { text: 'Design category: ' + pv.design.join(', ') }) : null, pv.buildType ? lsEl('span', { text: 'Building: ' + pv.buildType }) : null, ...previewFacts()),
-    previewInvestmentLine(pv),
+    previewInvestmentLine(pv), previewDescriptionLine(),
     pv.blocks && pv.blocks.length ? lsDescription(pv.blocks) : lsEl('p', { class: 'ls-sub', text: '(no description yet)' }));
   return lsEl('div', null,
     lsEl('div', { class: 'ls-banner' }, 'Private preview. This is how the card and detail page will read, built from your current text. It is not on the website. Photographs shown here are private staged copies.'),
