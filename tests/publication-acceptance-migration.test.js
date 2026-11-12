@@ -27,6 +27,10 @@ test('acceptance migration preserves audit history and rejects incomplete accept
   await assert.rejects(insert({ ...valid, content_hash: 'b'.repeat(64) }), /match/i);
   await assert.rejects(insert(valid, '11111111-1111-4111-8111-111111111111'), /match/i);
   await insert(valid);
+  await assert.rejects(db.query(`update listings.publish_jobs set payload = '{"tampered":true}' where id = $1`, [job]), /immutable/i);
+  await assert.rejects(db.query(`update listings.publish_jobs set payload_hash = $1 where id = $2`, ['b'.repeat(64), job]), /immutable/i);
+  await db.query(`update listings.publish_jobs set status = 'failed', error_code = 'test_failure' where id = $1`, [job]);
+  assert.equal((await db.query(`select status from listings.publish_jobs where id = $1`, [job])).rows[0].status, 'failed');
   await assert.rejects(db.query(`update listings.audit_log set detail = '{}' where action = 'publication_acceptance'`), /append-only/i);
   await assert.rejects(db.exec(migration('listings_0006_publication_acceptance_rollback.sql')), /Cannot roll back/);
   await db.exec('rollback');

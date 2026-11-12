@@ -5,6 +5,8 @@ do $$ begin
     raise exception 'Cannot roll back while publication acceptance records exist';
   end if;
 end $$;
+drop trigger if exists publish_job_acceptance_guard on listings.publish_jobs;
+drop function if exists listings.guard_accepted_publication_job();
 drop trigger if exists audit_acceptance_job on listings.audit_log;
 drop function if exists listings.check_publication_acceptance_job();
 alter table listings.audit_log drop constraint if exists audit_publication_acceptance_details;
