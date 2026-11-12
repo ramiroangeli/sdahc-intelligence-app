@@ -1,0 +1,11 @@
+-- Rollback is refused if acceptance evidence exists; retain records under the applicable retention policy.
+begin;
+do $$ begin
+  if exists (select 1 from listings.audit_log where action = 'publication_acceptance') then
+    raise exception 'Cannot roll back while publication acceptance records exist';
+  end if;
+end $$;
+alter table listings.audit_log drop constraint if exists audit_publication_acceptance_details;
+alter table listings.audit_log drop constraint if exists audit_log_action_check;
+alter table listings.audit_log add constraint audit_log_action_check check (action in ('status_change', 'withdraw', 'reinstate'));
+commit;
