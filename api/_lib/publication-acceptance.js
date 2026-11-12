@@ -10,9 +10,9 @@ const sortKeys = (value) => Array.isArray(value) ? value.map(sortKeys) : value &
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])])) : value;
 
 /** Hash all server-frozen public content, including the photo manifest and the Notion-derived facts the publisher reviewed. */
-export function reviewedContentHash(payload) {
-  if (!payload?.content || !payload?.manifest || !payload?.reviewedSda) throw new HttpError(400, 'review_snapshot_missing');
-  return createHash('sha256').update(JSON.stringify(sortKeys({ content: payload.content, manifest: payload.manifest, reviewedSda: payload.reviewedSda }))).digest('hex');
+export function reviewedContentHash(payload, { publicId, draftVersion } = {}) {
+  if (!publicId || !Number.isInteger(draftVersion) || !payload?.content || !payload?.manifest || !payload?.reviewedSda) throw new HttpError(400, 'review_snapshot_missing');
+  return createHash('sha256').update(JSON.stringify(sortKeys({ publicId, draftVersion, content: payload.content, manifest: payload.manifest, reviewedSda: payload.reviewedSda }))).digest('hex');
 }
 
 /**
@@ -23,7 +23,7 @@ export async function createAcceptedJob(db, { session, job, reviewedHash, declar
   if (declarationAccepted !== true) throw new HttpError(400, 'declaration_required');
   const actor = actorFromSession(session);
   if (!actor.authUserId) throw new HttpError(401, 'authenticated_identity_required');
-  const hash = reviewedContentHash(job.payload);
+  const hash = reviewedContentHash(job.payload, { publicId: job.publicId, draftVersion: job.draftVersion });
   if (typeof reviewedHash !== 'string' || reviewedHash !== hash) throw new HttpError(409, 'preview_changed');
   return db.begin(async (tx) => {
     const rows = await tx.unsafe('select id, version from listings.drafts where public_id = $1 and discarded_at is null for update', [job.publicId]);

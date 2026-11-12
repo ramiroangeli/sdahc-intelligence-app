@@ -7,6 +7,7 @@ import { createAcceptedJob, reviewedContentHash } from '../api/_lib/publication-
 
 const session = { identity: { email: 'publisher@example.com', authUserId: '22222222-2222-4222-8222-222222222222' } };
 const payload = { content: { description: 'Synthetic property' }, manifest: { photos: [{ id: 'abc', alt: 'Room' }] }, reviewedSda: { designCategories: ['IL'], buildingType: 'House' } };
+const hashFor = (job, content = job.payload) => reviewedContentHash(content, { publicId: job.publicId, draftVersion: job.draftVersion });
 const setup = async () => {
   const db = await database();
   await db.raw.exec(readFileSync('supabase/migrations/listings_0006_publication_acceptance.sql', 'utf8'));
@@ -16,10 +17,10 @@ const setup = async () => {
 };
 
 test('only explicit acceptance of the matching server snapshot creates a job and private acceptance together', async () => {
-  const { db, job } = await setup(); const hash = reviewedContentHash(payload);
+  const { db, job } = await setup(); const hash = hashFor(job);
   await assert.rejects(createAcceptedJob(db, { session, job, reviewedHash: hash, declarationAccepted: false }), /declaration_required/);
   await assert.rejects(createAcceptedJob(db, { session, job, reviewedHash: 'a'.repeat(64), declarationAccepted: true }), /preview_changed/);
-  await assert.rejects(createAcceptedJob(db, { session, job: { ...job, draftVersion: 999 }, reviewedHash: hash, declarationAccepted: true }), /draft_changed/);
+  await assert.rejects(createAcceptedJob(db, { session, job: { ...job, draftVersion: 999 }, reviewedHash: hashFor({ ...job, draftVersion: 999 }), declarationAccepted: true }), /draft_changed/);
   assert.equal((await db.unsafe('select count(*)::int n from listings.publish_jobs'))[0].n, 0);
   assert.equal((await db.unsafe('select count(*)::int n from listings.audit_log'))[0].n, 0);
   const created = await createAcceptedJob(db, { session, job, reviewedHash: hash, declarationAccepted: true });
@@ -31,10 +32,13 @@ test('only explicit acceptance of the matching server snapshot creates a job and
 });
 
 test('the server hash changes when text, images or reviewed SDA facts change', () => {
-  const h = reviewedContentHash(payload);
-  assert.notEqual(h, reviewedContentHash({ ...payload, content: { description: 'Changed' } }));
-  assert.notEqual(h, reviewedContentHash({ ...payload, manifest: { photos: [{ id: 'abc', alt: 'Changed' }] } }));
-  assert.notEqual(h, reviewedContentHash({ ...payload, reviewedSda: { designCategories: ['HPS'], buildingType: 'House' } }));
+  const job = { publicId: 'lst_1234567890', draftVersion: 1, payload };
+  const h = hashFor(job);
+  assert.notEqual(h, hashFor(job, { ...payload, content: { description: 'Changed' } }));
+  assert.notEqual(h, hashFor(job, { ...payload, manifest: { photos: [{ id: 'abc', alt: 'Changed' }] } }));
+  assert.notEqual(h, hashFor(job, { ...payload, reviewedSda: { designCategories: ['HPS'], buildingType: 'House' } }));
+  assert.notEqual(h, hashFor({ ...job, publicId: 'lst_abcdefabcd' }));
+  assert.notEqual(h, hashFor({ ...job, draftVersion: 2 }));
 });
 
 test('an audit write failure rolls back the job and no publication is recorded', async () => {
@@ -43,7 +47,7 @@ test('an audit write failure rolls back the job and no publication is recorded',
     if (/insert into listings\.audit_log/i.test(q)) throw new Error('audit unavailable');
     return tx.unsafe(q, p);
   } })) };
-  await assert.rejects(createAcceptedJob(failing, { session, job, reviewedHash: reviewedContentHash(payload), declarationAccepted: true }), /audit unavailable/);
+  await assert.rejects(createAcceptedJob(failing, { session, job, reviewedHash: hashFor(job), declarationAccepted: true }), /audit unavailable/);
   assert.equal((await db.unsafe('select count(*)::int n from listings.publish_jobs'))[0].n, 0);
   assert.equal((await db.unsafe('select count(*)::int n from listings.audit_log'))[0].n, 0);
   await db.raw.close();
