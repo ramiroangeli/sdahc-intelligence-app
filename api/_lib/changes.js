@@ -3,6 +3,7 @@
 // builds a snapshot from an approved draft (descriptions split into paragraphs, the price formatted as dollars, a blank title meaning "default"),
 // so "no changes" here means the website job would find nothing to publish.
 import { canonical } from './photos.js';
+import { publicOptional, stable } from './optional-fields.js';
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const paragraphs = (raw) => String(raw ?? '').split(/\n\s*\n/).map(norm).filter(Boolean);
@@ -27,6 +28,18 @@ export function changesSincePublished(draft, published) {
   if (norm(c.publicAddress) !== norm(published.address)) items.push({ field: 'address', label: 'Address shown on the website' });
   if (norm(c.pricingMode) !== norm(published.pricingMode) || priceText(c.pricingMode, c.displayPrice) !== norm(published.displayPrice)) items.push({ field: 'price', label: 'Price shown' });
   if ((c.featured === true) !== (published.featured === true)) items.push({ field: 'featured', label: 'Shown first on the website' });
+
+  // optional groups: what the draft would publish (the commercial block only while approved) against what is published, group by group
+  {
+    const want = publicOptional(draft, { state: published.state, status: published.status }) ?? {};
+    const have = published.optional ?? {};
+    const strip = (g) => (g ? (({ approval: _a, ...v }) => v)(g) : undefined);
+    const same = (a, b) => stable(a) === stable(b);
+    if (!same(want.property, have.property)) items.push({ field: 'property', label: 'Property details' });
+    if (!same(want.sda, have.sda)) items.push({ field: 'sdaFacts', label: 'SDA details' });
+    if (!same(strip(want.investment), have.investment)) items.push({ field: 'investment', label: 'Investment details' });
+    if (!same(want.marketing, have.marketing)) items.push({ field: 'marketing', label: 'Marketing agency' });
+  }
 
   const now = canonical(draft && draft.photos);
   const was = published.photos || [];

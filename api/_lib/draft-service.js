@@ -7,11 +7,13 @@ import { HttpError, PUBLIC_ID_RE } from './http.js';
 import { changedGroups, getProperty, listAllProperties } from './property.js';
 import { loadCompliance, loadSnapshots } from './site.js';
 import { systemItems, verificationState } from './verification.js';
+import { APPROVAL_KEY, stable, approvalState, approveInvestment, stateOf, withoutApproval, optionalChoices } from './optional-fields.js';
 import { photoReadiness, photoView, photosForRules, streetOf } from './photos.js';
 
 const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
 
-const sameContent = (a, b) => ['title', 'description', 'publicAddress', 'pricingMode', 'displayPrice', 'featured'].every((k) => (a?.[k] ?? '') === (b?.[k] ?? ''));
+const sameContent = (a, b) => ['title', 'description', 'publicAddress', 'pricingMode', 'displayPrice', 'featured'].every((k) => (a?.[k] ?? '') === (b?.[k] ?? ''))
+  && ['property', 'sdaFacts', 'investment', 'marketing'].every((k) => stable(a?.[k]) === stable(b?.[k]));
 export const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
 export const needNotion = (cfg) => { if (!cfg.notion) throw new HttpError(503, 'notion_not_configured'); return cfg.notion; };
 
@@ -29,7 +31,7 @@ export async function context(cfg, prop, { fetchImpl }) {
 function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const content = draft.content;
   const photos = Array.isArray(draft.photos) ? draft.photos : [];
-  const validation = validateDraft(content, { ...ctx, photos: photosForRules(photos) });
+  const validation = validateDraft(content, { ...ctx, photos: photosForRules(photos), draft });
   const pr = photoReadiness(photos, { street: streetOf(draft.label) });
   const ver = verificationState({ occupancy: prop.facts.occupancy, content, verification: draft.verification, notes: draft.notes });
   const systemErrors = ver.system.filter((i) => i.severity === 'error' && i.status === 'open');
@@ -55,6 +57,7 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
     validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, blockers: blockersAll, slug: validation.slug, complete, publishable: complete && blockersAll.length === 0 },
     verification: { system: ver.system, notes: ver.staff, open: ver.blocking },
     preview: validation.preview,
+    optional: { approval: { ...approvalState(draft), stateCode: stateOf(content.publicAddress) }, choices: optionalChoices(), crmOccupancy: prop.facts.occupancy ?? null },
     history: (history ?? []).map((h) => ({ version: h.version, action: h.action, fields: h.changed_fields, by: h.changed_by, at: h.changed_at })),
     permissions: { canEdit, canPublish },
   };
@@ -108,6 +111,8 @@ export async function saveDraftFor({ cfg, db, body, actor, fetchImpl, caps }) {
   if (changed.length && !acknowledge) throw new HttpError(409, 'notion_changed', { changed });
 
   const patch = { content };
+  // Editing the commercial values withdraws their approval. The record is also removed (visibly) so a later edit back to the old values cannot revive it.
+  if (draft.verification?.[APPROVAL_KEY] && stable(content.investment) !== stable(draft.content.investment)) patch.verification = withoutApproval(draft.verification);
   let action = 'update';
   if (typeof body.addNote === 'string' && body.addNote.trim()) {
     const text = body.addNote.trim();
@@ -133,6 +138,19 @@ export async function verifyDraftFor({ cfg, db, body, actor, fetchImpl, caps }) 
   if (!prop) throw new HttpError(409, 'property_unavailable');
   const patch = {};
   const at = new Date().toISOString();
+  if (body.investment === 'approve' || body.investment === 'withdraw') {
+    // Publisher only (the route's capability). The record is built here from the STORED values and the session: nothing in the request is trusted.
+    if (body.investment === 'approve') {
+      const rec = approveInvestment(draft, { actor, now: new Date(at), state: stateOf(draft.content.publicAddress), provider: body.providerAuthorised === true, confirmed: body.confirmed === true, crmOccupancy: prop.facts.occupancy });
+      patch.verification = { ...draft.verification, [APPROVAL_KEY]: { ...rec, note } };
+    } else {
+      if (!draft.verification?.[APPROVAL_KEY]) throw new HttpError(409, 'nothing_to_withdraw');
+      patch.verification = withoutApproval(draft.verification);
+    }
+    const savedI = await repo.updateDraft(db, { publicId: id, expectedVersion: body.expectedVersion, action: 'verify', patch, actor, current: draft });
+    const [ctxI, historyI] = await Promise.all([context(cfg, prop, { fetchImpl }), repo.getHistory(db, savedI.id)]);
+    return view({ draft: savedI, prop, ctx: ctxI, history: historyI, ...caps });
+  }
   // optional: where the accepted position comes from (for example the approved marketing advertisement). A plain https link only.
   const source = typeof body.source === 'string' && body.source.trim() ? body.source.trim() : null;
   if (source && (source.length > 300 || !/^https:\/\/[^\s<>"']+$/.test(source))) throw new HttpError(400, 'invalid_source');

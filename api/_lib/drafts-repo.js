@@ -5,9 +5,10 @@ import { HttpError } from './http.js';
 const COLS = `id, public_id, notion_page_id, label, status, content, notes, verification, base_facts, base_notion_edited_at,
   version, created_by, created_at, updated_by, updated_at, photos, photo_review`;
 
+import { stable } from './optional-fields.js';
 const changedKeys = (a, b) => {
   const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
-  return [...keys].filter((k) => JSON.stringify(a?.[k]) !== JSON.stringify(b?.[k])).sort();
+  return [...keys].filter((k) => stable(a?.[k]) !== stable(b?.[k])).sort();
 };
 
 export async function listDrafts(db) {

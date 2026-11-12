@@ -34,7 +34,7 @@ export async function websiteStatusOf(cfg, id, fetchImpl) {
  */
 export async function changesFor(db, draft, { site, live }) {
   if (!draft || !site || !site.approved || !site.approved.public || site.withdrawn) return null;
-  const result = changesSincePublished(draft, { ...site.approved.public, address: site.approved.address });
+  const result = changesSincePublished(draft, { ...site.approved.public, address: site.approved.address, state: site.approved.state, status: site.approved.commercialStatus });
   const base = live ? (live.draft_id === draft.id ? live.draft_version : null) : await drafts.importedVersion(db, draft.id);
   if (base != null && await drafts.notionRefreshedSince(db, draft.id, base)) { result.items.push({ field: 'crm', label: 'CRM details you accepted' }); result.count += 1; }
   return result;
@@ -81,7 +81,9 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
 
   // idempotent: asking again for the same draft version AND the same frozen content (including a requested status) returns the job already running or already succeeded
   const jobId = randomUUID();
-  const { payload, hash } = buildPayload({ jobId, view, draft, kind, commercialStatus: statusChange?.to });
+  // The commercial block is never sent for a Sold listing, and never when the status cannot be read (fail closed).
+  const effectiveStatus = statusChange?.to ?? (kind === 'publish' ? 'available' : await websiteStatusOf(cfg, id, fetchImpl)); // undefined = unreadable, null = not on the website yet
+  const { payload, hash } = buildPayload({ jobId, view, draft, kind, commercialStatus: statusChange?.to, effectiveStatus: effectiveStatus === undefined ? 'sold' : (effectiveStatus ?? 'available') });
   const latest = await jobs.latestJob(db, id, draft.version, kind);
   const finishedOk = latest?.status === 'succeeded' && (!real || latest.result?.live === true);
   if (latest && latest.payload_hash === hash && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };

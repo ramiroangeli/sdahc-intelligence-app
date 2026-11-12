@@ -4,6 +4,7 @@
 import * as core from './vendor/listings-core.mjs';
 
 import { plainBlocker } from './publication.js';
+import { cleanOptional, optionalIssues, approvalState } from './optional-fields.js';
 
 export const CONTENT_LIMITS = { title: 200, description: 20000, publicAddress: 200, displayPrice: 40 };
 const PRICING_KEYS = { asking_price: 'asking_price', price_guide: 'price_guide', eoi: 'eoi', contact_agent: 'contact_agent' };
@@ -23,7 +24,7 @@ export function cleanContent(input) {
   };
   const mode = c.pricingMode == null ? '' : String(c.pricingMode);
   if (mode && !PRICING_KEYS[mode]) throw Object.assign(new Error('unknown pricing mode'), { status: 400, code: 'invalid_content' });
-  return { title: str('title'), description: str('description'), publicAddress: str('publicAddress'), pricingMode: mode, displayPrice: str('displayPrice'), featured: c.featured === true };
+  return { title: str('title'), description: str('description'), publicAddress: str('publicAddress'), pricingMode: mode, displayPrice: str('displayPrice'), featured: c.featured === true, ...cleanOptional(c) };
 }
 
 const paragraphs = (raw) => raw.split(/\n\s*\n/).map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
@@ -77,6 +78,12 @@ export function validateDraft(content, ctx, now = new Date()) {
     else { try { display = core.normalisePriceDisplay(content.displayPrice); } catch (e) { addField('displayPrice', e.message.replace(/^Web Display Price/, 'The price')); } }
   } else if (content.pricingMode && content.displayPrice) addField('displayPrice', `A price is not shown in "${core.PRICING_MODE_LABEL[content.pricingMode]}" mode. Clear it or change the mode.`);
 
+  // optional groups: invalid descriptive facts block publication (the website would refuse them); invalid commercial values only block their approval
+  for (const i of optionalIssues(content, { state: address?.state })) {
+    if (i.field === 'investment') warnings.push({ code: 'investment_values', field: 'investment', message: i.message });
+    else addField(i.field, i.message);
+  }
+
   const complete = () => Object.keys(fieldErrors).length === 0;
   let slug = null;
   let publicContent = null;
@@ -112,7 +119,7 @@ export function validateDraft(content, ctx, now = new Date()) {
   return {
     fieldErrors, errors, blockers, warnings, slug,
     complete: complete() && errors.length === 0,
-    preview: buildPreview(content, address, display, ctx),
+    preview: { ...buildPreview(content, address, display, ctx), investment: ctx.draft ? approvalState(ctx.draft).state : (content.investment ? 'unapproved' : 'none') },
   };
 }
 
