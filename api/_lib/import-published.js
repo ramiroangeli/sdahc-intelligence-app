@@ -20,7 +20,8 @@ import { MAX_BYTES } from './photo-process.js';
 import { MAX_PHOTOS, canonical, photosForRules } from './photos.js';
 import { photoStore, stagingPath } from './photo-store.js';
 import { getProperty } from './property.js';
-import { loadApprovedSnapshot, loadSnapshots } from './site.js';
+import { loadApprovedSnapshot, loadSnapshots, publishedOptional } from './site.js';
+import { APPROVAL_KEY, stable } from './optional-fields.js';
 
 const PUBLIC_HOST_RE = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\/(lst_[a-f0-9]{10})\/([a-f0-9]{12})-(\d{2,4})\.webp$/;
 const PRICE_MODES = ['asking_price', 'price_guide', 'eoi', 'contact_agent'];
@@ -72,7 +73,14 @@ function draftContent(snap) {
   return cleanContent({
     title: c.title, description: c.description.join('\n\n'), publicAddress: core.formatPublicAddress(c.address),
     pricingMode: c.pricing.mode, displayPrice: c.pricing.display ?? '', featured: snap.featured === true,
+    ...publishedGroups(c),
   });
+}
+
+/** The snapshot's optional groups in the draft's stored shape (the approval record is not part of the values). */
+function publishedGroups(c) {
+  const o = publishedOptional(c);
+  return { ...(o.property ? { property: o.property } : {}), ...(o.sda ? { sdaFacts: o.sda } : {}), ...(o.investment ? { investment: o.investment } : {}), ...(o.marketing ? { marketing: o.marketing } : {}) };
 }
 
 /** The comparison the website job makes (title, description, address, pricing mode, display price, photograph order), plus the slug. */
@@ -89,6 +97,8 @@ function parityProblems(snap, content, photos, validation) {
   const display = Number.isFinite(price) && price !== null ? `$${Math.round(price).toLocaleString('en-AU')}` : undefined;
   if ((c.pricing.display ?? undefined) !== display) out.push('display price');
   if (JSON.stringify(canonical(photos).map((p) => p.id)) !== JSON.stringify(c.photos.map((p) => p.id))) out.push('photograph order');
+  const want = publishedGroups(c);
+  for (const k of ['property', 'sdaFacts', 'investment', 'marketing']) if (stable(content[k]) !== stable(want[k])) out.push(k);
   if (!validation.complete) out.push('the website rules do not accept the content');
   if (validation.slug !== c.slug) out.push('slug');
   return out;
@@ -149,6 +159,13 @@ export async function importPublishedFor({ cfg, db, propertyId, actor, fetchImpl
     if (e instanceof HttpError && e.code === 'draft_exists') return { ...(await openDraft({ cfg, db, id: publicId, fetchImpl, caps })), alreadyImported: true };
     await store.del(written).catch(() => {});
     throw e;
+  }
+  // Published figures stay published: when the snapshot's own approval hash proves its commercial values were approved, that approval is carried over as an
+  // imported record (marked as such). Without it, the next update would silently drop figures that are live today. A snapshot that fails the check imports without it.
+  const inv = snap.content.investment;
+  if (inv && core.investmentApprovalValid(inv)) {
+    const rec = { valuesHash: inv.approval.valuesHash, provider: inv.approval.provider === true, by: 'published version', at: now, imported: true, note: 'Carried over from the version already on the website.' };
+    await repo.updateDraft(db, { publicId, expectedVersion: draft.version, action: 'verify', patch: { verification: { [APPROVAL_KEY]: rec } }, actor, current: draft });
   }
   const view = await openDraft({ cfg, db, id: publicId, fetchImpl, caps });
   return { ...view, imported: { fromVersion: snap.version, slug: snap.content.slug, photos: photos.length, files: plan.length, draftVersion: draft.version } };

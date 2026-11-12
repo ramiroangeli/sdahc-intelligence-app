@@ -54,8 +54,22 @@ export function pickSnapshot(raw) {
       displayPrice: typeof raw.content.pricing?.display === 'string' ? raw.content.pricing.display : null,
       featured: raw.featured === true,
       photos: Array.isArray(raw.content.photos) ? raw.content.photos.filter((p) => p && typeof p.id === 'string').map((p) => ({ id: p.id, alt: typeof p.alt === 'string' ? p.alt : '', kind: p.kind === 'floorplan' ? 'floorplan' : 'photo' })) : [],
+      // the optional public groups as published (already public in the website repository); the approval record is not copied
+      ...(Object.keys(publishedOptional(raw.content)).length ? { optional: publishedOptional(raw.content) } : {}),
     },
   };
+}
+
+const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+/** The optional groups of a published snapshot in the shape the app's draft stores them (sda facts under `sda`, investment without its approval). */
+export function publishedOptional(content) {
+  const out = {};
+  if (obj(content.property)) out.property = content.property;
+  const sda = obj(content.sda);
+  if (sda) { const f = Object.fromEntries(['bedrooms', 'residentPlaces', 'ooa'].filter((k) => sda[k] !== undefined).map((k) => [k, sda[k]])); if (Object.keys(f).length) out.sda = f; }
+  if (obj(content.investment)) { const { approval: _a, ...values } = content.investment; out.investment = values; }
+  if (obj(content.marketing)) out.marketing = content.marketing;
+  return out;
 }
 
 export async function loadSnapshots(cfg, { fetchImpl = fetch, now = Date.now, ttlMs = 60_000 } = {}) {

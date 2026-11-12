@@ -5,6 +5,7 @@
 //   GitHub Actions  the website's own engine, tests, build and privacy scan, then (real modes) one-file pull request, required check, merge,
 //                   deployment and live proof (scripts/listings-publish-job.mjs), reporting back by signed request
 // The job continues on GitHub's servers whether or not anyone keeps a browser open. This module never writes to Notion, GitHub content or Blob.
+import { publicOptional, stateOf } from './optional-fields.js';
 import { createHash } from 'node:crypto';
 import { loadPublishConfig } from './config.js';
 import { GithubAppError, installationToken } from './github-app.js';
@@ -48,16 +49,20 @@ const PRICING_MODES = ['asking_price', 'price_guide', 'eoi', 'contact_agent'];
 /** The frozen PUBLIC content the Publisher approved. Nothing internal. */
 export const COMMERCIAL_STATUSES = ['available', 'under_offer', 'sold'];
 /** `commercialStatus` is set only when the Publisher is CHANGING the status; otherwise the website keeps the status it already shows. */
-export function buildPayload({ jobId, view, draft, kind, commercialStatus }) {
+export function buildPayload({ jobId, view, draft, kind, commercialStatus, effectiveStatus = 'available' }) {
   const c = view.draft.content;
   if (!PRICING_MODES.includes(c.pricingMode)) throw new HttpError(409, 'not_ready', { reasons: ['Choose a pricing mode.'] });
   const needsPrice = c.pricingMode === 'asking_price' || c.pricingMode === 'price_guide';
   const price = needsPrice ? Number(String(c.displayPrice).replace(/[^0-9.]/g, '')) : null;
+  const optional = publicOptional(draft, { state: stateOf(c.publicAddress), status: effectiveStatus });
   const body = {
     version: 1, jobId, mode: kind, publicId: draft.public_id,
     // approval is made in the Listings Manager by a Publisher of the app's own staff list; the website job accepts it because the request is signed
     authority: 'listings_manager',
-    content: { title: c.title, description: c.description, publicAddress: c.publicAddress, pricingMode: c.pricingMode, displayPrice: Number.isFinite(price) ? price : null, featured: c.featured === true, ...(commercialStatus ? { commercialStatus } : {}) },
+    content: { title: c.title, description: c.description, publicAddress: c.publicAddress, pricingMode: c.pricingMode, displayPrice: Number.isFinite(price) ? price : null, featured: c.featured === true, ...(commercialStatus ? { commercialStatus } : {}),
+      // optional groups only when there is something to say, so a listing without them produces exactly the payload (and hash) it always did.
+      // Built from the STORED draft (never the request); the commercial block is included only while a Publisher's approval matches its exact values.
+      ...(optional ? { optional } : {}) },
     manifest: {
       version: 1,
       // privacyReviewed is true because the Publisher approves the listing with its photographs and the automatic checks passed (preflight);
