@@ -252,7 +252,7 @@ async function lsLoadDraft(id) {
 
 const FIELD_HELP = {
   title: 'Optional. Leave blank to use "SDA property, <suburb>". 5 to 90 characters.',
-  description: 'Text published. Separate paragraphs with a blank line.',
+  description: 'Write it as long as you need, in plain text. A blank line starts a new paragraph. Lines starting with "- " make a bullet list (a line ending in a colon above a list is its label). A short line on its own is a heading. Dollar amounts, income and yield can be drafted and previewed here, but the text cannot be published while they are in it.',
   publicAddress: 'Street name, suburb, state, postcode. Never a house or unit number.',
 };
 
@@ -390,7 +390,7 @@ function editForm() {
   const sugg = LS.d.property.suggestedPublicAddress;
   return lsEl('div', { class: 'ls-form' },
     field('Title', 'title', lsEl('input', { id: 'ls-f-title', class: 'ls-input', type: 'text', maxlength: '200', value: f.title, disabled: ro, oninput: onEdit('title', (e) => e.target.value) }), FIELD_HELP.title),
-    field('Description', 'description', lsEl('textarea', { id: 'ls-f-description', class: 'ls-input', rows: '11', disabled: ro, oninput: onEdit('description', (e) => e.target.value), text: f.description }), FIELD_HELP.description),
+    field('Description', 'description', lsEl('textarea', { id: 'ls-f-description', class: 'ls-input ls-desc-input', rows: '16', disabled: ro, oninput: onEdit('description', (e) => e.target.value), text: f.description }), FIELD_HELP.description),
     field('Address shown on the website', 'publicAddress', lsEl('input', { id: 'ls-f-publicAddress', class: 'ls-input', type: 'text', value: f.publicAddress, disabled: ro, placeholder: 'Street Name, Suburb VIC 3000', oninput: onEdit('publicAddress', (e) => e.target.value) }), FIELD_HELP.publicAddress),
     !ro && sugg && sugg !== f.publicAddress ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.form.publicAddress = sugg; LS.dirty = true; lsPaint(); lsLive(); }, text: 'Use suggested: ' + sugg }) : null,
     lsEl('div', { class: 'ls-row' }, field('Price shown as', 'pricingMode', sel), priceField),
@@ -508,6 +508,17 @@ async function lsApproval(kind) {
   lsPaint();
 }
 
+/** The description as the listing page shows it: the first paragraph, then a native details element that opens the rest. Everything is written with textContent. */
+function lsDescription(blocks) {
+  const node = (b) => b.type === 'ul' ? lsEl('ul', { class: 'ls-dsc-list' }, b.items.map((t) => lsEl('li', { text: t })))
+    : b.type === 'h' ? lsEl('h4', { class: 'ls-dsc-h', text: b.text }) : b.type === 'label' ? lsEl('p', { class: 'ls-dsc-label', text: b.text }) : lsEl('p', { text: b.text });
+  const i = blocks.findIndex((b) => b.type === 'p'); const cut = i === -1 ? 1 : i + 1;
+  const intro = blocks.slice(0, cut).map(node); const rest = blocks.slice(cut).map(node);
+  return lsEl('div', { class: 'ls-dsc', id: 'ls-dsc' }, ...intro, rest.length ? lsEl('details', { class: 'ls-dsc-more', id: 'ls-dsc-more' },
+    lsEl('summary', { class: 'ls-dsc-toggle', id: 'ls-dsc-toggle' }, lsEl('span', { class: 'ls-dsc-open', text: 'Read full description' }), lsEl('span', { class: 'ls-dsc-close', text: 'Show less' })),
+    lsEl('div', { class: 'ls-dsc-rest' }, ...rest)) : null);
+}
+
 function previewFacts() {
   const c = LS.form || {}; const p = c.property || {}; const sd = c.sdaFacts || {}; const out = [];
   if (sd.bedrooms) out.push(lsEl('span', { text: 'SDA bedrooms: ' + sd.bedrooms }));
@@ -539,7 +550,7 @@ function previewContent() {
     lsEl('div', { class: 'ls-pv-price', text: pv.pricing || '(no pricing mode yet)' }),
     lsEl('div', { class: 'ls-pv-facts' }, pv.design.length ? lsEl('span', { text: 'Design category: ' + pv.design.join(', ') }) : null, pv.buildType ? lsEl('span', { text: 'Building: ' + pv.buildType }) : null, ...previewFacts()),
     previewInvestmentLine(pv),
-    ...(pv.description.length ? pv.description.map((t) => lsEl('p', { text: t })) : [lsEl('p', { class: 'ls-sub', text: '(no description yet)' })]));
+    pv.blocks && pv.blocks.length ? lsDescription(pv.blocks) : lsEl('p', { class: 'ls-sub', text: '(no description yet)' }));
   return lsEl('div', null,
     lsEl('div', { class: 'ls-banner' }, 'Private preview. This is how the card and detail page will read, built from your current text. It is not on the website. Photographs shown here are private staged copies.'),
     lsEl('div', { class: 'ls-pv-grid' }, lsEl('div', null, lsEl('h4', { class: 'ls-pv-h', text: 'Listing card' }), card), lsEl('div', null, lsEl('h4', { class: 'ls-pv-h', text: 'Detail page' }), detail)));

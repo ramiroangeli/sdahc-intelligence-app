@@ -25,7 +25,7 @@ import { APPROVAL_KEY, stable } from './optional-fields.js';
 
 const PUBLIC_HOST_RE = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\/(lst_[a-f0-9]{10})\/([a-f0-9]{12})-(\d{2,4})\.webp$/;
 const PRICE_MODES = ['asking_price', 'price_guide', 'eoi', 'contact_agent'];
-const paragraphs = (raw) => String(raw).split(/\n\s*\n/).map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+const paragraphs = (raw) => core.descriptionBlocks(raw);
 const refuse = (code, reason, extra = {}) => new HttpError(409, code, { reasons: [reason], ...extra });
 
 /** Checks the snapshot is trustworthy and has the shape this import understands. Returns problems (names only). */

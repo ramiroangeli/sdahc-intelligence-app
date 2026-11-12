@@ -44,13 +44,14 @@ test('the CRM occupancy discrepancy is flagged for verification and blocks publi
   assert.equal(s.json.validation.publishable, false);
 });
 
-test('wording that says fully leased contradicts the CRM and is an error', async () => {
+test('wording that says fully leased contradicts the CRM: it can be saved and previewed, and blocks publication with a specific message', async () => {
   const { w, db } = await setup();
   await create(w, db);
   const s = await save(w, db, ALI, ID_7B, 1, { ...GOOD, description: 'A fully leased SDA house in Exampleton with three tenants and onsite overnight assistance.' });
   assert.equal(s.status, 200);
-  assert.ok(s.json.validation.errors.some((e) => e.code === 'public_text_claims_full'));
-  assert.equal(s.json.validation.complete, false);
+  assert.ok(s.json.validation.blockers.some((e) => e.code === 'public_text_claims_full' && /CRM records 2 of 3/.test(e.message)));
+  assert.equal(s.json.validation.errors.some((e) => e.code === 'public_text_claims_full'), false, 'it is no longer an editing error');
+  assert.equal(s.json.validation.publishable, false);
 });
 
 test('Victorian compliance and missing photographs are publication blockers for this listing', async () => {
@@ -125,7 +126,8 @@ test('house numbers, amounts and contradictions typed into public fields are rej
   await bad({ publicAddress: '7B Wattle Street, Exampleton VIC 3999' }, (v) => assert.ok(v.fieldErrors.publicAddress));
   await bad({ publicAddress: 'Wattle Street, Exampleton NSW 3999' }, (v) => assert.match(v.fieldErrors.publicAddress.join(' '), /differs from the CRM state/));
   await bad({ description: 'The property is at 7B Wattle Street in Exampleton with three places.' }, (v) => assert.ok(v.errors.some((e) => e.code === 'private_address')));
-  await bad({ description: 'Strong net income of $98,765 per year from three participant places in Exampleton.' }, (v) => assert.ok(v.errors.some((e) => e.code === 'private_financial')));
+  // financial wording is a PUBLICATION warning (see description.test.js), not an editing error
+  await bad({ description: 'Strong net income of $98,765 per year from three participant places in Exampleton.' }, (v) => { assert.ok(v.blockers.some((b) => b.code === 'description_financial')); assert.equal(v.publishable, false); });
   await bad({ description: 'Contact the owner on 0412 345 678 about this Exampleton SDA house for more.' }, (v) => assert.ok(v.errors.some((e) => e.code === 'personal_data')));
   await bad({ title: 'abc' }, (v) => assert.ok(v.fieldErrors.title));
 });

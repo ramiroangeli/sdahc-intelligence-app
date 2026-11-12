@@ -57,8 +57,8 @@ test('cleaning: optional groups are normalised, unknown keys and any client appr
   assert.equal(JSON.stringify(c).includes('someone@example.com'), false);
   assert.equal(JSON.stringify(c).includes('f'.repeat(64)), false);
   assert.equal(cleanContent({ ...plain, property: {}, investment: {} }).property, undefined);
-  assert.throws(() => cleanContent({ ...plain, investment: { leaseStatus: 'nope' } }), /not a valid choice/);
-  assert.throws(() => cleanContent({ ...plain, property: { bathrooms: 'two' } }), /must be a number/);
+  assert.throws(() => cleanContent({ ...plain, investment: { leaseStatus: 'nope' } }), (e) => e.status === 400 && e.code === 'invalid_content' && /not a valid choice/.test(e.extra.reasons[0]));
+  assert.throws(() => cleanContent({ ...plain, property: { bathrooms: 'two' } }), (e) => e.status === 400 && /must be a number/.test(e.extra.reasons[0]));
 });
 
 test('values saved by an Editor are stored private: nothing is approved and nothing leaves in the payload', async () => {

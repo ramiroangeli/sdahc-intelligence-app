@@ -6,7 +6,9 @@ import { canonical } from './photos.js';
 import { publicOptional, stable } from './optional-fields.js';
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-const paragraphs = (raw) => String(raw ?? '').split(/\n\s*\n/).map(norm).filter(Boolean);
+// blocks keep their line breaks (bullet lists), exactly as the website reads them
+const normBlock = (b) => String(b ?? '').split('\n').map(norm).filter(Boolean).join('\n');
+const paragraphs = (raw) => String(raw ?? '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).map(normBlock).filter(Boolean);
 /** The price text the website would show for this draft, or '' when the pricing mode shows no amount. */
 const priceText = (mode, display) => {
   if (mode !== 'asking_price' && mode !== 'price_guide') return '';
@@ -24,7 +26,7 @@ export function changesSincePublished(draft, published) {
   const items = [];
   // a blank title means "use the default": the website derives it, so a blank draft title is not a difference
   if (norm(c.title) && norm(c.title) !== norm(published.title)) items.push({ field: 'title', label: 'Title' });
-  if (JSON.stringify(paragraphs(c.description)) !== JSON.stringify((published.description || []).map(norm))) items.push({ field: 'description', label: 'Description' });
+  if (JSON.stringify(paragraphs(c.description)) !== JSON.stringify((published.description || []).map(normBlock))) items.push({ field: 'description', label: 'Description' });
   if (norm(c.publicAddress) !== norm(published.address)) items.push({ field: 'address', label: 'Address shown on the website' });
   if (norm(c.pricingMode) !== norm(published.pricingMode) || priceText(c.pricingMode, c.displayPrice) !== norm(published.displayPrice)) items.push({ field: 'price', label: 'Price shown' });
   if ((c.featured === true) !== (published.featured === true)) items.push({ field: 'featured', label: 'Shown first on the website' });

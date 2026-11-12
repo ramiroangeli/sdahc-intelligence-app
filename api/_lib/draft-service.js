@@ -35,14 +35,15 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const pr = photoReadiness(photos, { street: streetOf(draft.label) });
   const ver = verificationState({ occupancy: prop.facts.occupancy, content, verification: draft.verification, notes: draft.notes });
   const systemErrors = ver.system.filter((i) => i.severity === 'error' && i.status === 'open');
+  // text that claims more than the CRM supports is a PUBLICATION blocker, not an editing error: it can be saved and previewed, and the message says what to change
+  const claimBlockers = systemErrors.map((i) => ({ code: i.code, message: i.text }));
   const blockers = [
-    ...validation.blockers,
+    ...validation.blockers, ...claimBlockers,
     ...ver.open.filter((i) => i.severity === 'verify').map((i) => ({ code: i.code.startsWith('note:') ? 'verification_note' : 'verification', message: i.text })),
   ];
-  const errorsAll = [...validation.errors, ...systemErrors.map((i) => ({ code: i.code, field: 'description', message: i.text }))];
+  const errorsAll = [...validation.errors];
   const fieldErrors = { ...validation.fieldErrors };
-  for (const e of systemErrors) (fieldErrors.description ??= []).push(e.text);
-  const complete = validation.complete && systemErrors.length === 0;
+  const complete = validation.complete;
   // photograph rules: the automatic checks (description privacy, size, type, no metadata). Approving the listing approves its photographs.
   const photoBlockers = [
     ...pr.gallery.map((g) => ({ code: 'photos_required', message: g.message })),

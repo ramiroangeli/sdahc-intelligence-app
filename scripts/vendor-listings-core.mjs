@@ -25,7 +25,8 @@ export { publicContentSchema, optionalGroupsSchema, propertySchema, investmentSc
 export { investmentValuesHash, investmentApprovalValid, hasFinancialFigures, VICTORIAN_FINANCIAL_RESTRICTION } from '${src}/investment';
 export { AGENCIES, DEFAULT_AGENCY_KEY, isApprovedAgency } from '${src}/agencies';
 export { validateForPublication, contentHash } from '${src}/versioning';
-export { checkPublicSafety } from '${src}/guards';
+export { checkPublicSafety, findFinancialMentions } from '${src}/guards';
+export { descriptionBlocks, parseDescription, splitIntro, firstParagraph } from '${src}/description';
 `);
 const zod = createRequire(import.meta.url).resolve('zod');
 await build({

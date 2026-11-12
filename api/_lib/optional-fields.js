@@ -20,7 +20,7 @@ import { HttpError } from './http.js';
 export const APPROVAL_KEY = 'investment_disclosure';
 const PLACEHOLDER_HASH = '0'.repeat(64);
 
-const bad = (message) => Object.assign(new Error(message), { status: 400, code: 'invalid_content' });
+const bad = (message) => new HttpError(400, 'invalid_content', { reasons: [message] });
 const num = (v, k, { int = false } = {}) => {
   if (v == null || v === '') return undefined;
   const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, '').trim());
