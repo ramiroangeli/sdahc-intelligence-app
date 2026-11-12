@@ -290,7 +290,7 @@ test('the published version: its optional groups are read back, and "changes sin
   assert.equal(none.items.some((i) => ['property', 'investment', 'sdaFacts', 'marketing'].includes(i.field)), false);
 });
 
-test('infrastructure: still twelve listing functions and no new migration', () => {
+test('infrastructure: twelve listing functions and the expected migrations', () => {
   assert.equal(readdirSync('api/listings').filter((f) => f.endsWith('.js')).length, 12);
-  assert.deepEqual(readdirSync('supabase/migrations').filter((f) => !f.endsWith('_rollback.sql')).sort(), ['listings_0001_drafts.sql', 'listings_0002_photos.sql', 'listings_0003_photo_review.sql', 'listings_0004_publish_jobs.sql', 'listings_0005_audit_log_and_reinstate.sql']);
+  assert.deepEqual(readdirSync('supabase/migrations').filter((f) => !f.endsWith('_rollback.sql')).sort(), ['listings_0001_drafts.sql', 'listings_0002_photos.sql', 'listings_0003_photo_review.sql', 'listings_0004_publish_jobs.sql', 'listings_0005_audit_log_and_reinstate.sql', 'listings_0006_publication_acceptance.sql']);
 });
