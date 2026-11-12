@@ -278,3 +278,17 @@ textarea.ls-input { resize: vertical; line-height: 1.5; }
 .ls-pv-inv.ok { background: #DEF5E6; color: #146C43; }
 .ls-pv-inv.no { background: #FFF9EA; color: #6B4E00; }
 .ls-opt-body > .ls-help { margin: 0 0 12px; }
+
+/* description: long-form editor and the preview of the expandable description */
+.ls-desc-input { min-height: 280px; line-height: 1.55; resize: vertical; }
+.ls-dsc p { margin: 0 0 12px; }
+.ls-dsc-h { font-family: var(--font-display); font-size: 15px; margin: 18px 0 8px; color: var(--ink); }
+.ls-dsc-label { font-weight: 700; margin: 14px 0 6px !important; }
+.ls-dsc-list { margin: 0 0 14px; padding-left: 20px; }
+.ls-dsc-list li { margin: 0 0 4px; }
+.ls-dsc-toggle { display: inline-block; cursor: pointer; list-style: none; font-weight: 700; font-size: 13px; color: var(--blue); text-decoration: underline; text-underline-offset: 3px; padding: 4px 0; margin: 0 0 6px; }
+.ls-dsc-toggle::-webkit-details-marker { display: none; }
+.ls-dsc-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 2px; }
+.ls-dsc-close { display: none; }
+.ls-dsc-more[open] .ls-dsc-open { display: none; }
+.ls-dsc-more[open] .ls-dsc-close { display: inline; }

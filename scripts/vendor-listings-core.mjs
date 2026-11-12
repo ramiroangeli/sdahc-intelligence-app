@@ -21,11 +21,12 @@ const entry = join(mkdtempSync(join(tmpdir(), 'lc-')), 'entry.ts');
 writeFileSync(entry, `
 export { parsePublicAddress, makeSlug, formatPublicAddress, AddressError } from '${src}/address';
 export { normalisePriceDisplay, pricingLine } from '${src}/pricing';
-export { publicContentSchema, optionalGroupsSchema, propertySchema, investmentSchema, marketingSchema, DESIGN_LABEL, PRICING_MODE_LABEL, STATES, PRICING_MODES, DESIGN_CATEGORIES, LEASE_STATUSES, OCCUPANCY_STATUSES, INCOME_TYPES, FIGURE_BASES, LEASE_LABEL, OCCUPANCY_LABEL } from '${src}/schema';
-export { investmentValuesHash, investmentApprovalValid, hasFinancialFigures, VICTORIAN_FINANCIAL_RESTRICTION } from '${src}/investment';
+export { publicContentSchema, optionalGroupsSchema, descriptionApprovalSchema, propertySchema, investmentSchema, marketingSchema, DESIGN_LABEL, PRICING_MODE_LABEL, STATES, PRICING_MODES, DESIGN_CATEGORIES, LEASE_STATUSES, OCCUPANCY_STATUSES, INCOME_TYPES, FIGURE_BASES, LEASE_LABEL, OCCUPANCY_LABEL } from '${src}/schema';
+export { investmentValuesHash, investmentApprovalValid, victorianAuthorised, descriptionApprovalHash, hasFinancialFigures, VICTORIAN_FINANCIAL_RESTRICTION } from '${src}/investment';
 export { AGENCIES, DEFAULT_AGENCY_KEY, isApprovedAgency } from '${src}/agencies';
 export { validateForPublication, contentHash } from '${src}/versioning';
-export { checkPublicSafety } from '${src}/guards';
+export { checkPublicSafety, findFinancialMentions } from '${src}/guards';
+export { descriptionBlocks, parseDescription, splitIntro, firstParagraph } from '${src}/description';
 `);
 const zod = createRequire(import.meta.url).resolve('zod');
 await build({

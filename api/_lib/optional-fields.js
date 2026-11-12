@@ -18,9 +18,10 @@ import * as core from './vendor/listings-core.mjs';
 import { HttpError } from './http.js';
 
 export const APPROVAL_KEY = 'investment_disclosure';
+export const DESC_KEY = 'description_disclosure';
 const PLACEHOLDER_HASH = '0'.repeat(64);
 
-const bad = (message) => Object.assign(new Error(message), { status: 400, code: 'invalid_content' });
+const bad = (message) => new HttpError(400, 'invalid_content', { reasons: [message] });
 const num = (v, k, { int = false } = {}) => {
   if (v == null || v === '') return undefined;
   const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, '').trim());
@@ -71,7 +72,7 @@ export function cleanOptional(input) {
 }
 
 /** The hash of the commercial values (the website's own function), so the approval means the same thing on both sides. */
-export const hashOfValues = (inv) => core.investmentValuesHash({ ...inv, approval: { valuesHash: PLACEHOLDER_HASH } });
+export const hashOfValues = (inv, victorian = false) => core.investmentValuesHash({ ...inv, approval: { valuesHash: PLACEHOLDER_HASH, ...(victorian ? { victorian: true } : {}) } });
 
 /** JSON with sorted keys: the database (jsonb) does not keep key order, so equal values must compare equal whatever order they came back in. */
 export const stable = (v) => JSON.stringify(v ?? null, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
@@ -83,7 +84,7 @@ export const stateOf = (publicAddress) => { try { return core.parsePublicAddress
  * Checks the typed values with the website's own strict schema (a placeholder stands in for the approval). Returns plain messages by field.
  * These never block saving or publishing the rest of the listing: unapproved values are simply not published. They block APPROVAL.
  */
-export function optionalIssues(content, { state } = {}) {
+export function optionalIssues(content, { state, allowVictorianFigures = false } = {}) {
   const issues = [];
   const add = (field, message) => issues.push({ field, message });
   const inv = content.investment;
@@ -96,7 +97,7 @@ export function optionalIssues(content, { state } = {}) {
   const r = core.optionalGroupsSchema.safeParse(groups);
   if (!r.success) for (const e of r.error.issues) add(e.path[0] === 'sda' ? 'sdaFacts' : String(e.path[0] ?? 'investment'), e.message);
   if (content.marketing && !core.isApprovedAgency(content.marketing.agency)) add('marketing', 'Choose an approved marketing agency.');
-  if (inv && state === 'VIC' && hasFigures(inv)) add('investment', core.VICTORIAN_FINANCIAL_RESTRICTION);
+  if (inv && state === 'VIC' && hasFigures(inv) && !allowVictorianFigures) add('investment', core.VICTORIAN_FINANCIAL_RESTRICTION);
   return issues;
 }
 
@@ -112,9 +113,15 @@ export function approvalState(draft) {
   if (!inv) return { state: 'none' };
   const rec = draft.verification?.[APPROVAL_KEY];
   if (!rec || typeof rec.valuesHash !== 'string') return { state: 'unapproved' };
-  if (rec.valuesHash !== hashOfValues(inv)) return { state: 'stale', by: rec.by ?? null, at: rec.at ?? null };
+  if (rec.valuesHash !== hashOfValues(inv, rec.victorian === true)) return { state: 'stale', by: rec.by ?? null, at: rec.at ?? null };
   if (inv.providerArrangement && rec.provider !== true) return { state: 'unapproved' };
-  return { state: 'approved', by: rec.by ?? null, at: rec.at ?? null, provider: rec.provider === true, imported: rec.imported === true };
+  return { state: 'approved', by: rec.by ?? null, at: rec.at ?? null, provider: rec.provider === true, victorian: rec.victorian === true, imported: rec.imported === true };
+}
+
+/** Will the approved commercial block travel with the request? Approved, not Sold, and (Victoria) not income or yield without the recorded authorisation. */
+export function investmentTravels(draft, state, status = 'available') {
+  const a = approvalState(draft);
+  return a.state === 'approved' && status !== 'sold' && !(state === 'VIC' && hasFigures(draft.content?.investment) && a.victorian !== true);
 }
 
 /**
@@ -128,9 +135,14 @@ export function publicOptional(draft, { state, status } = {}) {
   if (c.sdaFacts) out.sda = c.sdaFacts;
   if (c.marketing) out.marketing = c.marketing;
   const a = approvalState(draft);
-  if (a.state === 'approved' && status !== 'sold' && !(state === 'VIC' && hasFigures(c.investment))) {
-    out.investment = { ...c.investment, approval: { valuesHash: draft.verification[APPROVAL_KEY].valuesHash, ...(c.investment.providerArrangement ? { provider: true } : {}) } };
+  const investmentShown = investmentTravels(draft, state, status);
+  if (investmentShown) {
+    out.investment = { ...c.investment, approval: { valuesHash: draft.verification[APPROVAL_KEY].valuesHash, ...(c.investment.providerArrangement ? { provider: true } : {}), ...(a.victorian ? { victorian: true } : {}) } };
   }
+  // The description approval travels only while it matches the text AND the commercial values it was approved with (the same values the request carries).
+  // A Sold listing does not carry it: the text must be edited before it can be published as Sold.
+  const d = descriptionApprovalState(draft, { investmentShown });
+  if (d.state === 'approved' && status !== 'sold' && !(state === 'VIC' && d.victorian !== true)) out.descriptionApproval = { textHash: draft.verification[DESC_KEY].textHash, ...(d.victorian ? { victorian: true } : {}) };
   return Object.keys(out).length ? out : null;
 }
 
@@ -138,22 +150,75 @@ export function publicOptional(draft, { state, status } = {}) {
  * The approval record for the stored values, or an error saying why not. `actor` comes from the session and `now` from the server clock.
  * Nothing in the request is consulted except the Publisher's explicit confirmations.
  */
-export function approveInvestment(draft, { actor, now = new Date(), state, provider = false, confirmed = false, crmOccupancy = null }) {
+export function approveInvestment(draft, { actor, now = new Date(), state, provider = false, confirmed = false, crmOccupancy = null, existingAdvertisement = false, source = '' }) {
   const inv = draft.content?.investment;
   if (!inv) throw new HttpError(409, 'nothing_to_approve', { reasons: ['There are no commercial details to approve.'] });
   if (confirmed !== true) throw new HttpError(400, 'confirmation_required', { reasons: ['Confirm that these details are verified and approved for public advertising.'] });
-  const problems = optionalIssues(draft.content, { state }).filter((i) => i.field === 'investment');
-  if (state === 'VIC' && hasFigures(inv)) throw new HttpError(409, 'victorian_restriction', { reasons: [core.VICTORIAN_FINANCIAL_RESTRICTION + ' Remove the income and yield to approve the lease and occupancy details.'] });
+  const problems = optionalIssues(draft.content, { state, allowVictorianFigures: existingAdvertisement === true }).filter((i) => i.field === 'investment');
+  // Victoria: income and yield need a recorded business authorisation (an existing public advertisement or another SDAHC approval), with its source.
+  // It is not a legal classification. Without it the original restriction applies.
+  const victorian = state === 'VIC' && hasFigures(inv);
+  if (victorian && existingAdvertisement !== true) throw new HttpError(409, 'victorian_restriction', { reasons: [core.VICTORIAN_FINANCIAL_RESTRICTION + ' To publish them, a Publisher can record that SDAHC has already authorised these exact figures for public advertising (for example an existing public listing), with its source. Otherwise remove the income and yield to approve the lease and occupancy details.'] });
+  const src = cleanSource(source);
+  if (victorian && !src) throw new HttpError(400, 'source_required', { reasons: ['Record the source of the authorisation (for example the web address of the existing public advertisement).'] });
   if (problems.length) throw new HttpError(409, 'invalid_values', { reasons: problems.map((p) => p.message) });
   if (inv.providerArrangement && provider !== true) throw new HttpError(409, 'provider_authorisation_needed', { reasons: ['Provider arrangement wording needs its own explicit authorisation.'] });
   if (inv.occupancyStatus === 'fully_occupied' && crmOccupancy && crmOccupancy.occupied < crmOccupancy.places) {
     throw new HttpError(409, 'occupancy_conflict', { reasons: [`The CRM records ${crmOccupancy.occupied} of ${crmOccupancy.places} places physically occupied. Correct the CRM or the occupancy status before approving.`] });
   }
-  return { valuesHash: hashOfValues(inv), provider: !!inv.providerArrangement && provider === true, by: actor.email, at: now.toISOString() };
+  return { valuesHash: hashOfValues(inv, victorian), provider: !!inv.providerArrangement && provider === true, ...(victorian ? { victorian: true, source: src } : {}), by: actor.email, at: now.toISOString() };
+}
+
+/** A private source reference: a web address or a short description of where the authorisation came from. Control characters removed, length limited. */
+export function cleanSource(v) {
+  if (typeof v !== 'string') return '';
+  const t = v.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.length >= 8 && t.length <= 300 ? t : '';
+}
+
+/** Does the text carry commercial wording that needs a Publisher's approval to be published? */
+export const descriptionNeedsApproval = (content) => core.findFinancialMentions(`${content?.description ?? ''}`).length > 0;
+
+/**
+ * The hash a description approval is bound to: every block of the description, as written, and the structured commercial values THE REQUEST WILL CARRY
+ * (only an approved block is carried). Same function and same inputs as the website engine.
+ */
+export const descriptionHash = (content, investmentShown) => core.descriptionApprovalHash(core.descriptionBlocks(content?.description ?? ''), investmentShown ? content.investment : undefined);
+
+/**
+ * none: the text carries no commercial wording. unapproved: it does and no record exists. stale: a record exists but the text or the commercial values it
+ * was approved with changed. approved: the record matches exactly.
+ */
+export function descriptionApprovalState(draft, { investmentShown } = {}) {
+  const content = draft.content ?? {};
+  const needs = descriptionNeedsApproval(content);
+  const rec = draft.verification?.[DESC_KEY];
+  const bound = investmentShown ?? investmentTravels(draft, stateOf(content.publicAddress));
+  if (!rec || typeof rec.textHash !== 'string') return { state: needs ? 'unapproved' : 'none', needs };
+  if (rec.textHash !== descriptionHash(content, bound)) return { state: 'stale', needs, by: rec.by ?? null, at: rec.at ?? null };
+  return { state: 'approved', needs, by: rec.by ?? null, at: rec.at ?? null, victorian: rec.victorian === true, imported: rec.imported === true };
+}
+
+/**
+ * The description approval record, built from the STORED draft and the session. A Publisher confirms that SDAHC has approved this content for public
+ * advertising and records the source privately. On a Victorian listing the record also carries the business authorisation (and the Publisher acknowledges
+ * that it is not a legal classification).
+ */
+export function approveDescription(draft, { actor, now = new Date(), state, confirmed = false, source = '', victorianAcknowledged = false }) {
+  const content = draft.content ?? {};
+  if (!descriptionNeedsApproval(content)) throw new HttpError(409, 'nothing_to_approve', { reasons: ['This description has no income, yield or other commercial wording that needs approval.'] });
+  if (confirmed !== true) throw new HttpError(400, 'confirmation_required', { reasons: ['Confirm that this exact text is approved for public advertising by SDAHC.'] });
+  const src = cleanSource(source);
+  if (!src) throw new HttpError(400, 'source_required', { reasons: ['Record the source of the authorisation (for example the web address of the existing public advertisement).'] });
+  const bound = investmentTravels(draft, state);
+  const vic = state === 'VIC';
+  if (vic && victorianAcknowledged !== true) throw new HttpError(409, 'victorian_acknowledgement_needed', { reasons: ['This is a Victorian listing. Confirm that you are recording a business authorisation and not a legal classification of the property.'] });
+  return { textHash: descriptionHash(content, bound), withInvestment: bound, ...(vic ? { victorian: true } : {}), source: src, by: actor.email, at: now.toISOString() };
 }
 
 /** The verification object with the approval removed (a new object). */
 export const withoutApproval = (verification) => { const { [APPROVAL_KEY]: _gone, ...rest } = verification ?? {}; return rest; };
+export const withoutDescriptionApproval = (verification) => { const { [DESC_KEY]: _gone, ...rest } = verification ?? {}; return rest; };
 
 /** The choices the editor offers, from the website's own lists (so they cannot drift). */
 export const optionalChoices = () => ({

@@ -1,4 +1,5 @@
 // Starting a publication job (dry run, first publication, update) and answering status. See publication.js.
+import { descriptionNeedsApproval } from './optional-fields.js';
 import { randomUUID } from 'node:crypto';
 import { audit } from './audit.js';
 import { loadPublishConfig } from './config.js';
@@ -83,6 +84,7 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   const jobId = randomUUID();
   // The commercial block is never sent for a Sold listing, and never when the status cannot be read (fail closed).
   const effectiveStatus = statusChange?.to ?? (kind === 'publish' ? 'available' : await websiteStatusOf(cfg, id, fetchImpl)); // undefined = unreadable, null = not on the website yet
+  if (effectiveStatus === 'sold' && descriptionNeedsApproval(draft.content)) throw new HttpError(409, 'not_ready', { reasons: ['This listing is Sold, and a Sold listing carries no commercial figures. The description mentions income, yield or other commercial wording: edit it first, then mark the listing Sold.'] });
   const { payload, hash } = buildPayload({ jobId, view, draft, kind, commercialStatus: statusChange?.to, effectiveStatus: effectiveStatus === undefined ? 'sold' : (effectiveStatus ?? 'available') });
   const latest = await jobs.latestJob(db, id, draft.version, kind);
   const finishedOk = latest?.status === 'succeeded' && (!real || latest.result?.live === true);

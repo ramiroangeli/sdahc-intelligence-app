@@ -26,7 +26,7 @@ test('LIST: nothing is invented when the approved listing has no such fields', (
 });
 
 test('COPY: the approved wording, exactly', () => {
-  assert.match(code, /description: 'Text published\. Separate paragraphs with a blank line\.'/);
+  assert.match(code, /description: 'Write it as long as you need, in plain text\. A blank line starts a new paragraph\./);
   assert.match(code, /text: 'The first photograph is the cover; floorplans are always last\.' \}/);
   assert.ok(!/Private: only signed-in staff/.test(code));
   assert.ok(!/is changed above, not here/.test(code));

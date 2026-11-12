@@ -21,11 +21,11 @@ import { MAX_PHOTOS, canonical, photosForRules } from './photos.js';
 import { photoStore, stagingPath } from './photo-store.js';
 import { getProperty } from './property.js';
 import { loadApprovedSnapshot, loadSnapshots, publishedOptional } from './site.js';
-import { APPROVAL_KEY, stable } from './optional-fields.js';
+import { APPROVAL_KEY, DESC_KEY, stable } from './optional-fields.js';
 
 const PUBLIC_HOST_RE = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\/(lst_[a-f0-9]{10})\/([a-f0-9]{12})-(\d{2,4})\.webp$/;
 const PRICE_MODES = ['asking_price', 'price_guide', 'eoi', 'contact_agent'];
-const paragraphs = (raw) => String(raw).split(/\n\s*\n/).map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+const paragraphs = (raw) => core.descriptionBlocks(raw);
 const refuse = (code, reason, extra = {}) => new HttpError(409, code, { reasons: [reason], ...extra });
 
 /** Checks the snapshot is trustworthy and has the shape this import understands. Returns problems (names only). */
@@ -163,10 +163,16 @@ export async function importPublishedFor({ cfg, db, propertyId, actor, fetchImpl
   // Published figures stay published: when the snapshot's own approval hash proves its commercial values were approved, that approval is carried over as an
   // imported record (marked as such). Without it, the next update would silently drop figures that are live today. A snapshot that fails the check imports without it.
   const inv = snap.content.investment;
+  const verification = {};
   if (inv && core.investmentApprovalValid(inv)) {
-    const rec = { valuesHash: inv.approval.valuesHash, provider: inv.approval.provider === true, by: 'published version', at: now, imported: true, note: 'Carried over from the version already on the website.' };
-    await repo.updateDraft(db, { publicId, expectedVersion: draft.version, action: 'verify', patch: { verification: { [APPROVAL_KEY]: rec } }, actor, current: draft });
+    verification[APPROVAL_KEY] = { valuesHash: inv.approval.valuesHash, provider: inv.approval.provider === true, ...(inv.approval.victorian === true ? { victorian: true } : {}), by: 'published version', at: now, imported: true, note: 'Carried over from the version already on the website.' };
   }
+  // the same for an approved description: it is carried over only when its hash proves the published text and commercial values are the ones approved
+  const da = snap.content.descriptionApproval;
+  if (da && core.descriptionApprovalHash(snap.content.description, snap.content.investment) === da.textHash) {
+    verification[DESC_KEY] = { textHash: da.textHash, withInvestment: !!inv, ...(da.victorian === true ? { victorian: true } : {}), by: 'published version', at: now, imported: true, note: 'Carried over from the version already on the website.' };
+  }
+  if (Object.keys(verification).length) await repo.updateDraft(db, { publicId, expectedVersion: draft.version, action: 'verify', patch: { verification }, actor, current: draft });
   const view = await openDraft({ cfg, db, id: publicId, fetchImpl, caps });
   return { ...view, imported: { fromVersion: snap.version, slug: snap.content.slug, photos: photos.length, files: plan.length, draftVersion: draft.version } };
 }

@@ -41,7 +41,10 @@ export function preflight(view) {
   const items = view.photos?.items ?? [];
   if (!items.some((p) => p.kind !== 'floorplan')) reasons.push('Add at least one photograph.');
   if (!view.photos?.readiness?.ready) reasons.push('Fix the flagged photo descriptions first.');
-  const wouldBlock = v.blockers.filter((b) => !['photos_required', 'photo_alt'].includes(b.code)).map(plainBlocker);
+  // Text that states figures or claims more than the CRM supports can be saved and previewed, but a request to publish it is refused here with the specific
+  // reason (the website engine would refuse it as well). These were editing errors before; refusing them at publication keeps the same protection.
+  for (const b of v.blockers) if (['description_financial', 'public_text_claims_full'].includes(b.code)) reasons.push(b.message);
+  const wouldBlock = v.blockers.filter((b) => !['photos_required', 'photo_alt', 'description_financial', 'public_text_claims_full'].includes(b.code)).map(plainBlocker);
   return { ready: reasons.length === 0, reasons, wouldBlock };
 }
 
