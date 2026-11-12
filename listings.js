@@ -395,7 +395,134 @@ function editForm() {
     !ro && sugg && sugg !== f.publicAddress ? lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.form.publicAddress = sugg; LS.dirty = true; lsPaint(); lsLive(); }, text: 'Use suggested: ' + sugg }) : null,
     lsEl('div', { class: 'ls-row' }, field('Price shown as', 'pricingMode', sel), priceField),
     lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-f-featured', checked: f.featured, disabled: ro, onchange: (e) => { LS.form.featured = e.target.checked; LS.dirty = true; lsMarkDirty(); } }), ' Show this listing first on the website (featured)'),
+    optionalSections(),
     photosSection());
+}
+
+/* ---- Optional details: property, SDA, commercial (private until a Publisher approves it) and marketing agency ---- */
+function optSet(group, key, value) {
+  const next = { ...(LS.form[group] || {}) };
+  if (value === '' || value == null) delete next[key]; else next[key] = value;
+  if (Object.keys(next).length) LS.form[group] = next; else delete LS.form[group];
+  LS.dirty = true; lsMarkDirty(); clearTimeout(lsTimer); lsTimer = setTimeout(lsLive, 700);
+}
+const optVal = (group, key) => { const g = LS.form[group]; return g && g[key] != null ? String(g[key]) : ''; };
+function optInput(group, key, label, opts) {
+  const ro = readOnly(); const o = opts || {};
+  return lsEl('div', { class: 'ls-field' }, lsEl('label', { for: 'ls-o-' + group + '-' + key, class: 'ls-label', text: label }),
+    lsEl('input', { id: 'ls-o-' + group + '-' + key, class: 'ls-input', type: 'text', inputmode: o.numeric ? 'decimal' : false, maxlength: o.max || '120', value: optVal(group, key), disabled: ro, placeholder: o.placeholder || '', oninput: (e) => optSet(group, key, e.target.value.trim()) }),
+    o.help ? lsEl('div', { class: 'ls-help', text: o.help }) : null);
+}
+function optSelect(group, key, label, choices, blank) {
+  const ro = readOnly(); const cur = optVal(group, key);
+  return lsEl('div', { class: 'ls-field' }, lsEl('label', { for: 'ls-o-' + group + '-' + key, class: 'ls-label', text: label }),
+    lsEl('select', { id: 'ls-o-' + group + '-' + key, class: 'ls-input', disabled: ro, onchange: (e) => { optSet(group, key, e.target.value); } },
+      lsEl('option', { value: '', text: blank || 'Not stated' }), ...choices.map((c) => lsEl('option', { value: c.key, text: c.label || c.name, selected: cur === c.key }))));
+}
+function optGroup(id, title, hint, body, open) {
+  return lsEl('details', { class: 'ls-opt', id: 'ls-opt-' + id, open: open ? true : false }, lsEl('summary', null, lsEl('span', { class: 'ls-opt-t', text: title }), lsEl('span', { class: 'ls-opt-h', text: hint })), lsEl('div', { class: 'ls-opt-body' }, ...body));
+}
+const APPROVAL_COPY = {
+  none: ['Nothing to approve', 'ls-badge-notion'],
+  unapproved: ['Not approved: private, not published', 'ls-badge-warn'],
+  stale: ['Changed since approval: private, not published', 'ls-badge-warn'],
+  approved: ['Approved for publication', 'ls-badge-live'],
+};
+function optionalSections() {
+  if (!LS.d.optional) return null;
+  const ch = LS.d.optional.choices;
+  const hasInv = !!LS.form.investment;
+  const open = (k) => !!LS.form[k];
+  return lsEl('div', { class: 'ls-optional' }, lsEl('h4', { class: 'ls-opt-title', text: 'Optional details' }),
+    lsEl('div', { class: 'ls-help', text: 'All optional. A listing without them publishes exactly as before. Commercial details stay private until a Publisher approves them.' }),
+    optGroup('property', 'Property details', 'Bathrooms, car spaces, areas', [
+      lsEl('div', { class: 'ls-row' }, optInput('property', 'bathrooms', 'Bathrooms', { numeric: true, max: '2' }), optInput('property', 'carSpaces', 'Car spaces', { numeric: true, max: '2' })),
+      lsEl('div', { class: 'ls-row' }, optInput('property', 'floorAreaM2', 'Floor area (m²)', { numeric: true, max: '6' }), optInput('property', 'landAreaM2', 'Land area (m²)', { numeric: true, max: '7' })),
+      lsEl('div', { class: 'ls-row' }, optInput('property', 'parking', 'Parking', { max: '80', placeholder: 'e.g. Double garage' }), optInput('property', 'municipality', 'Council area', { max: '60' })),
+    ], open('property')),
+    optGroup('sdaFacts', 'SDA details', 'Bedrooms, participant places, OOA', [
+      lsEl('div', { class: 'ls-row' }, optInput('sdaFacts', 'bedrooms', 'SDA bedrooms', { numeric: true, max: '2' }), optInput('sdaFacts', 'residentPlaces', 'Participant places', { numeric: true, max: '2' })),
+      optInput('sdaFacts', 'ooa', 'Onsite overnight assistance (OOA)', { max: '120', placeholder: 'e.g. Onsite overnight assistance room', help: 'Public wording about the OOA arrangement.' }),
+    ], open('sdaFacts')),
+    optGroup('investment', 'Investment details', hasInv ? 'Private until approved' : 'Lease, occupancy, income, yield', investmentBody(ch), open('investment')),
+    optGroup('marketing', 'Marketing agency', 'Shown on the listing', [
+      optSelect('marketing', 'agency', 'Agency', ch.agencies.map((a) => ({ key: a.key, label: a.name })), 'Default (' + (ch.agencies.find((a) => a.key === ch.defaultAgency) || { name: 'SDA Home Choices' }).name + ')'),
+    ], open('marketing')));
+}
+function investmentBody(ch) {
+  const a = LS.d.optional.approval; const copy = APPROVAL_COPY[a.state] || APPROVAL_COPY.none;
+  const vic = a.stateCode === 'VIC';
+  const fields = [
+    lsEl('div', { class: 'ls-row' }, optSelect('investment', 'leaseStatus', 'Lease status', ch.lease), optSelect('investment', 'occupancyStatus', 'Occupancy status', ch.occupancy)),
+    lsEl('div', { class: 'ls-help', text: 'Lease and occupancy are separate: a property can be fully leased and only partly occupied.' }),
+    optInput('investment', 'tenure', 'Tenure', { max: '120', placeholder: 'e.g. Long term lease to a registered provider' }),
+    vic ? lsEl('div', { class: 'ls-banner ls-banner-bad', text: 'Income and yield are not published on Victorian listings until the advertising obligations are confirmed. They are kept private and cannot be approved. Lease and occupancy can be.' }) : null,
+    lsEl('div', { class: 'ls-row' }, optInput('investment', 'annualIncomeAud', 'Annual income (AUD)', { numeric: true, max: '9' }), optSelect('investment', 'incomeType', 'Income type', ch.incomeTypes)),
+    lsEl('div', { class: 'ls-row' }, optInput('investment', 'yieldPct', 'Yield (%)', { numeric: true, max: '5' }), optSelect('investment', 'yieldType', 'Yield type', ch.incomeTypes)),
+    optSelect('investment', 'basis', 'Figures are', ch.bases),
+    optInput('investment', 'providerArrangement', 'Provider arrangement wording', { max: '200', help: 'Never published unless a Publisher separately authorises this wording.' }),
+  ];
+  if (!LS.form.investment && a.state === 'none') fields.push(lsEl('div', { class: 'ls-help', text: 'Nothing here is published until a Publisher approves it.' }));
+  fields.push(approvalPanel(a, copy));
+  return fields;
+}
+function approvalPanel(a, copy) {
+  const d = LS.d; const can = d.permissions.canPublish; const hasInv = !!(d.draft.content && d.draft.content.investment);
+  const inv = d.draft.content.investment || {}; const unsaved = LS.dirty;
+  const kids = [lsEl('div', { class: 'ls-appr-h' }, badge(copy[0], copy[1])),
+    a.state === 'approved' ? lsEl('div', { class: 'ls-sub', text: (a.imported ? 'Carried over from the version already on the website' : 'Approved by ' + String(a.by || '').split('@')[0] + ' ' + when(a.at)) + '. Changing any value here withdraws the approval.' }) : null,
+    a.state === 'stale' ? lsEl('div', { class: 'ls-sub', text: 'The values were edited after approval, so the approval no longer applies. Approve again to publish them.' }) : null];
+  if (!hasInv) return lsEl('div', { class: 'ls-appr', id: 'ls-appr' }, ...kids.slice(0, 1));
+  if (!can) { kids.push(lsEl('div', { class: 'ls-help', text: 'Only a Publisher can approve these details for publication.' })); return lsEl('div', { class: 'ls-appr', id: 'ls-appr' }, ...kids); }
+  if (unsaved) kids.push(lsEl('div', { class: 'ls-help', text: 'Save the draft first. The approval applies to the saved values.' }));
+  const asking = LS.apprOpen === true && !unsaved;
+  if (a.state !== 'approved' && !asking) kids.push(lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-appr-open', disabled: unsaved, onclick: () => { LS.apprOpen = true; lsPaint(); }, text: 'Review and approve for publication' }));
+  if (asking) {
+    const vicFig = a.stateCode === 'VIC' && (inv.annualIncomeAud != null || inv.yieldPct != null || inv.incomeType || inv.yieldType);
+    kids.push(lsEl('div', { class: 'ls-note-add' },
+      lsEl('div', { class: 'ls-sub', text: 'You are approving exactly these saved values for public advertising: ' + approvalSummary(inv) + '.' }),
+      vicFig ? lsEl('div', { class: 'ls-ferr-line', text: 'Victorian listings cannot publish income or yield. Remove them to approve the rest.' }) : null,
+      lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-appr-confirm' }), ' These details are verified and approved for public advertising'),
+      inv.providerArrangement ? lsEl('label', { class: 'ls-check-row' }, lsEl('input', { type: 'checkbox', id: 'ls-appr-provider' }), ' I also authorise the provider arrangement wording') : null,
+      lsEl('textarea', { id: 'ls-appr-note', class: 'ls-input', rows: '2', maxlength: '500', placeholder: 'What was checked, and against what (for example the signed lease)?' }),
+      lsEl('div', { class: 'ls-actions' }, lsEl('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'ls-appr-go', disabled: vicFig, onclick: () => lsApproval('approve'), text: 'Approve for publication' }), lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', onclick: () => { LS.apprOpen = false; lsPaint(); }, text: 'Cancel' }))));
+  }
+  if (a.state === 'approved' || a.state === 'stale') kids.push(lsEl('button', { class: 'btn btn-secondary btn-sm', type: 'button', id: 'ls-appr-withdraw', disabled: unsaved, onclick: () => lsApproval('withdraw'), text: 'Withdraw approval' }));
+  return lsEl('div', { class: 'ls-appr', id: 'ls-appr' }, ...kids);
+}
+function approvalSummary(inv) {
+  const L = { fully_leased: 'fully leased', partially_leased: 'partially leased', unleased: 'not leased', fully_occupied: 'fully occupied', partially_occupied: 'partially occupied', vacant: 'vacant' };
+  const bits = [inv.leaseStatus && L[inv.leaseStatus], inv.occupancyStatus && L[inv.occupancyStatus], inv.tenure, inv.annualIncomeAud != null ? '$' + Number(inv.annualIncomeAud).toLocaleString('en-AU') + ' ' + (inv.incomeType || '') + ' income' : null, inv.yieldPct != null ? inv.yieldPct + '% ' + (inv.yieldType || '') + ' yield' : null, inv.basis, inv.providerArrangement ? 'provider arrangement wording' : null].filter(Boolean);
+  return bits.join(', ') || 'no values';
+}
+async function lsApproval(kind) {
+  const note = (document.getElementById('ls-appr-note') || {}).value;
+  const body = { id: LS.d.draft.id, expectedVersion: LS.d.draft.version, investment: kind, note: kind === 'approve' ? (note || '').trim() : 'Approval withdrawn by a Publisher.' };
+  if (kind === 'approve') {
+    if (!(document.getElementById('ls-appr-confirm') || {}).checked) { LS.flash = { bad: 'Tick the confirmation to approve.' }; lsPaint(); return; }
+    if (body.note.length < 5) { LS.flash = { bad: 'Write what was checked (at least 5 characters).' }; lsPaint(); return; }
+    body.confirmed = true; body.providerAuthorised = !!(document.getElementById('ls-appr-provider') || {}).checked;
+  }
+  try { LS.d = await lsApi('POST', '/api/listings/draft-verify', body); LS.live = LS.d; LS.apprOpen = false; LS.flash = { ok: kind === 'approve' ? 'Investment details approved for publication.' : 'Approval withdrawn. The details are private again.' }; }
+  catch (e) { const r = e.body && e.body.reasons; LS.flash = { bad: r && r.length ? r.join(' ') : 'Could not complete that (' + e.message + ').' }; }
+  lsPaint();
+}
+
+function previewFacts() {
+  const c = LS.form || {}; const p = c.property || {}; const sd = c.sdaFacts || {}; const out = [];
+  if (sd.bedrooms) out.push(lsEl('span', { text: 'SDA bedrooms: ' + sd.bedrooms }));
+  if (sd.residentPlaces) out.push(lsEl('span', { text: 'Participant places: ' + sd.residentPlaces }));
+  if (sd.ooa) out.push(lsEl('span', { text: 'OOA: ' + sd.ooa }));
+  if (p.bathrooms) out.push(lsEl('span', { text: 'Bathrooms: ' + p.bathrooms }));
+  if (p.carSpaces) out.push(lsEl('span', { text: 'Car spaces: ' + p.carSpaces }));
+  if (p.floorAreaM2) out.push(lsEl('span', { text: 'Floor area: ' + p.floorAreaM2 + ' m²' }));
+  if (p.landAreaM2) out.push(lsEl('span', { text: 'Land area: ' + p.landAreaM2 + ' m²' }));
+  return out;
+}
+function previewInvestmentLine(pv) {
+  const st = pv.investment; if (!st || st === 'none') return null;
+  const ok = st === 'approved';
+  return lsEl('div', { class: 'ls-pv-inv ' + (ok ? 'ok' : 'no'), id: 'ls-pv-inv', text: ok ? 'Investment details: approved, shown on the website.' : 'Investment details: not approved, so they are not shown on the website.' });
 }
 
 function previewContent() {
@@ -410,7 +537,8 @@ function previewContent() {
       order.length > 1 ? lsEl('div', { class: 'ls-pv-thumbs' }, order.slice(1).map((x) => lsEl('div', { class: 'ls-pv-thumb' + (x.kind === 'floorplan' ? ' ls-pv-plan' : '') }, lsPhotoImg(x.id, 480, x.altText), x.kind === 'floorplan' ? lsEl('span', { class: 'ls-ph-flag ls-ph-flag-plan', text: 'Floorplan' }) : null))) : null) : lsEl('div', { class: 'ls-pv-photo ls-pv-photo-lg', text: 'No photographs yet' }),
     lsEl('h3', { text: pv.title || '(no title yet)' }), lsEl('div', { class: 'ls-pv-addr', text: pv.addressLine || '(no address yet)' }),
     lsEl('div', { class: 'ls-pv-price', text: pv.pricing || '(no pricing mode yet)' }),
-    lsEl('div', { class: 'ls-pv-facts' }, pv.design.length ? lsEl('span', { text: 'Design category: ' + pv.design.join(', ') }) : null, pv.buildType ? lsEl('span', { text: 'Building: ' + pv.buildType }) : null),
+    lsEl('div', { class: 'ls-pv-facts' }, pv.design.length ? lsEl('span', { text: 'Design category: ' + pv.design.join(', ') }) : null, pv.buildType ? lsEl('span', { text: 'Building: ' + pv.buildType }) : null, ...previewFacts()),
+    previewInvestmentLine(pv),
     ...(pv.description.length ? pv.description.map((t) => lsEl('p', { text: t })) : [lsEl('p', { class: 'ls-sub', text: '(no description yet)' })]));
   return lsEl('div', null,
     lsEl('div', { class: 'ls-banner' }, 'Private preview. This is how the card and detail page will read, built from your current text. It is not on the website. Photographs shown here are private staged copies.'),
