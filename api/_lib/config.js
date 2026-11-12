@@ -61,6 +61,8 @@ export function loadDataConfig(env = process.env) {
     siteBase,
     // optional, read-only; only raises GitHub's anonymous rate limit
     githubReadToken: val(env, 'LISTINGS_GITHUB_READ_TOKEN') || null,
+    // the existing GitHub App, used only for contents: read on the website repository (never a personal token); null when the App is not configured
+    githubApp: (() => { try { return loadAppConfig(env); } catch { return null; } })(),
   };
 }
 

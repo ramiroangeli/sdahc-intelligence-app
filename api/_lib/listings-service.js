@@ -3,7 +3,7 @@
 //   snapshot    the approved version committed to the website repository: what the next build contains
 //   deployment  whether the public page actually answers on the website right now: the TRUTH
 import { fetchManagedProperties } from './notion.js';
-import { checkLive, listingUrl, loadSnapshots } from './site.js';
+import { checkLive, listingUrl, loadSnapshots, siteReadReason } from './site.js';
 import { changesSincePublished } from './changes.js';
 
 const COMMERCIAL_BY_STATUS = { published: 'available', under_offer: 'under_offer', sold: 'sold' };
@@ -14,9 +14,12 @@ const LIVE_INTENT = new Set(['published', 'under_offer', 'sold']);
  * website), withdrawn. Also how many changes are waiting and whether something needs attention (the last real job did not complete). Pure.
  *   draftRow    the raw draft row (content, photos) or null; snapshot the website's summary from site.js or null; lastJob the listing's latest real job or null
  */
-export function publicationFor({ draftRow, snapshot, withdrawn, lastJob }) {
+export function publicationFor({ draftRow, snapshot, withdrawn, lastJob, siteUnverified = false, lastSuccess = null }) {
   const active = lastJob && ['queued', 'dispatched', 'running'].includes(lastJob.status);
   const failed = !!(lastJob && lastJob.status === 'failed');
+  // The website could not be read: nothing is known about it right now. Never read that as "not published". The last SUCCESSFUL job is shown as
+  // unverified reference information (null when there is none, for example a listing imported from the website).
+  if (siteUnverified && !active) return { state: 'unverified', lastKnown: lastSuccess ? (lastSuccess.kind === 'withdraw' ? 'withdrawn' : 'live') : null, changesCount: 0, attention: true };
   if (withdrawn) return { state: 'withdrawn', changesCount: 0, attention: failed && lastJob.kind === 'withdraw' && lastJob.result?.merged === true };
   if (active) return { state: 'publishing', changesCount: 0, attention: false };
   if (snapshot) {
@@ -58,7 +61,7 @@ export function combine({ notion, snapshot, withdrawn, live, url }) {
 }
 
 /** Attach saved drafts to their rows, or add a draft-only row. A draft never changes the website/deployment columns. */
-export function attachDrafts(listings, drafts, { rows = [], snaps = null, lastJobs = new Map() } = {}) {
+export function attachDrafts(listings, drafts, { rows = [], snaps = null, lastJobs = new Map(), siteUnverified = false, lastSuccess = new Map() } = {}) {
   const rawById = new Map(rows.map((r) => [r.public_id, r]));
   const byId = new Map(listings.map((l) => [l.id, l]));
   for (const d of drafts) {
@@ -66,11 +69,11 @@ export function attachDrafts(listings, drafts, { rows = [], snaps = null, lastJo
     if (row) { row.draft = d; continue; }
     listings.push({ id: d.id, name: d.label, state: null, designCategories: [], buildType: null, notion: null, website: null, deployment: { state: 'not_published' }, inSync: true, notes: [], draft: d });
   }
-  for (const l of listings) l.publication = publicationFor({ draftRow: rawById.get(l.id) ?? null, snapshot: snaps?.approved.get(l.id) ?? null, withdrawn: l.deployment.state === 'withdrawn', lastJob: lastJobs.get(l.id) ?? null });
+  for (const l of listings) l.publication = publicationFor({ draftRow: rawById.get(l.id) ?? null, snapshot: snaps?.approved.get(l.id) ?? null, withdrawn: l.deployment.state === 'withdrawn', lastJob: lastJobs.get(l.id) ?? null, siteUnverified, lastSuccess: lastSuccess.get(l.id) ?? null });
   return listings.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Date(), drafts = null, draftRows = [], lastJobs = new Map() } = {}) {
+export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Date(), drafts = null, draftRows = [], lastJobs = new Map(), lastSuccess = new Map(), admin = false } = {}) {
   const sources = { notion: { state: 'ok' }, website: { state: 'ok' }, drafts: drafts ? { state: drafts.state } : { state: 'not_configured' } };
 
   let properties = [];
@@ -82,8 +85,11 @@ export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Da
   }
 
   let snaps = { approved: new Map(), withdrawn: new Set(), problems: [] };
-  try { snaps = await loadSnapshots(cfg, { fetchImpl }); } catch {
-    sources.website = { state: 'error', message: 'The website repository could not be read' };
+  try { snaps = await loadSnapshots(cfg, { fetchImpl }); } catch (e) {
+    const why = siteReadReason(e);
+    console.error('listings: website not verifiable:', why.kind, why.detail ?? '');   // evidence for the logs; no secrets are ever in it
+    // technical detail only for administrators
+    sources.website = { state: 'error', message: 'Unable to verify website status', ...(admin ? { reason: why.kind, detail: why.detail } : {}) };
   }
   if (snaps.problems.length) sources.website = { state: 'warning', message: snaps.problems.join('; ') };
 
@@ -98,6 +104,6 @@ export async function buildListings(cfg, { fetchImpl = fetch, now = () => new Da
     const live = snapshot && !withdrawn && sources.website.state !== 'error' ? await checkLive(cfg, snapshot.slug, { fetchImpl }) : null;
     return combine({ notion, snapshot: sources.website.state === 'error' ? null : snapshot, withdrawn, live, url });
   }));
-  const listings = attachDrafts(rows.filter(Boolean), drafts?.items ?? [], { rows: draftRows, snaps: sources.website.state === 'error' ? null : snaps, lastJobs });
+  const listings = attachDrafts(rows.filter(Boolean), drafts?.items ?? [], { rows: draftRows, snaps: sources.website.state === 'error' ? null : snaps, lastJobs, siteUnverified: sources.website.state === 'error', lastSuccess });
   return { generatedAt: now().toISOString(), sources, listings };
 }
