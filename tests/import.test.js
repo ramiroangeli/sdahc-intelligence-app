@@ -689,3 +689,73 @@ test('DOCUMENTED LIMIT: for a withdrawn property, Create draft and Import publis
   assert.match(docs, /Do \*\*not\*\* expect Create Listing to work for it/); assert.match(docs, /public photograph files are \*\*kept\*\*|Public photograph files are retained after a withdrawal/i);
   assert.match(docs, /anyone who has an exact URL can still open them/);
 });
+
+// ---- Optional details and the commercial approval: imported listings, Sold and Withdrawn ----
+const INV_VALUES = { leaseStatus: 'fully_leased', occupancyStatus: 'partially_occupied', tenure: 'Long term lease to a registered provider' };
+const approvedBlock = (values = INV_VALUES) => ({ ...values, approval: { valuesHash: core.investmentValuesHash({ ...values, approval: { valuesHash: '0'.repeat(64) } }) } });
+const importedWith = async (over) => {
+  const ctx = await setup({ snap: snapshot(over) });
+  const r = await call(draftRoute, ctx.w, ctx.db, ALI_N, { method: 'POST', fetch: ctx.fetch, body: { propertyId: ID_RG, importPublished: true } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  ctx.gh = github(ctx.w); ctx.id = ID_RG; ctx.first = r.json;
+  return ctx;
+};
+const OPT = () => ({ property: { bathrooms: 2 }, sda: { bedrooms: 4, ooa: 'Onsite overnight assistance room' }, marketing: { agency: 'sdahc' }, investment: approvedBlock() });
+
+test('OPTIONAL IMPORT: an adopted listing keeps its published optional details and its valid approval, so an update does not drop them', async () => {
+  const ctx = await importedWith(OPT());
+  assert.equal(ctx.first.draft.content.property.bathrooms, 2);
+  assert.deepEqual(ctx.first.draft.content.sdaFacts, { bedrooms: 4, ooa: 'Onsite overnight assistance room' });
+  assert.equal(ctx.first.optional.approval.state, 'approved');
+  assert.equal(ctx.first.optional.approval.imported, true, 'marked as carried over from the published version');
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const r = await publishWith(ctx, 'update');
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const inv = (await payloadOfJob(ctx, r.json.job.id)).content.optional.investment;
+  assert.equal(inv.leaseStatus, 'fully_leased');
+  assert.equal(inv.approval.valuesHash, approvedBlock().approval.valuesHash, 'the same approved values, the same hash');
+  assert.ok(!/@/.test(JSON.stringify((await payloadOfJob(ctx, r.json.job.id)))), 'the carried-over approval names nobody');
+});
+
+test('OPTIONAL IMPORT: a published block whose hash does not verify is not trusted: it imports as unapproved and an update would not carry it', async () => {
+  const bad = OPT(); bad.investment.approval.valuesHash = 'a'.repeat(64);
+  const ctx = await importedWith(bad);
+  assert.equal(ctx.first.optional.approval.state, 'unapproved');
+  assert.equal((await ctx.db.unsafe('select verification from listings.drafts'))[0].verification.investment_disclosure, undefined);
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const r = await publishWith(ctx, 'update');
+  assert.equal(r.status, 200);
+  assert.equal((await payloadOfJob(ctx, r.json.job.id)).content.optional?.investment, undefined);
+});
+
+test('OPTIONAL SOLD: setting Sold, or updating while Sold, never carries the commercial block (other details still travel)', async () => {
+  const ctx = await importedWith(OPT());
+  const toSold = await publishWith(ctx, 'update', { commercialStatus: 'sold', expectedStatus: 'available' });
+  assert.equal(toSold.status, 200, JSON.stringify(toSold.json));
+  const p1 = await payloadOfJob(ctx, toSold.json.job.id);
+  assert.equal(p1.content.commercialStatus, 'sold');
+  assert.equal(p1.content.optional.investment, undefined);
+  assert.equal(p1.content.optional.property.bathrooms, 2);
+  const ctx2 = await importedWith(OPT()); setWebsiteStatus(ctx2, 'sold');
+  await save(ctx2, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const r = await publishWith(ctx2, 'update');
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal((await payloadOfJob(ctx2, r.json.job.id)).content.optional.investment, undefined);
+});
+
+test('OPTIONAL WITHDRAWN: a withdrawn listing cannot be published or updated, with or without optional details, and nothing is recorded', async () => {
+  const ctx = await importedWith(OPT());
+  tombstone(ctx);
+  const r = await publishWith(ctx, 'update');
+  assert.equal(r.status, 409); assert.equal(r.json.error, 'withdrawn');
+  assert.equal((await jobRows(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0);
+});
+
+test('OPTIONAL: the signed payload route returns only what was frozen, and the Victorian listing carries no income or yield', async () => {
+  const ctx = await importedWith(OPT());
+  await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
+  const r = await publishWith(ctx, 'update');
+  const text = JSON.stringify(await payloadOfJob(ctx, r.json.job.id));
+  assert.ok(!/annualIncome|yieldPct|incomeType|yieldType/.test(text), 'Victoria (this listing) never carries income or yield');
+  assert.ok(/fully_leased/.test(text));
+});
