@@ -2,28 +2,64 @@
 //  1. the approved snapshot files committed to the website repo (what the next build will contain), and
 //  2. a live request to the public listing page (what visitors can see right now).
 import { createHash } from 'node:crypto';
+import { installationToken } from './github-app.js';
 
 const SLUG_RE = /^[a-z]+(-[a-z]+)*$/;
 const COMMERCIAL = new Set(['available', 'under_offer', 'sold']);
 let cache = null;
 
-const gh = (cfg, extra = {}) => ({
-  headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'sdahc-listings-manager', ...(cfg.githubReadToken ? { Authorization: `Bearer ${cfg.githubReadToken}` } : {}), ...extra },
+/** Why the website could not be read. kind: rate_limited | http_<status> | timeout | network | bad_content. detail is for administrators only. */
+export class SiteReadError extends Error {
+  constructor(kind, detail) { super(`website read failed: ${kind}`); this.name = 'SiteReadError'; this.kind = kind; this.detail = detail; }
+}
+export const siteReadReason = (e) => (e instanceof SiteReadError ? { kind: e.kind, detail: e.detail } : { kind: 'unknown', detail: String(e?.message ?? e).slice(0, 200) });
+
+/**
+ * A read-only credential for the GitHub API, in this order: an optional read token, then an installation token from the existing GitHub App
+ * (contents: read only, the narrowest scope; no personal token), then nothing (anonymous reads share GitHub's low per-address limit).
+ * A failure to mint a token never breaks the read: it falls back to anonymous.
+ */
+async function readToken(cfg, fetchImpl) {
+  if (cfg.githubReadToken) return cfg.githubReadToken;
+  if (!cfg.githubApp) return null;
+  try { return (await installationToken(cfg.githubApp, { repo: cfg.repo, permissions: { contents: 'read' }, fetchImpl })).token; } catch { return null; }
+}
+
+const gh = (token) => ({
+  headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'sdahc-listings-manager', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   signal: AbortSignal.timeout(8000),
 });
 
+/** One request with one retry for a transient failure (timeout, network, 5xx). 404 is returned to the caller. Anything else throws a classified error. */
+async function request(what, url, init, fetchImpl) {
+  let last;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const res = await fetchImpl(url, init());
+      if (res.ok || res.status === 404) return res;
+      const limited = res.status === 429 || (res.status === 403 && res.headers?.get?.('x-ratelimit-remaining') === '0');
+      last = new SiteReadError(limited ? 'rate_limited' : `http_${res.status}`, `${what}: HTTP ${res.status}${limited ? ' (GitHub rate limit)' : ''}`);
+      if (res.status < 500) break;
+    } catch (e) {
+      const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+      last = new SiteReadError(timeout ? 'timeout' : 'network', `${what}: ${timeout ? 'timed out' : 'network error'}`);
+    }
+  }
+  throw last;
+}
+
 async function listDir(cfg, dir, fetchImpl) {
-  const res = await fetchImpl(`https://api.github.com/repos/${cfg.repo}/contents/${dir}?ref=${encodeURIComponent(cfg.ref)}`, gh(cfg));
+  const token = await readToken(cfg, fetchImpl);
+  const res = await request(`list ${dir}`, `https://api.github.com/repos/${cfg.repo}/contents/${dir}?ref=${encodeURIComponent(cfg.ref)}`, () => gh(token), fetchImpl);
   if (res.status === 404) return [];
-  if (!res.ok) throw new Error(`GitHub listing failed: HTTP ${res.status}`);
   return (await res.json()).filter((f) => f.type === 'file' && f.name.endsWith('.json'));
 }
 
 async function readJson(cfg, file, fetchImpl) {
   // download_url is raw.githubusercontent.com: no API rate limit
-  const res = await fetchImpl(file.download_url, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'sdahc-listings-manager' } });
-  if (!res.ok) throw new Error(`GitHub file read failed: HTTP ${res.status}`);
-  return res.json();
+  const res = await request(`read ${file.name}`, file.download_url, () => ({ signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'sdahc-listings-manager' } }), fetchImpl);
+  if (res.status === 404) throw new SiteReadError('http_404', `read ${file.name}: HTTP 404`);
+  try { return await res.json(); } catch { throw new SiteReadError('bad_content', `read ${file.name}: not valid JSON`); }
 }
 
 /** Copies only the fields the screen needs. A malformed file is reported, never trusted. */
