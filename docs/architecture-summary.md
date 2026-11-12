@@ -1,6 +1,6 @@
 # Listings platform: architecture summary (as built, November 2026)
 
-This describes what is deployed now. Do not assume an older System Atlas matches it.
+This describes the platform and the proposed description approval workflow in PR #34, which is not yet deployed. Do not assume an older System Atlas matches it.
 
 ## Two repositories, one pipeline
 | Part | Repository | Hosting |
@@ -19,9 +19,9 @@ Notion is the CRM and is only read. Drafts, history, publication jobs and the au
 
 ## Controls that matter
 - Roles (`LISTINGS_STAFF_JSON`): Viewer, Editor (`listings.edit`), Publisher (`listings.publish`), administrator. Every route checks on the server.
-- Two independent safety layers: the app's validation and the website engine's `checkPublicSafety`. Public text may not carry addresses with numbers, dollar amounts or income and yield wording, email, phone, private links, or the CRM price or yield.
-- Commercial block (lease, occupancy, income, yield): stored privately, published only while a Publisher approval record matches its exact values. The record is written by the server from the stored values and the session (`verification.investment_disclosure`); browsers cannot supply it; editing a value removes it. Victorian listings never publish income or yield (conservative rule, pending legal review). Sold listings never carry the block.
-- Descriptions: free text can be saved and previewed, but text with figures cannot be published (app refuses the request with a specific reason; the website engine also refuses).
+- Two independent safety layers: the app's validation and the website engine's `checkPublicSafety`. Public text remains subject to address, personal data, private link and CRM-value safeguards. Restricted commercial description wording requires a matching Publisher approval.
+- Commercial block (lease, occupancy, income, yield): stored privately, published only while a Publisher approval record matches its exact values. The record is written by the server from the stored values and the session (`verification.investment_disclosure`); browsers cannot supply it; editing a value removes it. Victorian figures require a separate explicit business-authorisation acknowledgement and private source; legal advertising obligations remain unresolved. Sold listings never carry the block.
+- Descriptions: ordinary text needs no special approval. Restricted commercial text can be saved and previewed privately; a Publisher approves the exact description and relevant investment values from a server-generated record with a private source. Changes invalidate approval, including if subsequently restored. The signed request carries only public approval metadata; the website independently checks it. Victoria requires an explicit additional acknowledgement. The website PR must be deployed before the coordinated app PR.
 - Approver identity and notes stay in the private draft record and audit log. The public request, snapshot and pull request name nobody.
 - Branch rules: squash merge only, required checks (`site-checks` for the website, `test` for the app), no direct pushes.
 
