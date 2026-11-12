@@ -52,3 +52,16 @@ test('an audit write failure rolls back the job and no publication is recorded',
   assert.equal((await db.unsafe('select count(*)::int n from listings.audit_log'))[0].n, 0);
   await db.raw.close();
 });
+
+test('a failed attempt retains its acceptance and an explicit retry creates a separate trace', async () => {
+  const { db, job } = await setup();
+  const first = await createAcceptedJob(db, { session, job, reviewedHash: hashFor(job), declarationAccepted: true });
+  await db.unsafe(`update listings.publish_jobs set status = 'failed', error_code = 'checks_failed' where id = $1`, [first.id]);
+  const retry = { ...job, id: randomUUID(), attempt: 2, idempotencyKey: 'synthetic-retry' };
+  await assert.rejects(createAcceptedJob(db, { session, job: retry, reviewedHash: hashFor(retry), declarationAccepted: false }), /declaration_required/);
+  const next = await createAcceptedJob(db, { session, job: retry, reviewedHash: hashFor(retry), declarationAccepted: true });
+  const rows = await db.unsafe('select j.status, a.job_id from listings.publish_jobs j join listings.audit_log a on a.job_id = j.id order by j.attempt');
+  assert.deepEqual(rows.map((row) => row.status), ['failed', 'queued']);
+  assert.deepEqual(rows.map((row) => row.job_id), [first.id, next.id]);
+  await db.raw.close();
+});
