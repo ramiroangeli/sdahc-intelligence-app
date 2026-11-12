@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { database } from './drafts-harness.js';
-import { createAcceptedJob, reviewedContentHash } from '../api/_lib/publication-acceptance.js';
+import { createAcceptedJob, reviewedContentHash, issueReviewToken } from '../api/_lib/publication-acceptance.js';
 
+const secret = 'synthetic-server-secret-0123456789abcdef';
 const session = { identity: { email: 'publisher@example.com', authUserId: '22222222-2222-4222-8222-222222222222' } };
 const payload = { content: { description: 'Synthetic property' }, manifest: { photos: [{ id: 'abc', alt: 'Room' }] }, reviewedSda: { designCategories: ['IL'], buildingType: 'House' } };
 const hashFor = (job, content = job.payload) => reviewedContentHash(content, { publicId: job.publicId, draftVersion: job.draftVersion });
+const tokenFor = (job) => issueReviewToken({ session, job, secret });
 const setup = async () => {
   const db = await database();
   await db.raw.exec(readFileSync('supabase/migrations/listings_0006_publication_acceptance.sql', 'utf8'));
@@ -18,12 +20,12 @@ const setup = async () => {
 
 test('only explicit acceptance of the matching server snapshot creates a job and private acceptance together', async () => {
   const { db, job } = await setup(); const hash = hashFor(job);
-  await assert.rejects(createAcceptedJob(db, { session, job, reviewedHash: hash, declarationAccepted: false }), /declaration_required/);
-  await assert.rejects(createAcceptedJob(db, { session, job, reviewedHash: 'a'.repeat(64), declarationAccepted: true }), /preview_changed/);
-  await assert.rejects(createAcceptedJob(db, { session, job: { ...job, draftVersion: 999 }, reviewedHash: hashFor({ ...job, draftVersion: 999 }), declarationAccepted: true }), /draft_changed/);
+  await assert.rejects(createAcceptedJob(db, { session, job, secret, reviewToken: tokenFor(job), declarationAccepted: false }), /declaration_required/);
+  await assert.rejects(createAcceptedJob(db, { session, job, secret, reviewToken: 'forged', declarationAccepted: true }), /preview_changed/);
+  await assert.rejects(createAcceptedJob(db, { session, job: { ...job, draftVersion: 999 }, secret, reviewToken: tokenFor({ ...job, draftVersion: 999 }), declarationAccepted: true }), /draft_changed/);
   assert.equal((await db.unsafe('select count(*)::int n from listings.publish_jobs'))[0].n, 0);
   assert.equal((await db.unsafe('select count(*)::int n from listings.audit_log'))[0].n, 0);
-  const created = await createAcceptedJob(db, { session, job, reviewedHash: hash, declarationAccepted: true });
+  const created = await createAcceptedJob(db, { session, job, secret, reviewToken: tokenFor(job), declarationAccepted: true });
   assert.equal(created.status, 'queued');
   const [audit] = await db.unsafe('select * from listings.audit_log where job_id = $1', [created.id]);
   assert.equal(audit.actor_auth_user, session.identity.authUserId); assert.equal(audit.detail.content_hash, hash);
@@ -47,7 +49,7 @@ test('an audit write failure rolls back the job and no publication is recorded',
     if (/insert into listings\.audit_log/i.test(q)) throw new Error('audit unavailable');
     return tx.unsafe(q, p);
   } })) };
-  await assert.rejects(createAcceptedJob(failing, { session, job, reviewedHash: hashFor(job), declarationAccepted: true }), /audit unavailable/);
+  await assert.rejects(createAcceptedJob(failing, { session, job, secret, reviewToken: tokenFor(job), declarationAccepted: true }), /audit unavailable/);
   assert.equal((await db.unsafe('select count(*)::int n from listings.publish_jobs'))[0].n, 0);
   assert.equal((await db.unsafe('select count(*)::int n from listings.audit_log'))[0].n, 0);
   await db.raw.close();
@@ -55,13 +57,25 @@ test('an audit write failure rolls back the job and no publication is recorded',
 
 test('a failed attempt retains its acceptance and an explicit retry creates a separate trace', async () => {
   const { db, job } = await setup();
-  const first = await createAcceptedJob(db, { session, job, reviewedHash: hashFor(job), declarationAccepted: true });
+  const first = await createAcceptedJob(db, { session, job, secret, reviewToken: tokenFor(job), declarationAccepted: true });
   await db.unsafe(`update listings.publish_jobs set status = 'failed', error_code = 'checks_failed' where id = $1`, [first.id]);
   const retry = { ...job, id: randomUUID(), attempt: 2, idempotencyKey: 'synthetic-retry' };
-  await assert.rejects(createAcceptedJob(db, { session, job: retry, reviewedHash: hashFor(retry), declarationAccepted: false }), /declaration_required/);
-  const next = await createAcceptedJob(db, { session, job: retry, reviewedHash: hashFor(retry), declarationAccepted: true });
+  await assert.rejects(createAcceptedJob(db, { session, job: retry, secret, reviewToken: tokenFor(retry), declarationAccepted: false }), /declaration_required/);
+  const next = await createAcceptedJob(db, { session, job: retry, secret, reviewToken: tokenFor(retry), declarationAccepted: true });
   const rows = await db.unsafe('select j.status, a.job_id from listings.publish_jobs j join listings.audit_log a on a.job_id = j.id order by j.attempt');
   assert.deepEqual(rows.map((row) => row.status), ['failed', 'queued']);
   assert.deepEqual(rows.map((row) => row.job_id), [first.id, next.id]);
+  await db.raw.close();
+});
+
+test('review tokens reject tampering, another publisher, changed content and expiry', async () => {
+  const { db, job } = await setup();
+  const token = issueReviewToken({ session, job, secret, now: 1000 });
+  const args = { session, job, secret, reviewToken: token, declarationAccepted: true, now: 1001 };
+  await assert.rejects(createAcceptedJob(db, { ...args, reviewToken: token.slice(0, -1) + (token.endsWith('a') ? 'b' : 'a') }), /preview_changed/);
+  await assert.rejects(createAcceptedJob(db, { ...args, now: 1000 + 16 * 60 * 1000 }), /preview_changed/);
+  await assert.rejects(createAcceptedJob(db, { ...args, session: { identity: { ...session.identity, authUserId: '11111111-1111-4111-8111-111111111111' } } }), /preview_changed/);
+  await assert.rejects(createAcceptedJob(db, { ...args, job: { ...job, payload: { ...payload, content: { description: 'Changed after preview' } } } }), /preview_changed/);
+  assert.equal((await db.unsafe('select count(*)::int n from listings.publish_jobs'))[0].n, 0);
   await db.raw.close();
 });

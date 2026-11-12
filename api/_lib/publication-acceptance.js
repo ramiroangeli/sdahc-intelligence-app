@@ -1,6 +1,6 @@
 // Draft implementation: acceptance and job creation must share a transaction.
 // This module is not yet connected to the publication route or UI.
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { HttpError } from './http.js';
 import { actorFromSession, appendAudit } from './audit-log.js';
 import { createJob } from './jobs-repo.js';
@@ -15,16 +15,35 @@ export function reviewedContentHash(payload, { publicId, draftVersion } = {}) {
   return createHash('sha256').update(JSON.stringify(sortKeys({ publicId, draftVersion, content: payload.content, manifest: payload.manifest, reviewedSda: payload.reviewedSda }))).digest('hex');
 }
 
-/**
- * `reviewedHash` is an optimistic concurrency token previously produced by the server, never evidence of identity or acceptance.
- * Verify it against the server-built payload and use a database lock to stop a save racing the job insertion.
- */
-export async function createAcceptedJob(db, { session, job, reviewedHash, declarationAccepted }) {
+/** Issue a short-lived server-signed review token, bound to the authenticated Publisher and the exact reviewed version. */
+export function issueReviewToken({ session, job, secret, now = Date.now() }) {
+  if (typeof secret !== 'string' || secret.length < 32) throw new HttpError(503, 'review_not_configured');
+  const actor = actorFromSession(session);
+  if (!actor.authUserId) throw new HttpError(401, 'authenticated_identity_required');
+  const body = { publicId: job.publicId, draftVersion: job.draftVersion, actorId: actor.authUserId,
+    contentHash: reviewedContentHash(job.payload, { publicId: job.publicId, draftVersion: job.draftVersion }),
+    terms: INTERNAL_TERMS_VERSION, expiresAt: now + 15 * 60 * 1000 };
+  const encoded = Buffer.from(JSON.stringify(body)).toString('base64url');
+  const sig = createHmac('sha256', secret).update(`publisher-review-v1.${encoded}`).digest('hex');
+  return `${encoded}.${sig}`;
+}
+
+/** The token proves the server issued this review; identity, version and current content are checked again on submission. */
+export async function createAcceptedJob(db, { session, job, reviewToken, secret, declarationAccepted, now = Date.now() }) {
   if (declarationAccepted !== true) throw new HttpError(400, 'declaration_required');
+  if (typeof secret !== 'string' || secret.length < 32) throw new HttpError(503, 'review_not_configured');
   const actor = actorFromSession(session);
   if (!actor.authUserId) throw new HttpError(401, 'authenticated_identity_required');
   const hash = reviewedContentHash(job.payload, { publicId: job.publicId, draftVersion: job.draftVersion });
-  if (typeof reviewedHash !== 'string' || reviewedHash !== hash) throw new HttpError(409, 'preview_changed');
+  const parts = typeof reviewToken === 'string' ? reviewToken.split('.') : [];
+  if (parts.length !== 2 || !/^[a-f0-9]{64}$/.test(parts[1])) throw new HttpError(409, 'preview_changed');
+  const expected = createHmac('sha256', secret).update(`publisher-review-v1.${parts[0]}`).digest();
+  const supplied = Buffer.from(parts[1], 'hex');
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new HttpError(409, 'preview_changed');
+  let review;
+  try { review = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')); } catch { throw new HttpError(409, 'preview_changed'); }
+  if (review.publicId !== job.publicId || review.draftVersion !== job.draftVersion || review.actorId !== actor.authUserId || review.contentHash !== hash
+      || review.terms !== INTERNAL_TERMS_VERSION || !Number.isFinite(review.expiresAt) || review.expiresAt < now) throw new HttpError(409, 'preview_changed');
   return db.begin(async (tx) => {
     const rows = await tx.unsafe('select id, version from listings.drafts where public_id = $1 and discarded_at is null for update', [job.publicId]);
     if (!rows[0] || rows[0].id !== job.draftId || rows[0].version !== job.draftVersion) throw new HttpError(409, 'draft_changed');
