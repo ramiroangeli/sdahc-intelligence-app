@@ -10,6 +10,7 @@ import { guardedRoute } from './guard.js';
 import { signedRoute } from './signed.js';
 import * as jobsRepo from './jobs-repo.js';
 import { isJobId, sanitiseEvent } from './publication.js';
+import { reviewedContentHash } from './publication-acceptance.js';
 import { jobsFor, startPublication } from './publish-service.js';
 import { startWithdrawal } from './withdrawal.js';
 import { checkPublicMedia } from './public-media.js';
@@ -171,9 +172,15 @@ export const publishPayloadRoute = signedRoute({
   run: async ({ req, deps }) => {
     const id = queryOf(req).job;
     if (!isJobId(id)) throw new HttpError(400, 'invalid_job');
-    const job = await jobsRepo.getJob(getDb(deps), id, { withPayload: true });
+    const db = getDb(deps);
+    const job = await jobsRepo.getJob(db, id, { withPayload: true });
     if (!job) throw new HttpError(404, 'job_not_found');
     if (!jobsRepo.isActive(job)) throw new HttpError(410, 'job_finished');
+    if (job.payload?.version === 2) {
+      const hash = reviewedContentHash(job.payload, { publicId: job.public_id, draftVersion: job.draft_version });
+      const accepted = await db.unsafe("select 1 from listings.audit_log where job_id = $1 and public_id = $2 and draft_version = $3 and action = 'publication_acceptance' and detail->>'content_hash' = $4 and detail->'accepted' = 'true'::jsonb limit 1", [id, job.public_id, job.draft_version, hash]);
+      if (hash !== job.payload_hash || accepted.length !== 1) throw new HttpError(409, 'declaration_not_verified');
+    }
     audit({ action: 'listings.publish.payload', outcome: 'ok', detail: { jobId: id } });
     return job.payload;
   },
