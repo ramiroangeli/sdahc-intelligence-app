@@ -34,7 +34,7 @@ async function ready({ photos = true, content = GOOD } = {}) {
   return { w, db, gh };
 }
 const version = async (db) => (await db.unsafe('select version from listings.drafts where public_id = $1', [ID_7B]))[0].version;
-const start = async (ctx, who = ALI_N, over = {}) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', fetch: ctx.gh.fetch, env: over.env ?? PUBLISH_ENV, body: { id: ID_7B, expectedVersion: over.expectedVersion ?? await version(ctx.db), mode: over.mode ?? 'dry_run' } });
+const start = async (ctx, who = ALI_N, over = {}) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', declare: ['publish', 'update'].includes(over.mode) && over.declare !== false, fetch: ctx.gh.fetch, env: over.env ?? PUBLISH_ENV, body: { id: ID_7B, expectedVersion: over.expectedVersion ?? await version(ctx.db), mode: over.mode ?? 'dry_run' } });
 const jobs = (db) => db.unsafe('select * from listings.publish_jobs order by created_at');
 const event = (jobId, step, status, detail) => JSON.stringify({ jobId, step, status, ...(detail ? { detail } : {}) });
 const send = (ctx, jobId, step, status, detail, over = {}) => callSigned(publishCallbackRoute, ctx.db, { method: 'POST', url: '/api/listings/publish-callback', body: event(jobId, step, status, detail), secret: SECRET, ...over });
@@ -435,7 +435,7 @@ test('PUBLISH: a Publisher copies exactly the approved images (and the manifest)
 test('PUBLISH is for Publishers only, needs the public store configured, and a dry run never touches the public store', async () => {
   const ctx = await ready();
   for (const who of [EDITOR, VIEWER]) assert.equal((await start(ctx, who, { mode: 'publish' })).status, 403);
-  const noStore = await call(draftPublishRoute, { ...ctx.w, publicBlob: undefined }, ctx.db, ALI_N, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_7B, expectedVersion: await version(ctx.db), mode: 'publish' } });
+  const noStore = await call(draftPublishRoute, { ...ctx.w, publicBlob: undefined }, ctx.db, ALI_N, { method: 'POST', declare: true, fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_7B, expectedVersion: await version(ctx.db), mode: 'publish' } });
   assert.equal(noStore.status, 503); assert.equal(noStore.json.error, 'public_media_not_configured');
   assert.equal((await jobs(ctx.db)).length, 0); assert.equal(ctx.gh.dispatches.length, 0); assert.equal(ctx.w.publicBlob.mem.size, 0);
   assert.equal((await start(ctx)).status, 200);

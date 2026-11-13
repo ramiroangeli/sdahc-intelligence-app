@@ -142,11 +142,17 @@ export const draftPublishRoute = guardedRoute({
   capability: { GET: C.VIEW, POST: C.PUBLISH },
   run: async ({ req, session, deps }) => {
     const cfg = dataCfg(deps); const db = getDb(deps); const env = deps.env ?? process.env;
+    // GET ?preview=publish|update: the server prepares the exact content a Publisher would declare responsibility for and returns its hash. Nothing is recorded.
+    if (req.method === 'GET' && queryOf(req).preview) {
+      const q = queryOf(req);
+      if (!hasCapability(session.staff, C.PUBLISH)) throw new HttpError(403, 'forbidden');
+      return startPublication({ cfg, db, id: q.id, expectedVersion: Number(q.version), kind: q.preview, commercialStatus: q.commercialStatus || undefined, expectedStatus: q.expectedStatus || undefined, session, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, deps, preview: true, ...capsOf(session) });
+    }
     if (req.method === 'GET') return jobsFor({ cfg, db, id: queryOf(req).id, fetchImpl: f(deps), env, canPublish: hasCapability(session.staff, C.PUBLISH) });
     const body = await readJson(req);
     // a withdrawal carries no listing content and has its own rules (typed address, private reason, private audit record)
     if (body?.mode === 'withdraw') return startWithdrawal({ cfg, db, id: body?.id, body, actor: actorOf(session), session, fetchImpl: f(deps), env });
-    const out = await startPublication({ cfg, db, id: body?.id, expectedVersion: body?.expectedVersion, kind: body?.mode, commercialStatus: body?.commercialStatus, expectedStatus: body?.expectedStatus, session, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, deps, ...capsOf(session) });
+    const out = await startPublication({ cfg, db, id: body?.id, expectedVersion: body?.expectedVersion, kind: body?.mode, commercialStatus: body?.commercialStatus, expectedStatus: body?.expectedStatus, declarationAccepted: body?.declarationAccepted, reviewedHash: body?.reviewedHash, session, actor: actorOf(session), staff: session.staff, fetchImpl: f(deps), env, deps, ...capsOf(session) });
     return out;
   },
 });
@@ -176,13 +182,18 @@ export const publishPayloadRoute = signedRoute({
     const job = await jobsRepo.getJob(db, id, { withPayload: true });
     if (!job) throw new HttpError(404, 'job_not_found');
     if (!jobsRepo.isActive(job)) throw new HttpError(410, 'job_finished');
-    if (job.payload?.version === 2) {
+    // A real publication is served only against the Publisher's recorded declaration for exactly this frozen content. A legacy (version 1) request for a
+    // real job is never served, so the declaration cannot be bypassed by an older request. A dry run publishes nothing and needs no declaration.
+    let declaration;
+    if (['publish', 'update'].includes(job.kind)) {
+      if (job.payload?.version !== 2) throw new HttpError(409, 'declaration_not_verified');
       const hash = reviewedContentHash(job.payload, { publicId: job.public_id, draftVersion: job.draft_version });
-      const accepted = await db.unsafe("select 1 from listings.audit_log where job_id = $1 and public_id = $2 and draft_version = $3 and action = 'publication_acceptance' and detail->>'content_hash' = $4 and detail->'accepted' = 'true'::jsonb limit 1", [id, job.public_id, job.draft_version, hash]);
+      const accepted = await db.unsafe("select detail->>'terms_version' as terms from listings.audit_log where job_id = $1 and public_id = $2 and draft_version = $3 and action = 'publication_acceptance' and detail->>'content_hash' = $4 and detail->'accepted' = 'true'::jsonb limit 1", [id, job.public_id, job.draft_version, hash]);
       if (hash !== job.payload_hash || accepted.length !== 1) throw new HttpError(409, 'declaration_not_verified');
+      declaration = { accepted: true, termsVersion: accepted[0].terms, draftVersion: job.draft_version, contentHash: hash };
     }
     audit({ action: 'listings.publish.payload', outcome: 'ok', detail: { jobId: id } });
-    return job.payload;
+    return declaration ? { ...job.payload, declaration } : job.payload;
   },
 });
 

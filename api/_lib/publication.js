@@ -5,8 +5,8 @@
 //   GitHub Actions  the website's own engine, tests, build and privacy scan, then (real modes) one-file pull request, required check, merge,
 //                   deployment and live proof (scripts/listings-publish-job.mjs), reporting back by signed request
 // The job continues on GitHub's servers whether or not anyone keeps a browser open. This module never writes to Notion, GitHub content or Blob.
-import { publicOptional, stateOf } from './optional-fields.js';
-import { createHash } from 'node:crypto';
+import { declaredOptional } from './optional-fields.js';
+import { reviewedContentHash } from './publication-acceptance.js';
 import { loadPublishConfig } from './config.js';
 import { GithubAppError, installationToken } from './github-app.js';
 import { HttpError } from './http.js';
@@ -21,9 +21,6 @@ const EVENT_STATUSES = ['running', 'ok', 'failed', 'succeeded'];
 const JOB_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isJobId = (x) => typeof x === 'string' && JOB_ID_RE.test(x);
 
-const stable = (v) => JSON.stringify(sortKeys(v));
-const sortKeys = (v) => (Array.isArray(v) ? v.map(sortKeys) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v);
-const sha = (x) => createHash('sha256').update(stable(x)).digest('hex');
 
 /**
  * Plain-language wording for the rules the website's engine applies, so staff never read internal references. The rules themselves are
@@ -51,20 +48,24 @@ export function preflight(view) {
 const PRICING_MODES = ['asking_price', 'price_guide', 'eoi', 'contact_agent'];
 /** The frozen PUBLIC content the Publisher approved. Nothing internal. */
 export const COMMERCIAL_STATUSES = ['available', 'under_offer', 'sold'];
-/** `commercialStatus` is set only when the Publisher is CHANGING the status; otherwise the website keeps the status it already shows. */
-export function buildPayload({ jobId, view, draft, kind, commercialStatus, effectiveStatus = 'available' }) {
+/**
+ * `commercialStatus` is set only when the Publisher is CHANGING the status; otherwise the website keeps the status it already shows.
+ * Version 2 carries the SDA facts the Publisher reviewed (`reviewedSda`). A real publication is served to the website only with the Publisher's recorded
+ * declaration (publication-acceptance.js); the declaration itself is attached by the signed payload route, never stored in the frozen payload.
+ */
+export function buildPayload({ jobId, view, draft, kind, commercialStatus, effectiveStatus = 'available', reviewedSda = {} }) {
   const c = view.draft.content;
   if (!PRICING_MODES.includes(c.pricingMode)) throw new HttpError(409, 'not_ready', { reasons: ['Choose a pricing mode.'] });
   const needsPrice = c.pricingMode === 'asking_price' || c.pricingMode === 'price_guide';
   const price = needsPrice ? Number(String(c.displayPrice).replace(/[^0-9.]/g, '')) : null;
-  const optional = publicOptional(draft, { state: stateOf(c.publicAddress), status: effectiveStatus });
+  const optional = declaredOptional(draft, { status: effectiveStatus });
   const body = {
-    version: 1, jobId, mode: kind, publicId: draft.public_id,
+    version: 2, jobId, mode: kind, publicId: draft.public_id,
     // approval is made in the Listings Manager by a Publisher of the app's own staff list; the website job accepts it because the request is signed
     authority: 'listings_manager',
     content: { title: c.title, description: c.description, publicAddress: c.publicAddress, pricingMode: c.pricingMode, displayPrice: Number.isFinite(price) ? price : null, featured: c.featured === true, ...(commercialStatus ? { commercialStatus } : {}),
-      // optional groups only when there is something to say, so a listing without them produces exactly the payload (and hash) it always did.
-      // Built from the STORED draft (never the request); the commercial block is included only while a Publisher's approval matches its exact values.
+      // optional groups only when there is something to say. Built from the STORED draft (never the request). The commercial block travels under the
+      // Publisher's declaration, never for a Sold listing.
       ...(optional ? { optional } : {}) },
     manifest: {
       version: 1,
@@ -72,12 +73,14 @@ export function buildPayload({ jobId, view, draft, kind, commercialStatus, effec
       // nothing is stored per photograph
       photos: canonical(draft.photos).map((p) => ({ id: p.id, alt: (p.alt ?? '').trim(), width: p.width, height: p.height, accent: p.accent, privacyReviewed: true, ...(p.kind === 'floorplan' ? { kind: 'floorplan' } : {}), files: p.files.map((f) => ({ w: f.w, file: f.file })) })),
     },
+    reviewedSda,
     // Nobody is named. The website's snapshots and pull requests are public, so the approver is always this constant identity and the
     // person who acted is recorded only privately (the job record and the audit log).
     approver: { id: 'listings-manager', name: 'SDA Home Choices', notionUserId: null },
     approval: { by: 'listings_manager', at: new Date().toISOString() },
   };
-  return { payload: body, hash: sha(body.content) + ':' + sha(body.manifest.photos.map((p) => [p.id, p.alt, p.kind ?? 'photo'])) };
+  // the hash is the one the declaration is recorded against: listing, saved draft version, public text, optional groups, photographs and reviewed SDA facts
+  return { payload: body, hash: reviewedContentHash(body, { publicId: draft.public_id, draftVersion: draft.version }) };
 }
 
 /** GitHub's own words, with anything that looks like a credential removed (the token can never be echoed back, even if GitHub quoted it). */

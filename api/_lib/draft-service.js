@@ -10,12 +10,21 @@ import { systemItems, verificationState } from './verification.js';
 import { APPROVAL_KEY, DESC_KEY, stable, approvalState, approveInvestment, approveDescription, descriptionApprovalState, stateOf, withoutApproval, withoutDescriptionApproval, optionalChoices } from './optional-fields.js';
 import { photoReadiness, photoView, photosForRules, streetOf } from './photos.js';
 
-const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
+export const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
 
 const sameContent = (a, b) => ['title', 'description', 'publicAddress', 'pricingMode', 'displayPrice', 'featured'].every((k) => (a?.[k] ?? '') === (b?.[k] ?? ''))
   && ['property', 'sdaFacts', 'investment', 'marketing'].every((k) => stable(a?.[k]) === stable(b?.[k]));
 export const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
 export const needNotion = (cfg) => { if (!cfg.notion) throw new HttpError(503, 'notion_not_configured'); return cfg.notion; };
+
+/**
+ * Every public SDA fact the Publisher reviews, exactly as the website will store it: the CRM design categories and building type, plus the three SDA
+ * facts typed in the draft. The signed request freezes it and the website refuses the job if its own result differs.
+ */
+export function reviewedSdaFor(property, draft) {
+  const designCategories = (property?.designCategories ?? []).map((d) => DESIGN_TO_WEBSITE[d]).filter(Boolean);
+  return { ...(designCategories.length ? { designCategories } : {}), ...(property?.buildType ? { buildingType: property.buildType } : {}), ...(draft?.content?.sdaFacts ?? {}) };
+}
 
 export async function context(cfg, prop, { fetchImpl }) {
   const [snaps, comp] = await Promise.all([loadSnapshots(cfg, { fetchImpl }).catch(() => null), loadCompliance(cfg, { fetchImpl })]);

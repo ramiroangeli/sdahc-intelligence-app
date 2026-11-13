@@ -79,6 +79,7 @@ export async function database() {
   await db.exec(readFileSync('supabase/migrations/listings_0003_photo_review.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/listings_0004_publish_jobs.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/listings_0005_audit_log_and_reinstate.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/listings_0006_publication_acceptance.sql', 'utf8')); // local database only: not applied to any real database
   const adapter = {
     raw: db,
     unsafe: async (q, p) => (await db.query(q, p)).rows,
@@ -96,7 +97,15 @@ export const VIEWER = staff('viewer@sdahomechoices.com.au', ['listings.view']);
 export const userFor = (s) => azureUser({ email: s.email, id: '22222222-2222-4222-8222-' + String(s.email.length).padStart(12, '0'), identities: [{ provider: 'azure', identity_data: { email: s.email, iss: `https://login.microsoftonline.com/${TENANT}/v2.0` } }] });
 
 /** Call a route as a person. Returns { status, json }. */
-export async function call(route, w, db, person, { method = 'GET', url = '/', body, headers, fetch: fetchOverride, env } = {}) {
+export async function call(route, w, db, person, { method = 'GET', url = '/', body, headers, fetch: fetchOverride, env, declare = false } = {}) {
+  // declare: true behaves like the screen does for a real publication: the server prepares the exact content (GET ?preview=), then the request carries the
+  // checkbox and the hash it returned. A preview that is refused is returned as the answer (its pre-checks are the same ones the publication runs).
+  if (declare && method === 'POST') {
+    const q = new URLSearchParams({ id: body.id, version: String(body.expectedVersion), preview: body.mode, ...(body.commercialStatus ? { commercialStatus: body.commercialStatus, expectedStatus: body.expectedStatus ?? '' } : {}) });
+    const pv = await call(route, w, db, person, { method: 'GET', url: `/api/listings/draft-publish?${q}`, fetch: fetchOverride, env });
+    if (pv.status !== 200) return pv;
+    body = { ...body, declarationAccepted: true, reviewedHash: pv.json.preview.reviewedHash };
+  }
   w.state.user = userFor(person);
   clearSnapshotCache(); clearComplianceCache();
   const r = makeRes();

@@ -126,8 +126,9 @@ test('house numbers, amounts and contradictions typed into public fields are rej
   await bad({ publicAddress: '7B Wattle Street, Exampleton VIC 3999' }, (v) => assert.ok(v.fieldErrors.publicAddress));
   await bad({ publicAddress: 'Wattle Street, Exampleton NSW 3999' }, (v) => assert.match(v.fieldErrors.publicAddress.join(' '), /differs from the CRM state/));
   await bad({ description: 'The property is at 7B Wattle Street in Exampleton with three places.' }, (v) => assert.ok(v.errors.some((e) => e.code === 'private_address')));
-  // financial wording is a PUBLICATION warning (see description.test.js), not an editing error
-  await bad({ description: 'Strong net income of $98,765 per year from three participant places in Exampleton.' }, (v) => { assert.ok(v.blockers.some((b) => b.code === 'description_financial')); assert.equal(v.publishable, false); });
+  // financial wording in the description is covered by the Publisher's declaration, so it is no longer a blocker; in the title it is still an error
+  await bad({ description: 'Strong net income of $98,765 per year from three participant places in Exampleton.' }, (v) => { assert.ok(!v.blockers.some((b) => b.code === 'description_financial')); assert.equal(v.complete, true); });
+  await bad({ title: 'Net income $98,765 SDA house' }, (v) => assert.ok(v.errors.some((e) => e.code === 'title_financial') && v.fieldErrors.title));
   await bad({ description: 'Contact the owner on 0412 345 678 about this Exampleton SDA house for more.' }, (v) => assert.ok(v.errors.some((e) => e.code === 'personal_data')));
   await bad({ title: 'abc' }, (v) => assert.ok(v.fieldErrors.title));
 });

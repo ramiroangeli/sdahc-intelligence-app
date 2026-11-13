@@ -147,6 +147,21 @@ export function publicOptional(draft, { state, status } = {}) {
 }
 
 /**
+ * The optional public groups a request carries under the Publisher's declaration. The declaration replaces the separate commercial and Victorian approvals,
+ * so the commercial block travels as the Publisher saved it (no approval record, no hash: the website computes what it stores from the values and discards
+ * anything the request says about approval). A Sold listing carries no commercial block. Built from the STORED draft, never from a request.
+ */
+export function declaredOptional(draft, { status } = {}) {
+  const c = draft.content ?? {};
+  const out = {};
+  if (c.property) out.property = c.property;
+  if (c.sdaFacts) out.sda = c.sdaFacts;
+  if (c.marketing) out.marketing = c.marketing;
+  if (c.investment && status !== 'sold') out.investment = c.investment;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
  * The approval record for the stored values, or an error saying why not. `actor` comes from the session and `now` from the server clock.
  * Nothing in the request is consulted except the Publisher's explicit confirmations.
  */
