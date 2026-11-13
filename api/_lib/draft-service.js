@@ -1,6 +1,7 @@
 // Draft workflow: create, open, save, verify. Notion is only READ. Nothing here can change a public page: drafts live in the
 // operational database and no code path writes to Notion, GitHub or Blob.
 import { randomUUID } from 'node:crypto';
+import * as core from './vendor/listings-core.mjs';
 import { validateDraft, cleanContent, modeKeyFromLabel } from './draft-validation.js';
 import * as repo from './drafts-repo.js';
 import { HttpError, PUBLIC_ID_RE } from './http.js';
@@ -10,12 +11,23 @@ import { systemItems, verificationState } from './verification.js';
 import { APPROVAL_KEY, DESC_KEY, stable, approvalState, approveInvestment, approveDescription, descriptionApprovalState, stateOf, withoutApproval, withoutDescriptionApproval, optionalChoices } from './optional-fields.js';
 import { photoReadiness, photoView, photosForRules, streetOf } from './photos.js';
 
-const DESIGN_TO_WEBSITE = { HPS: 'HPS', IL: 'IL', R: 'Robust', Robust: 'Robust', FA: 'FA', Basic: 'Basic' };
+// the website's own reading of the CRM design categories (one source of truth, vendored): the app can never disagree with the engine about them
+const designFor = (labels) => core.mapDesignCategories(labels ?? []).values;
 
 const sameContent = (a, b) => ['title', 'description', 'publicAddress', 'pricingMode', 'displayPrice', 'featured'].every((k) => (a?.[k] ?? '') === (b?.[k] ?? ''))
   && ['property', 'sdaFacts', 'investment', 'marketing'].every((k) => stable(a?.[k]) === stable(b?.[k]));
 export const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)) throw new HttpError(400, 'invalid_id'); return id; };
 export const needNotion = (cfg) => { if (!cfg.notion) throw new HttpError(503, 'notion_not_configured'); return cfg.notion; };
+
+/**
+ * Every public SDA fact the Publisher reviews, exactly as the website will store it: the CRM design categories and building type, plus the three SDA
+ * facts typed in the draft. The signed request freezes it and the website refuses the job if its own result differs.
+ */
+export function reviewedSdaFor(property, draft) {
+  const designCategories = designFor(property?.designCategories);
+  const buildType = String(property?.buildType ?? '').trim();
+  return { ...(designCategories.length ? { designCategories } : {}), ...(buildType ? { buildingType: buildType } : {}), ...(draft?.content?.sdaFacts ?? {}) };
+}
 
 export async function context(cfg, prop, { fetchImpl }) {
   const [snaps, comp] = await Promise.all([loadSnapshots(cfg, { fetchImpl }).catch(() => null), loadCompliance(cfg, { fetchImpl })]);
@@ -23,7 +35,7 @@ export async function context(cfg, prop, { fetchImpl }) {
   const taken = new Set(snaps ? [...snaps.approved.values()].filter((s) => s.listingId !== prop.facts.id).map((s) => s.slug) : []);
   return {
     publicId: prop.facts.id, internal: prop.internal, crmState: prop.facts.state,
-    designCategories: prop.facts.designCategories.map((d) => DESIGN_TO_WEBSITE[d]).filter(Boolean), buildType: prop.facts.buildType,
+    designCategories: designFor(prop.facts.designCategories), buildType: prop.facts.buildType,
     takenSlugs: taken, compliance: comp.compliance, complianceUnavailable: comp.unavailable, onWebsite: snaps ? (snaps.approved.has(prop.facts.id) || snaps.withdrawn.has(prop.facts.id)) : null,
   };
 }
@@ -39,7 +51,7 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
   const claimBlockers = systemErrors.map((i) => ({ code: i.code, message: i.text }));
   const blockers = [
     ...validation.blockers, ...claimBlockers,
-    ...ver.open.filter((i) => i.severity === 'verify').map((i) => ({ code: i.code.startsWith('note:') ? 'verification_note' : 'verification', message: i.text })),
+    ...ver.open.filter((i) => i.severity === 'verify' && i.code.startsWith('note:')).map((i) => ({ code: 'verification_note', message: i.text })),
   ];
   const errorsAll = [...validation.errors];
   const fieldErrors = { ...validation.fieldErrors };
@@ -55,7 +67,7 @@ function view({ draft, prop, ctx, history, canEdit, canPublish }) {
     property: { fullName: prop.facts.fullName, state: prop.facts.state, designCategories: prop.facts.designCategories, buildType: prop.facts.buildType, buildClass: prop.facts.buildClass, features: prop.facts.features, occupancy: prop.facts.occupancy, notionStatus: prop.facts.webStatus.label, editedAt: prop.facts.editedAt, suggestedPublicAddress: prop.suggestedPublicAddress },
     notion: { changed: changedGroups(draft.base_facts, prop.hashes), baseEditedAt: draft.base_notion_edited_at, currentEditedAt: prop.facts.editedAt },
     photos: photoView(draft),
-    validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, blockers: blockersAll, slug: validation.slug, complete, publishable: complete && blockersAll.length === 0 },
+    validation: { fieldErrors, errors: errorsAll, warnings: validation.warnings, advisories: ver.advisories.map((i) => ({ code: i.code, message: i.text })), blockers: blockersAll, slug: validation.slug, complete, publishable: complete && blockersAll.length === 0 },
     verification: { system: ver.system, notes: ver.staff, open: ver.blocking },
     preview: validation.preview,
     optional: { approval: { ...approvalState(draft), stateCode: stateOf(content.publicAddress), ...(canPublish && draft.verification?.[APPROVAL_KEY]?.source ? { source: draft.verification[APPROVAL_KEY].source } : {}) },

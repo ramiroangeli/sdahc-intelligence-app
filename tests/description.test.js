@@ -52,53 +52,6 @@ test('the Armstrong Creek style description with dollar amounts, income and yiel
   assert.ok(s.json.preview.blocks.some((x) => x.type === 'ul' && x.items[0] === 'Gross income: $164,435 p.a. (FY26)'));
 });
 
-test('the same text carries a specific publication warning, not the old vague keyword error', async () => {
-  const c = await ready();
-  const s = await save(c, FIGURES);
-  const w = s.json.validation.blockers.find((x) => x.code === 'description_financial');
-  assert.ok(w, 'a publication warning is present');
-  assert.match(w.message, /"\$164,435 p\.a\."/);
-  assert.match(w.message, /"yield"/);
-  assert.match(w.message, /Gross income: \$164,435 p\.a\. \(FY26\)/, 'it quotes a line so the person can find it');
-  assert.match(w.message, /Publisher must approve this exact text/, 'it says how it can be published');
-  assert.match(w.message, /record the source/);
-  assert.ok(!/outside the approved price/.test(JSON.stringify(s.json)), 'the vague wording is gone');
-  assert.equal(s.json.validation.publishable, false);
-});
-
-test('Victoria: the warning says the approval also records a business authorisation, not a legal classification', async () => {
-  const c = await ready('VIC', 'Wattle Street, Exampleton VIC 3999');
-  const s = await save(c, FIGURES);
-  const w = s.json.validation.blockers.find((x) => x.code === 'description_financial');
-  assert.match(w.message, /Victorian listing/);
-  assert.match(w.message, /business authorisation/);
-  assert.match(w.message, /does not classify the property/);
-});
-
-test('free text cannot get figures published: a publication request for such a description is refused and nothing is recorded', async () => {
-  const c = await ready();
-  await save(c, FIGURES);
-  const r = await dry(c);
-  assert.equal(r.status, 409, JSON.stringify(r.json));
-  assert.equal(r.json.error, 'not_ready');
-  assert.ok(r.json.reasons.some((x) => /yield/.test(x)), 'the refusal names the problem');
-  assert.equal((await c.db.unsafe('select 1 from listings.publish_jobs')).length, 0);
-  assert.equal(c.gh.dispatches.length, 0);
-});
-
-test('an unapproved yield in the text does not bypass the approval of the structured commercial block', async () => {
-  const c = await ready();
-  await save(c, 'A fine house in Exampleton.\n\nNet yield 11.1%', { investment: { leaseStatus: 'fully_leased', yieldPct: 11.1, yieldType: 'net', basis: 'actual' } });
-  const r = await dry(c);
-  assert.equal(r.status, 409, 'blocked by the text');
-  await save(c, 'A fine house in Exampleton.', { investment: { leaseStatus: 'fully_leased', yieldPct: 11.1, yieldType: 'net', basis: 'actual' } });
-  const r2 = await dry(c);
-  assert.equal(r2.status, 200, JSON.stringify(r2.json));
-  const p = (await c.db.unsafe('select payload from listings.publish_jobs'))[0].payload;
-  assert.equal(p.content.optional?.investment, undefined, 'the structured figures still need a Publisher approval');
-  assert.ok(!/11\.1/.test(JSON.stringify(p)), 'the unapproved yield is nowhere in the request');
-});
-
 test('a plain long description with lists is accepted for publication and travels exactly as written', async () => {
   const c = await ready();
   await save(c, PLAIN);

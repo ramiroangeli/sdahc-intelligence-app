@@ -204,7 +204,7 @@ async function imported() {
   ctx.id = ID_RG;
   return ctx;
 }
-const publishAs = async (ctx, mode, who = ALI_N) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: (await ctx.db.unsafe('select version from listings.drafts where public_id = $1', [ID_RG]))[0].version, mode } });
+const publishAs = async (ctx, mode, who = ALI_N) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', declare: ['publish', 'update'].includes(mode), fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: (await ctx.db.unsafe('select version from listings.drafts where public_id = $1', [ID_RG]))[0].version, mode } });
 const history = async (ctx) => (await call(draftPublishRoute, ctx.w, ctx.db, ALI_N, { url: `/api/listings/draft-publish?id=${ID_RG}`, env: PUBLISH_ENV, fetch: ctx.gh.fetch })).json;
 const jobRows = (db) => db.unsafe('select kind, status, attempt from listings.publish_jobs order by created_at');
 
@@ -382,7 +382,7 @@ test('UI: staff-facing error text is plain (no GitHub, engine, workflow, payload
 });
 
 // ---- Commercial status: Available, Under offer, Sold (a Publisher's request; the website keeps its status unless one is asked for) ----
-const publishWith = async (ctx, mode, extra = {}, who = ALI_N) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: (await ctx.db.unsafe('select version from listings.drafts where public_id = $1', [ID_RG]))[0].version, mode, ...extra } });
+const publishWith = async (ctx, mode, extra = {}, who = ALI_N) => call(draftPublishRoute, ctx.w, ctx.db, who, { method: 'POST', declare: ['publish', 'update'].includes(mode), fetch: ctx.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: (await ctx.db.unsafe('select version from listings.drafts where public_id = $1', [ID_RG]))[0].version, mode, ...extra } });
 const payloadOfJob = async (ctx, id) => (await ctx.db.unsafe('select payload from listings.publish_jobs where id = $1', [id]))[0].payload;
 /** What the website shows after a successful publication: the saved draft, as paragraphs. (The fake job cannot merge, so the test mirrors the merge.) */
 const mirror = async (ctx) => {
@@ -631,16 +631,20 @@ test('STATUS CHANGE AUDIT: a public status change is recorded privately (who, fr
   const ctx = await imported();
   const r = await publishWith(ctx, 'update', { commercialStatus: 'under_offer', expectedStatus: 'available' });
   assert.equal(r.status, 200, JSON.stringify(r.json));
-  const rows = await auditRows(ctx.db);
+  const all = await auditRows(ctx.db);
+  assert.deepEqual(all.map((x) => x.action).sort(), ['publication_acceptance', 'status_change'], 'the declaration and the status change are both recorded');
+  const rows = all.filter((x) => x.action === 'status_change');
   assert.equal(rows.length, 1); assert.equal(rows[0].action, 'status_change'); assert.equal(rows[0].status_from, 'available'); assert.equal(rows[0].status_to, 'under_offer');
   assert.equal(rows[0].actor_email, 'ali@sdahomechoices.com.au'); assert.equal(rows[0].job_id, r.json.job.id); assert.equal(rows[0].reason, null);
   const ctx2 = await imported();
   const bad = { ...ctx2.db, unsafe: async (q, p) => { if (/insert into listings\.audit_log/.test(q)) throw new Error('database down'); return ctx2.db.unsafe(q, p); } };
-  const f = await call(draftPublishRoute, ctx2.w, bad, ALI_N, { method: 'POST', fetch: ctx2.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: 1, mode: 'update', commercialStatus: 'sold', expectedStatus: 'available' } });
+  const f = await call(draftPublishRoute, ctx2.w, bad, ALI_N, { method: 'POST', declare: true, fetch: ctx2.gh.fetch, env: PUBLISH_ENV, body: { id: ID_RG, expectedVersion: 1, mode: 'update', commercialStatus: 'sold', expectedStatus: 'available' } });
+  // the status record cannot be written: the job is failed, nothing is dispatched (the acceptance and job are one transaction, tested separately)
   assert.equal(f.status, 500); assert.equal(f.json.error, 'audit_failed'); assert.equal(ctx2.gh.dispatches.length, 0);
-  // ordinary publications and dry runs write no audit row
+  assert.equal((await ctx2.db.unsafe("select status from listings.publish_jobs where kind = 'update'"))[0].status, 'failed');
+  // an ordinary publication writes exactly the acceptance row (no status row); a dry run writes none
   const ctx3 = await imported(); await save(ctx3, { title: 'Established Improved Liveability SDA Investment, y' });
-  assert.equal((await publishWith(ctx3, 'update')).status, 200); assert.equal((await auditRows(ctx3.db)).length, 0);
+  assert.equal((await publishWith(ctx3, 'update')).status, 200); assert.deepEqual((await auditRows(ctx3.db)).map((x) => x.action), ['publication_acceptance']);
 });
 
 test('WITHDRAWAL UI: the confirm button needs a reason and the exact public address; the screen shows Withdrawn only from the website\'s state; withdraw wording is plain', () => {
@@ -713,7 +717,7 @@ test('OPTIONAL IMPORT: an adopted listing keeps its published optional details a
   assert.equal(r.status, 200, JSON.stringify(r.json));
   const inv = (await payloadOfJob(ctx, r.json.job.id)).content.optional.investment;
   assert.equal(inv.leaseStatus, 'fully_leased');
-  assert.equal(inv.approval.valuesHash, approvedBlock().approval.valuesHash, 'the same approved values, the same hash');
+  assert.equal(inv.approval, undefined, 'the request carries values only: the website computes what it stores');
   assert.ok(!/@/.test(JSON.stringify((await payloadOfJob(ctx, r.json.job.id)))), 'the carried-over approval names nobody');
 });
 
@@ -725,7 +729,8 @@ test('OPTIONAL IMPORT: a published block whose hash does not verify is not trust
   await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
   const r = await publishWith(ctx, 'update');
   assert.equal(r.status, 200);
-  assert.equal((await payloadOfJob(ctx, r.json.job.id)).content.optional?.investment, undefined);
+  // under the declaration the stored hash is irrelevant: the values travel as saved and the website recomputes its own record
+  assert.equal((await payloadOfJob(ctx, r.json.job.id)).content.optional.investment.leaseStatus, 'fully_leased');
 });
 
 test('OPTIONAL SOLD: setting Sold, or updating while Sold, never carries the commercial block (other details still travel)', async () => {
@@ -776,8 +781,8 @@ test('APPROVED DESCRIPTION IMPORT: a published, hash-verified approval and Victo
   assert.equal(r.status, 200, JSON.stringify(r.json));
   const p = await payloadOfJob(ctx, r.json.job.id);
   assert.equal(p.content.optional.investment.annualIncomeAud, 164435);
-  assert.equal(p.content.optional.investment.approval.victorian, true);
-  assert.deepEqual(p.content.optional.descriptionApproval, { textHash: core.descriptionApprovalHash(DESC, inv), victorian: true });
+  assert.equal(p.content.optional.investment.approval, undefined);
+  assert.equal(p.content.optional.descriptionApproval, undefined, 'the declaration replaces the description approval: nothing approval-shaped travels');
   assert.ok(!/@/.test(JSON.stringify(p)), 'nobody is named');
 });
 
@@ -787,7 +792,7 @@ test('APPROVED DESCRIPTION IMPORT: an approval whose hash does not verify is not
   assert.equal(ctx.first.optional.descriptionApproval.state, 'unapproved');
   await save(ctx, { title: 'Established Improved Liveability SDA Investment, refreshed' });
   const r = await publishWith(ctx, 'update');
-  assert.equal(r.status, 409, 'the text carries figures and has no valid approval, so publication is refused');
+  assert.equal(r.status, 200, 'under the declaration a stale or invalid old approval no longer blocks publication');
 });
 
 test('APPROVED DESCRIPTION SOLD: a listing whose description carries figures cannot be marked Sold until the text is edited', async () => {

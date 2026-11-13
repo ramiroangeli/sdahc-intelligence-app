@@ -9,7 +9,8 @@ import { COMMERCIAL_STATUSES, ENABLED_KINDS, REAL_KINDS, buildPayload, dispatchW
 import { photoStore } from './photo-store.js';
 import { promoteMedia, publicMediaConfigured, publicStore } from './public-media.js';
 import * as drafts from './drafts-repo.js';
-import { openDraft } from './draft-service.js';
+import { openDraft, reviewedSdaFor } from './draft-service.js';
+import { assertMigrated, createAcceptedJob } from './publication-acceptance.js';
 import { loadSnapshots } from './site.js';
 import { appendAudit, readAudit } from './audit-log.js';
 import { websiteState } from './withdrawal.js';
@@ -45,7 +46,13 @@ const requireId = (id) => { if (typeof id !== 'string' || !PUBLIC_ID_RE.test(id)
 
 export const publishingConfigured = (env) => { try { loadPublishConfig(env); return true; } catch { return false; } };
 
-export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps, deps = {}, commercialStatus, expectedStatus, session }) {
+/**
+ * Starts a publication job, or (preview: true) only prepares it: the same checks run and the server returns the hash of the exact content a Publisher would be
+ * declaring responsibility for. A real publication (publish, update) is created ONLY together with the Publisher's recorded declaration: the request must say
+ * `declarationAccepted: true` (the literal boolean) and carry the `reviewedHash` the preview returned for the draft version still saved. The acceptance and
+ * the job are written in one transaction (createAcceptedJob). Nothing the request says about who accepted, or when, is ever stored: the actor is the session.
+ */
+export async function startPublication({ cfg, db, id, expectedVersion, kind, actor, staff, fetchImpl, env, caps, deps = {}, commercialStatus, expectedStatus, session, declarationAccepted, reviewedHash, preview = false }) {
   requireId(id);
   if (!ENABLED_KINDS.includes(kind)) throw new HttpError(400, 'mode_not_enabled');
   if (!Number.isInteger(expectedVersion)) throw new HttpError(400, 'expected_version_required');
@@ -85,7 +92,15 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   // The commercial block is never sent for a Sold listing, and never when the status cannot be read (fail closed).
   const effectiveStatus = statusChange?.to ?? (kind === 'publish' ? 'available' : await websiteStatusOf(cfg, id, fetchImpl)); // undefined = unreadable, null = not on the website yet
   if (effectiveStatus === 'sold' && descriptionNeedsApproval(draft.content)) throw new HttpError(409, 'not_ready', { reasons: ['This listing is Sold, and a Sold listing carries no commercial figures. The description mentions income, yield or other commercial wording: edit it first, then mark the listing Sold.'] });
-  const { payload, hash } = buildPayload({ jobId, view, draft, kind, commercialStatus: statusChange?.to, effectiveStatus: effectiveStatus === undefined ? 'sold' : (effectiveStatus ?? 'available') });
+  const { payload, hash } = buildPayload({ jobId, view, draft, kind, commercialStatus: statusChange?.to, effectiveStatus: effectiveStatus === undefined ? 'sold' : (effectiveStatus ?? 'available'), reviewedSda: reviewedSdaFor(view.property, draft) });
+  if (real) await assertMigrated(db);
+  if (preview) return { preview: { kind, draftVersion: draft.version, reviewedHash: hash, declarationRequired: real }, wouldBlock: pf.wouldBlock };
+  // The declaration is checked before anything is recorded or copied. Whatever the request says, only the literal boolean true, for the content the server
+  // itself just built, counts.
+  if (real) {
+    if (declarationAccepted !== true) throw new HttpError(400, 'declaration_required', { reasons: ['Tick the confirmation to publish.'] });
+    if (typeof reviewedHash !== 'string' || reviewedHash !== hash) throw new HttpError(409, 'preview_changed', { reasons: ['The content changed since you previewed it. Reload the page and review it again.'] });
+  }
   const latest = await jobs.latestJob(db, id, draft.version, kind);
   const finishedOk = latest?.status === 'succeeded' && (!real || latest.result?.live === true);
   if (latest && latest.payload_hash === hash && (jobs.isActive(latest) || finishedOk)) return { job: jobView(latest), existing: true, wouldBlock: pf.wouldBlock };
@@ -104,10 +119,11 @@ export async function startPublication({ cfg, db, id, expectedVersion, kind, act
   // refused before any image is copied or job recorded; the website job would refuse it later anyway (wrong_mode)
   if (real && kind === 'publish' && await approvedOnWebsite(cfg, id, fetchImpl) === true) throw new HttpError(409, 'already_published', { reasons: ['This listing is already published on the website. Publish your changes as an update.'] });
   const attempt = (await jobs.countAttempts(db, id, draft.version, kind)) + 1;
-  const job = await jobs.createJob(db, {
+  const jobRow = {
     id: jobId, publicId: id, draftId: draft.id, draftVersion: draft.version, kind, attempt, payload, payloadHash: hash, requestedBy: actor.email, requestedByAuthUser: actor.authUserId,
     approverNotionUserId: staff.notionUserId ?? null, idempotencyKey: `${id}:${draft.version}:${kind}:${attempt}`,
-  });
+  };
+  const job = real ? await createAcceptedJob(db, { session, job: jobRow, reviewedHash, declarationAccepted }) : await jobs.createJob(db, jobRow);
   audit({ action: 'listings.publish.request', outcome: 'ok', actor, detail: { id, kind, jobId: job.id, draftVersion: draft.version, ...(statusChange ? { status: statusChange } : {}) } });
   if (statusChange) {
     // the private audit trail records who changed the public status, and from what to what; without it nothing is started

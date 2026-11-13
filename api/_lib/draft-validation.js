@@ -5,7 +5,7 @@ import * as core from './vendor/listings-core.mjs';
 import { HttpError } from './http.js';
 
 import { plainBlocker } from './publication.js';
-import { cleanOptional, optionalIssues, approvalState, descriptionApprovalState, stateOf } from './optional-fields.js';
+import { cleanOptional, optionalIssues } from './optional-fields.js';
 
 export const CONTENT_LIMITS = { title: 200, description: 30000, publicAddress: 200, displayPrice: 40 };
 const PRICING_KEYS = { asking_price: 'asking_price', price_guide: 'price_guide', eoi: 'eoi', contact_agent: 'contact_agent' };
@@ -39,25 +39,10 @@ function classify(msg) {
   if (/house or unit number|internal street number|full internal address|unit\/number/i.test(msg)) return { kind: 'error', code: 'private_address', field: 'description' };
   if (/dollar amount|financial term/i.test(msg)) return { kind: 'blocker', code: 'description_financial' };
   if (/CRM price|internal yield/i.test(msg)) return { kind: 'error', code: 'private_financial', field: 'description' };
-  if (/email|phone/i.test(msg)) return { kind: 'error', code: 'personal_data', field: 'description' };
+  if (/email|phone|identifiable participant/i.test(msg)) return { kind: 'error', code: 'personal_data', field: 'description' };
   if (/private document system/i.test(msg)) return { kind: 'error', code: 'private_link', field: 'description' };
   if (/new build|Basic classification/i.test(msg)) return { kind: 'error', code: 'basic_wording', field: 'description' };
   return { kind: 'error', code: 'content', field: null };
-}
-
-/**
- * The publication warning for financial wording in the text. Saving and previewing are never affected; this says exactly what was found and what to do.
- * The lines are the person's own (the draft is private to staff), so quoting them is safe.
- */
-function financialWarning(content, address, ctxDraftState) {
-  const lines = `${content.title}\n${content.description}`.split('\n').filter((l) => core.findFinancialMentions(l).length);
-  const seen = [...new Set(core.findFinancialMentions(`${content.title}\n${content.description}`))].slice(0, 6);
-  const quoted = lines.slice(0, 3).map((l) => { const t = l.trim().replace(/^[-*\u2022]\s+/, ''); return `"${t.slice(0, 70)}${t.length > 70 ? '...' : ''}"`; }).join(', ');
-  const vic = address && address.state === 'VIC';
-  const d = ctxDraftState;
-  const route = d === 'stale' ? ' It was approved before, but the text or the commercial values changed since, so it needs approving again.' : '';
-  return `The text mentions ${seen.map((x) => `"${x}"`).join(', ')}${quoted ? ` (for example ${quoted})` : ''}. You can keep it in the draft and preview it. To publish it, a Publisher must approve this exact text when SDAHC has already authorised it for public advertising (for example an existing public listing), and record the source.${route}`
-    + (vic ? ' This is a Victorian listing, so the approval also records a business authorisation. It does not classify the property under Victorian law.' : ' Otherwise remove those lines, or enter lease, occupancy, income and yield in Investment details.');
 }
 
 /**
@@ -99,7 +84,7 @@ export function validateDraft(content, ctx, now = new Date()) {
   } else if (content.pricingMode && content.displayPrice) addField('displayPrice', `A price is not shown in "${core.PRICING_MODE_LABEL[content.pricingMode]}" mode. Clear it or change the mode.`);
 
   // optional groups: invalid descriptive facts block publication (the website would refuse them); invalid commercial values only block their approval
-  for (const i of optionalIssues(content, { state: address?.state, allowVictorianFigures: !!ctx.draft && approvalState(ctx.draft).victorian === true })) {
+  for (const i of optionalIssues(content, { state: address?.state, allowVictorianFigures: true })) {
     if (i.field === 'investment') warnings.push({ code: 'investment_values', field: 'investment', message: i.message });
     else addField(i.field, i.message);
   }
@@ -116,6 +101,9 @@ export function validateDraft(content, ctx, now = new Date()) {
       pricing: { mode: content.pricingMode, ...(display ? { display } : {}) },
       sda: { ...(ctx.designCategories?.length ? { designCategories: ctx.designCategories } : {}), ...(ctx.buildType ? { buildingType: ctx.buildType } : {}) },
       photos: ctx.photos ?? [],
+      // The Publisher's declaration covers commercial wording in the description, exactly as the website engine applies it (declareOptionalGroups there), so the
+      // same safety checks run here with the description approved. Everything else (title, address, CRM figures, links, contact details, names) is still checked.
+      ...(core.findFinancialMentions(paras.join('\n')).length ? { descriptionApproval: { textHash: core.descriptionApprovalHash(paras, undefined), ...(address.state === 'VIC' ? { victorian: true } : {}) } } : {}),
     };
     // Run the website's own publication rules. Approval fields are placeholders: this is a readiness check, not an approval.
     const rec = {
@@ -130,12 +118,15 @@ export function validateDraft(content, ctx, now = new Date()) {
     for (const m of res.issues) {
       const c = classify(m);
       // never echo CRM values that a rule might have quoted
-      const message = c.code === 'description_financial' ? financialWarning(content, address, ctx.draft ? descriptionApprovalState(ctx.draft).state : 'unapproved') : c.code === 'victoria_compliance' || c.code === 'basic_classification' ? plainBlocker({ code: c.code, message: m }) : m.replace(/\$\s?\d[\d,]*/g, '[amount]');
-      if (c.code === 'description_financial' && ctx.draft) {
-        const d = descriptionApprovalState(ctx.draft);
-        const titleOnly = core.findFinancialMentions(content.title).length > 0;
-        if (d.state === 'approved' && (address.state !== 'VIC' || d.victorian === true) && !titleOnly) continue; // an approved exact description: the website engine applies the same rule
+      // The Publisher's declaration covers income, yield, occupancy and other commercial wording in the DESCRIPTION (including on a Victorian listing), so that
+      // is no longer a blocker. The title is not covered: it never carries a dollar amount or financial term.
+      if (c.code === 'description_financial') {
+        if (core.findFinancialMentions(content.title).length === 0) continue;
+        errors.push({ code: 'title_financial', field: 'title', message: 'The title mentions a dollar amount or financial term. Titles never carry them: move it to the description.' });
+        addField('title', 'The title mentions a dollar amount or financial term. Titles never carry them: move it to the description.');
+        continue;
       }
+      const message = c.code === 'victoria_compliance' || c.code === 'basic_classification' ? plainBlocker({ code: c.code, message: m }) : m.replace(/\$\s?\d[\d,]*/g, '[amount]');
       if (c.kind === 'blocker') blockers.push({ code: c.code, message });
       else { errors.push({ code: c.code, field: c.field, message }); if (c.field) addField(c.field, message); }
     }
@@ -144,7 +135,7 @@ export function validateDraft(content, ctx, now = new Date()) {
   return {
     fieldErrors, errors, blockers, warnings, slug,
     complete: complete() && errors.length === 0,
-    preview: { ...buildPreview(content, address, display, ctx), investment: ctx.draft ? approvalState(ctx.draft).state : (content.investment ? 'unapproved' : 'none') },
+    preview: { ...buildPreview(content, address, display, ctx), investment: content.investment ? 'declared' : 'none' },
   };
 }
 

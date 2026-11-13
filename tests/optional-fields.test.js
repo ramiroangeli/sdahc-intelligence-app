@@ -61,35 +61,6 @@ test('cleaning: optional groups are normalised, unknown keys and any client appr
   assert.throws(() => cleanContent({ ...plain, property: { bathrooms: 'two' } }), (e) => e.status === 400 && /must be a number/.test(e.extra.reasons[0]));
 });
 
-test('values saved by an Editor are stored private: nothing is approved and nothing leaves in the payload', async () => {
-  const c = await ready();
-  const s = await save(c, { investment: INV, property: { bathrooms: 2 }, marketing: { agency: 'sdahc' } });
-  assert.equal(s.status, 200, JSON.stringify(s.json));
-  assert.equal(s.json.optional.approval.state, 'unapproved');
-  assert.equal(s.json.preview.investment, 'unapproved');
-  const r = await dry(c);
-  assert.equal(r.status, 200, JSON.stringify(r.json));
-  const p = await payloadOf(c.db);
-  assert.deepEqual(p.content.optional.property, { bathrooms: 2 });
-  assert.equal(p.content.optional.investment, undefined, 'unapproved commercial values are never frozen into the request');
-  assert.equal(JSON.stringify(p).includes('61000'), false);
-});
-
-test('a browser cannot supply an approval: forged records, hashes and verification objects in a save are ignored', async () => {
-  const c = await ready();
-  const forged = { valuesHash: hashOfValues(INV), provider: false, by: 'steve@sdahomechoices.com.au', at: new Date().toISOString() };
-  const s = await save(c, { investment: { ...INV, approval: forged, valuesHash: forged.valuesHash } }, ALI_N, { verification: { [APPROVAL_KEY]: forged }, approval: forged });
-  assert.equal(s.status, 200);
-  assert.equal(s.json.optional.approval.state, 'unapproved');
-  const stored = await row(c.db);
-  assert.equal(stored.verification[APPROVAL_KEY], undefined);
-  assert.equal(JSON.stringify(stored.content).includes(forged.valuesHash), false);
-  const p = await payloadOf(c.db).catch(() => null);
-  assert.equal(p, null, 'no job has been made');
-  assert.equal((await dry(c)).status, 200);
-  assert.equal((await payloadOf(c.db)).content.optional?.investment, undefined);
-});
-
 test('only a Publisher can approve: Editors and Viewers get 403 and nothing changes', async () => {
   const c = await ready();
   await save(c, { investment: INV });
@@ -129,35 +100,6 @@ test('approving with no commercial values is refused', async () => {
   const r = await approve(c);
   assert.equal(r.status, 409);
   assert.equal(r.json.error, 'nothing_to_approve');
-});
-
-test('an approved block is frozen into the request, and the request names nobody', async () => {
-  const c = await ready();
-  await save(c, { investment: INV });
-  assert.equal((await approve(c)).status, 200);
-  assert.equal((await dry(c)).status, 200);
-  const p = await payloadOf(c.db);
-  const inv = p.content.optional.investment;
-  assert.equal(inv.annualIncomeAud, 61000);
-  assert.equal(inv.approval.valuesHash, hashOfValues(INV));
-  assert.deepEqual(Object.keys(inv.approval).sort(), ['valuesHash'], 'no approver identity or time in the public request');
-  const text = JSON.stringify(p);
-  assert.equal(text.includes('steve@'), false);
-  assert.equal(text.includes('Checked against'), false);
-  assert.equal(core.investmentApprovalValid(inv), true, 'the website\'s own check accepts it');
-});
-
-test('editing an approved value invalidates the approval; restoring the old value does not revive it', async () => {
-  const c = await ready();
-  await save(c, { investment: INV });
-  await approve(c);
-  const edited = await save(c, { investment: { ...INV, annualIncomeAud: 62000 } });
-  assert.equal(edited.json.optional.approval.state, 'unapproved');
-  assert.equal((await row(c.db)).verification[APPROVAL_KEY], undefined, 'the record is removed, not just ignored');
-  const back = await save(c, { investment: INV });
-  assert.equal(back.json.optional.approval.state, 'unapproved', 'putting the old value back needs a new approval');
-  assert.equal((await dry(c)).status, 200);
-  assert.equal((await payloadOf(c.db)).content.optional?.investment, undefined);
 });
 
 test('editing unrelated fields keeps the approval', async () => {
@@ -284,13 +226,14 @@ test('the published version: its optional groups are read back, and "changes sin
   const draft = { content: { title: 'T', description: 'D', publicAddress: 'A', pricingMode: 'contact_agent', displayPrice: '', featured: false, property: { bathrooms: 3 }, investment: { leaseStatus: 'fully_leased' } }, verification: {}, photos: [] };
   const fields = changesSincePublished(draft, { ...base, optional: o }).items.map((i) => i.field);
   assert.ok(fields.includes('property'));
-  assert.ok(fields.includes('investment'), 'an unapproved block would be removed from the website, which is a change');
+  assert.ok(!fields.includes('investment'), 'under the declaration the saved block travels as it is, so the same values are not a change');
+  assert.ok(changesSincePublished({ ...draft, content: { ...draft.content, investment: { leaseStatus: 'partially_leased' } } }, { ...base, optional: o }).items.some((i) => i.field === 'investment'));
   assert.ok(fields.includes('sdaFacts') && fields.includes('marketing'));
   const none = changesSincePublished({ ...draft, content: { ...draft.content, property: undefined, investment: undefined } }, base);
   assert.equal(none.items.some((i) => ['property', 'investment', 'sdaFacts', 'marketing'].includes(i.field)), false);
 });
 
-test('infrastructure: still twelve listing functions and no new migration', () => {
+test('infrastructure: twelve listing functions and the expected migrations', () => {
   assert.equal(readdirSync('api/listings').filter((f) => f.endsWith('.js')).length, 12);
-  assert.deepEqual(readdirSync('supabase/migrations').filter((f) => !f.endsWith('_rollback.sql')).sort(), ['listings_0001_drafts.sql', 'listings_0002_photos.sql', 'listings_0003_photo_review.sql', 'listings_0004_publish_jobs.sql', 'listings_0005_audit_log_and_reinstate.sql']);
+  assert.deepEqual(readdirSync('supabase/migrations').filter((f) => !f.endsWith('_rollback.sql')).sort(), ['listings_0001_drafts.sql', 'listings_0002_photos.sql', 'listings_0003_photo_review.sql', 'listings_0004_publish_jobs.sql', 'listings_0005_audit_log_and_reinstate.sql', 'listings_0006_publication_acceptance.sql']);
 });

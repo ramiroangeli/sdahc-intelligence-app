@@ -4,7 +4,7 @@
 // payload, pull request, commit, log line or public file. It is written by the withdrawal and by a public status change. 'reinstate' is allowed by the database (migration 0005) but is unused: reinstatement was cancelled by decision, and the extra permitted value stays harmlessly in place.
 import { HttpError } from './http.js';
 
-export const AUDIT_ACTIONS = ['status_change', 'withdraw', 'reinstate'];
+export const AUDIT_ACTIONS = ['status_change', 'withdraw', 'reinstate', 'publication_acceptance'];
 const STATUSES = ['available', 'under_offer', 'sold'];
 
 /** The actor as recorded: taken from the authenticated session only. Throws if there is not one. */

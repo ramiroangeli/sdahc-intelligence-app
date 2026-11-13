@@ -3,7 +3,7 @@
 // builds a snapshot from an approved draft (descriptions split into paragraphs, the price formatted as dollars, a blank title meaning "default"),
 // so "no changes" here means the website job would find nothing to publish.
 import { canonical } from './photos.js';
-import { publicOptional, stable } from './optional-fields.js';
+import { declaredOptional, stable } from './optional-fields.js';
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 // blocks keep their line breaks (bullet lists), exactly as the website reads them
@@ -33,7 +33,7 @@ export function changesSincePublished(draft, published) {
 
   // optional groups: what the draft would publish (the commercial block only while approved) against what is published, group by group
   {
-    const want = publicOptional(draft, { state: published.state, status: published.status }) ?? {};
+    const want = declaredOptional(draft, { status: published.status }) ?? {};
     const have = published.optional ?? {};
     const strip = (g) => (g ? (({ approval: _a, ...v }) => v)(g) : undefined);
     const same = (a, b) => stable(a) === stable(b);

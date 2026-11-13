@@ -32,7 +32,7 @@ test('Editor creates the Exampleton draft: safe public address suggested, no num
   assert.ok(!w.calls.some((c) => /blob|vercel\.com/.test(c.url)));
 });
 
-test('the CRM occupancy discrepancy is flagged for verification and blocks publication, not saving', async () => {
+test('the CRM occupancy discrepancy is flagged and shown as a warning; it does not block saving or publication', async () => {
   const { w, db } = await setup();
   const c = await create(w, db);
   const item = c.json.verification.system.find((i) => i.code === 'occupancy_not_full');
@@ -40,8 +40,8 @@ test('the CRM occupancy discrepancy is flagged for verification and blocks publi
   assert.match(item.text, /2 of 3 places/);
   const s = await save(w, db, ALI, ID_7B, 1, GOOD);
   assert.equal(s.status, 200, 'an unfinished/unverified draft can be saved');
-  assert.ok(s.json.validation.blockers.some((b) => b.code === 'verification'));
-  assert.equal(s.json.validation.publishable, false);
+  assert.ok(!s.json.validation.blockers.some((b) => b.code === 'verification'), 'no longer a blocker');
+  assert.ok(s.json.validation.advisories.some((a) => a.code === 'occupancy_not_full' && /2 of 3 places/.test(a.message)), 'shown as a visible warning');
 });
 
 test('wording that says fully leased contradicts the CRM: it can be saved and previewed, and blocks publication with a specific message', async () => {
@@ -126,8 +126,9 @@ test('house numbers, amounts and contradictions typed into public fields are rej
   await bad({ publicAddress: '7B Wattle Street, Exampleton VIC 3999' }, (v) => assert.ok(v.fieldErrors.publicAddress));
   await bad({ publicAddress: 'Wattle Street, Exampleton NSW 3999' }, (v) => assert.match(v.fieldErrors.publicAddress.join(' '), /differs from the CRM state/));
   await bad({ description: 'The property is at 7B Wattle Street in Exampleton with three places.' }, (v) => assert.ok(v.errors.some((e) => e.code === 'private_address')));
-  // financial wording is a PUBLICATION warning (see description.test.js), not an editing error
-  await bad({ description: 'Strong net income of $98,765 per year from three participant places in Exampleton.' }, (v) => { assert.ok(v.blockers.some((b) => b.code === 'description_financial')); assert.equal(v.publishable, false); });
+  // financial wording in the description is covered by the Publisher's declaration, so it is no longer a blocker; in the title it is still an error
+  await bad({ description: 'Strong net income of $98,765 per year from three participant places in Exampleton.' }, (v) => { assert.ok(!v.blockers.some((b) => b.code === 'description_financial')); assert.equal(v.complete, true); });
+  await bad({ title: 'Net income $98,765 SDA house' }, (v) => assert.ok(v.errors.some((e) => e.code === 'title_financial') && v.fieldErrors.title));
   await bad({ description: 'Contact the owner on 0412 345 678 about this Exampleton SDA house for more.' }, (v) => assert.ok(v.errors.some((e) => e.code === 'personal_data')));
   await bad({ title: 'abc' }, (v) => assert.ok(v.fieldErrors.title));
 });

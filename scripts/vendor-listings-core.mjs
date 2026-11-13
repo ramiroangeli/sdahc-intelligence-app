@@ -26,6 +26,7 @@ export { investmentValuesHash, investmentApprovalValid, victorianAuthorised, des
 export { AGENCIES, DEFAULT_AGENCY_KEY, isApprovedAgency } from '${src}/agencies';
 export { validateForPublication, contentHash } from '${src}/versioning';
 export { checkPublicSafety, findFinancialMentions } from '${src}/guards';
+export { mapDesignCategories } from '${src}/notion';
 export { descriptionBlocks, parseDescription, splitIntro, firstParagraph } from '${src}/description';
 `);
 const zod = createRequire(import.meta.url).resolve('zod');

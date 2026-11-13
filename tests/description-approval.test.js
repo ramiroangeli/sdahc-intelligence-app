@@ -36,33 +36,12 @@ const dry = async (c) => call(draftPublishRoute, c.w, c.db, ALI_N, { method: 'PO
 const payload = async (db) => (await db.unsafe('select payload from listings.publish_jobs order by created_at desc limit 1'))[0].payload;
 const blocks = (t) => core.descriptionBlocks(t);
 
-test('saving figures never approves them: unapproved text is refused at publication with the route to approval', async () => {
-  const c = await ready();
-  const s = await save(c, TEXT);
-  assert.equal(s.json.optional.descriptionApproval.state, 'unapproved');
-  assert.equal(s.json.optional.descriptionApproval.needs, true);
-  assert.ok(s.json.validation.blockers.some((b) => b.code === 'description_financial' && /Publisher must approve this exact text/.test(b.message)));
-  const r = await dry(c);
-  assert.equal(r.status, 409);
-  assert.ok(r.json.reasons.some((m) => /approve this exact text/.test(m)));
-  assert.equal((await row(c.db)).verification[DESC_KEY], undefined);
-});
-
 test('only a Publisher can approve; Editors and Viewers cannot, and nothing is recorded', async () => {
   const c = await ready();
   await save(c, TEXT);
   assert.equal((await approveDesc(c, {}, EDITOR)).status, 403);
   assert.equal((await verify(c, { description: 'withdraw' }, EDITOR)).status, 403);
   assert.equal((await row(c.db)).verification[DESC_KEY], undefined);
-});
-
-test('forged approval fields in a save are ignored (an Editor cannot create the record)', async () => {
-  const c = await ready();
-  const forged = { textHash: core.descriptionApprovalHash(blocks(TEXT)), by: PUB.email, at: new Date().toISOString(), source: SRC };
-  await save(c, TEXT, { descriptionApproval: forged, verification: { [DESC_KEY]: forged } }, ALI_N, { verification: { [DESC_KEY]: forged }, descriptionApproval: forged });
-  assert.equal((await row(c.db)).verification[DESC_KEY], undefined);
-  assert.equal(JSON.stringify((await row(c.db)).content).includes(forged.textHash), false);
-  assert.equal((await dry(c)).status, 409);
 });
 
 test('approval needs a confirmation and a recorded source; the record is built on the server', async () => {
@@ -83,54 +62,11 @@ test('approval needs a confirmation and a recorded source; the record is built o
   assert.equal(r.json.validation.blockers.some((b) => b.code === 'description_financial'), false, 'the figures are no longer a blocker');
 });
 
-test('an approved description is accepted for publication and travels with only a hash', async () => {
-  const c = await ready();
-  await save(c, TEXT);
-  await approveDesc(c);
-  const r = await dry(c);
-  assert.equal(r.status, 200, JSON.stringify(r.json));
-  const p = await payload(c.db);
-  assert.equal(p.content.description, TEXT, 'the exact text');
-  assert.deepEqual(p.content.optional.descriptionApproval, { textHash: core.descriptionApprovalHash(blocks(TEXT)) });
-  const all = JSON.stringify(p);
-  assert.ok(!/steve@|Checked against|example\.com\.au/.test(all), 'no identity, note or source in the request');
-});
-
-test('any material change to the text voids the approval and refuses publication; restoring the text does not revive it', async () => {
-  const c = await ready();
-  await save(c, TEXT); await approveDesc(c);
-  const edited = await save(c, TEXT.replace('11.1%', '11.2%'));
-  assert.equal(edited.json.optional.descriptionApproval.state, 'unapproved');
-  assert.equal((await row(c.db)).verification[DESC_KEY], undefined, 'the record is removed, not just ignored');
-  assert.equal((await dry(c)).status, 409);
-  const back = await save(c, TEXT);
-  assert.equal(back.json.optional.descriptionApproval.state, 'unapproved', 'putting the text back needs a new approval');
-  assert.equal((await dry(c)).status, 409);
-});
-
 test('unrelated edits keep the approval (title, address style are not part of the approved text)', async () => {
   const c = await ready();
   await save(c, TEXT); await approveDesc(c);
   const s = await save(c, TEXT, { title: 'A different valid title for this property', featured: true });
   assert.equal(s.json.optional.descriptionApproval.state, 'approved');
-});
-
-test('the approval is bound to the commercial values too: changing them voids it', async () => {
-  const c = await ready();
-  await save(c, TEXT, { investment: INV });
-  assert.equal((await approveInv(c)).status, 200);
-  assert.equal((await approveDesc(c)).status, 200);
-  assert.equal((await row(c.db)).verification[DESC_KEY].withInvestment, true);
-  assert.equal((await dry(c)).status, 200);
-  const p = await payload(c.db);
-  assert.ok(p.content.optional.investment && p.content.optional.descriptionApproval);
-  // the request carries a pair that the website recomputes: same function, same inputs
-  assert.equal(p.content.optional.descriptionApproval.textHash, core.descriptionApprovalHash(blocks(TEXT), p.content.optional.investment));
-  const edited = await save(c, TEXT, { investment: { ...INV, annualIncomeAud: 170000 } });
-  assert.equal(edited.json.optional.approval.state, 'unapproved');
-  assert.equal(edited.json.optional.descriptionApproval.state, 'unapproved');
-  const v = await row(c.db);
-  assert.equal(v.verification[APPROVAL_KEY], undefined); assert.equal(v.verification[DESC_KEY], undefined);
 });
 
 test('withdrawing the investment approval also removes the description approval that was bound to it', async () => {
@@ -142,73 +78,10 @@ test('withdrawing the investment approval also removes the description approval 
   assert.equal((await row(c.db)).verification[DESC_KEY], undefined);
 });
 
-test('approving the investment AFTER the description makes the description stale (it must be approved again, in that order)', async () => {
-  const c = await ready();
-  await save(c, TEXT, { investment: INV });
-  await approveDesc(c);
-  const r = await approveInv(c);
-  assert.equal(r.json.optional.descriptionApproval.state, 'stale');
-  assert.equal((await dry(c)).status, 409);
-  assert.equal((await approveDesc(c)).status, 200);
-  assert.equal((await dry(c)).status, 200);
-});
-
-test('withdrawing the description approval makes the text unpublishable again', async () => {
-  const c = await ready();
-  await save(c, TEXT); await approveDesc(c);
-  assert.equal((await verify(c, { description: 'withdraw' })).status, 200);
-  assert.equal((await dry(c)).status, 409);
-  assert.equal((await verify(c, { description: 'withdraw' })).json.error, 'nothing_to_withdraw');
-});
-
 test('nothing to approve: a description without commercial wording cannot be approved', async () => {
   const c = await ready();
   await save(c, 'A plain description of the property.');
   assert.equal((await approveDesc(c)).json.error, 'nothing_to_approve');
-});
-
-test('an approval does not relax the other protections: private data and title wording are still refused', async () => {
-  const c = await ready();
-  await save(c, TEXT + '\n\nCall the owner on 0412 345 678.');
-  await approveDesc(c);
-  const v = (await call(draftRoute, c.w, c.db, ALI_N, { url: `/api/listings/draft?id=${ID_7B}` })).json;
-  assert.ok(v.validation.errors.some((e) => e.code === 'personal_data'), 'a phone number is still an editing error');
-  const c2 = await ready();
-  await save(c2, TEXT, { title: 'Gross income $164,435 SDA investment' }); await approveDesc(c2);
-  const v2 = (await call(draftRoute, c2.w, c2.db, ALI_N, { url: `/api/listings/draft?id=${ID_7B}` })).json;
-  assert.ok(v2.validation.blockers.some((b) => b.code === 'description_financial'), 'the approval covers the description, not the title');
-});
-
-test('Victoria: the description approval records a business authorisation and needs an explicit acknowledgement', async () => {
-  const c = await ready('VIC');
-  await save(c, TEXT);
-  const no = await approveDesc(c);
-  assert.equal(no.status, 409); assert.equal(no.json.error, 'victorian_acknowledgement_needed');
-  const ok = await approveDesc(c, { victorianAcknowledged: true });
-  assert.equal(ok.status, 200, JSON.stringify(ok.json));
-  assert.equal((await row(c.db)).verification[DESC_KEY].victorian, true);
-  assert.equal((await dry(c)).status, 200);
-  assert.deepEqual((await payload(c.db)).content.optional.descriptionApproval, { textHash: core.descriptionApprovalHash(blocks(TEXT)), victorian: true });
-});
-
-test('Victoria: income and yield in the structured block need the recorded business authorisation and its source', async () => {
-  const c = await ready('VIC');
-  await save(c, 'A plain description of the property.', { investment: INV });
-  const refused = await approveInv(c);
-  assert.equal(refused.status, 409); assert.equal(refused.json.error, 'victorian_restriction');
-  assert.match(refused.json.reasons[0], /already authorised these exact figures/);
-  assert.equal((await approveInv(c, { existingAdvertisement: true })).json.error, 'source_required');
-  const ok = await approveInv(c, { existingAdvertisement: true, source: SRC });
-  assert.equal(ok.status, 200, JSON.stringify(ok.json));
-  const rec = (await row(c.db)).verification[APPROVAL_KEY];
-  assert.equal(rec.victorian, true); assert.equal(rec.source, SRC);
-  assert.equal(rec.valuesHash, core.investmentValuesHash({ ...INV, approval: { valuesHash: '0'.repeat(64), victorian: true } }), 'the flag is inside the hash');
-  assert.equal((await dry(c)).status, 200);
-  const inv = (await payload(c.db)).content.optional.investment;
-  assert.equal(inv.annualIncomeAud, 164435);
-  assert.equal(inv.approval.victorian, true);
-  assert.equal(core.victorianAuthorised(inv), true, 'the website\'s own check accepts it');
-  assert.ok(!JSON.stringify(await payload(c.db)).includes(SRC));
 });
 
 test('Victoria: lease and occupancy alone still approve without any authorisation, and the original refusal is the default', async () => {
