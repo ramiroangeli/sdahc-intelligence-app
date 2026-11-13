@@ -25,6 +25,17 @@ export async function createAcceptedJob(db, { session, job, reviewedHash, declar
   if (!actor.authUserId) throw new HttpError(401, 'authenticated_identity_required');
   const hash = reviewedContentHash(job.payload, { publicId: job.publicId, draftVersion: job.draftVersion });
   if (typeof reviewedHash !== 'string' || reviewedHash !== hash) throw new HttpError(409, 'preview_changed');
+  try {
+    return await recordAcceptedJob(db, { job, hash, session });
+  } catch (e) {
+    // The database was not migrated to 0006 (the audit action is not allowed yet): fail closed with a clear, non-secret answer. Nothing was recorded or started.
+    if (/audit_log_action_check|publication_acceptance/.test(String(e?.message)) && !(e instanceof HttpError)) throw new HttpError(503, 'migration_required', { reasons: ['Publishing is paused: the database update for publisher confirmations has not been applied. Nothing was recorded. Tell an administrator.'] });
+    throw e;
+  }
+}
+
+async function recordAcceptedJob(db, { job, hash, session }) {
+  const actor = actorFromSession(session);
   return db.begin(async (tx) => {
     const rows = await tx.unsafe('select id, version from listings.drafts where public_id = $1 and discarded_at is null for update', [job.publicId]);
     if (!rows[0] || rows[0].id !== job.draftId || rows[0].version !== job.draftVersion) throw new HttpError(409, 'draft_changed');
@@ -33,4 +44,10 @@ export async function createAcceptedJob(db, { session, job, reviewedHash, declar
       detail: { accepted: true, content_hash: hash, terms_version: INTERNAL_TERMS_VERSION } });
     return created;
   });
+}
+
+/** Is migration 0006 in place (the audit trail accepts publication acceptances)? Checked when a Publisher previews, so nobody ticks a box that cannot be recorded. */
+export async function assertMigrated(db) {
+  const rows = await db.unsafe("select 1 from pg_constraint where conname = 'audit_log_action_check' and pg_get_constraintdef(oid) like '%publication_acceptance%' limit 1");
+  if (rows.length !== 1) throw new HttpError(503, 'migration_required', { reasons: ['Publishing is paused: the database update for publisher confirmations has not been applied. Nothing was recorded. Tell an administrator.'] });
 }

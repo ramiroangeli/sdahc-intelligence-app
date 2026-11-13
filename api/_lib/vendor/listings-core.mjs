@@ -23771,6 +23771,112 @@ var splitIntro = (blocks) => {
   const cut = i === -1 ? 1 : i + 1;
   return { intro: blocks.slice(0, cut), rest: blocks.slice(cut) };
 };
+
+// ../sdahc-publisher-web/src/data/listings/notion.ts
+var NOTION = {
+  // existing fields
+  name: "Name",
+  address: "Address",
+  price: "Price",
+  yield: "Yield",
+  description: "Description",
+  designCategory: "Design Category",
+  buildType: "Build Type",
+  features: "Features",
+  listingAgent: "Listing Agent",
+  listingDate: "Listing Date",
+  listingEndDate: "Listing End Date",
+  sharepointLink: "Sharepoint Link",
+  deals: "Deals",
+  state: "State/ Territory",
+  // new Web* properties. Required: status, public address, description, pricing mode, approver.
+  webStatus: "Web Listing Status",
+  webPublicAddress: "Web Public Address",
+  webDescription: "Web Description",
+  webPricingMode: "Web Pricing Mode",
+  webApprovedBy: "Web Approved By",
+  // required only when the pricing mode is Asking Price or Price Guide
+  webDisplayPrice: "Web Display Price",
+  // optional: a title defaults to "SDA property, <suburb>"; featured defaults to false; the folder is a
+  // human pointer to the approved photos and is never read by the website
+  webTitle: "Web Title",
+  webFeatured: "Web Featured",
+  webPhotoFolder: "Web Photo Folder"
+};
+var CORE_FIELDS = [NOTION.name, NOTION.address, NOTION.price, NOTION.description, NOTION.designCategory, NOTION.deals, NOTION.state, NOTION.sharepointLink];
+var WEB_REQUIRED = [NOTION.webStatus, NOTION.webPublicAddress, NOTION.webDescription, NOTION.webPricingMode, NOTION.webApprovedBy];
+var WEB_CONDITIONAL = [NOTION.webDisplayPrice];
+var WEB_OPTIONAL = [NOTION.webTitle, NOTION.webFeatured, NOTION.webPhotoFolder];
+var WEB_FIELDS = [...WEB_REQUIRED, ...WEB_CONDITIONAL, ...WEB_OPTIONAL];
+var DESIGN_BY_KEY = {
+  hps: "HPS",
+  highphysicalsupport: "HPS",
+  il: "IL",
+  improvedliveability: "IL",
+  r: "Robust",
+  robust: "Robust",
+  fa: "FA",
+  fullyaccessible: "FA",
+  basic: "Basic"
+};
+var mapDesignCategories = (raw) => {
+  const values = [];
+  const unknown = [];
+  for (const r of raw) {
+    const k = r.toLowerCase().replace(/[^a-z]/g, "");
+    const v = DESIGN_BY_KEY[k];
+    if (v) {
+      if (!values.includes(v)) values.push(v);
+    } else unknown.push(r);
+  }
+  return { values, unknown };
+};
+var EXPECTED_CORE_TYPES = {
+  [NOTION.name]: "title",
+  [NOTION.address]: "rich_text",
+  [NOTION.price]: "number",
+  [NOTION.yield]: "number",
+  [NOTION.designCategory]: "select",
+  [NOTION.state]: "select",
+  [NOTION.features]: "multi_select",
+  [NOTION.description]: "rich_text",
+  [NOTION.sharepointLink]: "url",
+  [NOTION.listingAgent]: "rich_text",
+  [NOTION.listingDate]: "date",
+  [NOTION.listingEndDate]: "date"
+};
+var OPTIONAL_CORE_TYPES = { [NOTION.deals]: "relation" };
+var WEB_STATUS_OPTIONS = ["Not Published", "Draft", "In Review", "Approved", "Published", "Under Offer", "Sold", "Withdrawn"];
+var WEB_PRICING_OPTIONS = ["Asking Price", "Price Guide", "Expressions of Interest", "Contact Agent"];
+var WEB_SCHEMA = [
+  { name: NOTION.webStatus, type: "select", options: WEB_STATUS_OPTIONS, required: "always", defaultBehaviour: "Not Published. Blank or unrecognised also means Not Published, so nothing can go live.", mapsTo: "Not stored. It is the visibility gate: Published, Under Offer and Sold set snapshot.commercialStatus (Available, Under offer, Sold); Draft, In Review and Approved are checked but never proposed; Withdrawn and Not Published are never proposed.", note: "Default value: Not Published." },
+  { name: NOTION.webPublicAddress, type: "rich_text", required: "always", defaultBehaviour: "Blank blocks publication.", mapsTo: "content.address { street, suburb, state, postcode }. Also the source of the slug. There is no field for a house or unit number.", note: "Street Name, Suburb STATE 1234. No house or unit number." },
+  { name: NOTION.webDescription, type: "rich_text", required: "always", defaultBehaviour: "Blank blocks publication. The CRM Description is never used.", mapsTo: "content.description[] (one entry per paragraph). The first paragraph becomes the summary shown on cards.", note: "Public text only. Paragraphs separated by a blank line." },
+  { name: NOTION.webPricingMode, type: "select", options: WEB_PRICING_OPTIONS, required: "always", defaultBehaviour: "Blank blocks publication.", mapsTo: "content.pricing.mode (asking_price, price_guide, eoi, contact_agent).", note: "No default." },
+  { name: NOTION.webApprovedBy, type: "people", required: "always", defaultBehaviour: "Blank blocks publication. The person must also be on approvers.json (by Notion user id).", mapsTo: "snapshot.approvedBy and snapshot.approvedById. Not shown on any page.", note: "One authorised approver. Authorisation is verified by user id, not by this field alone." },
+  { name: NOTION.webDisplayPrice, type: "number", required: "conditional", defaultBehaviour: "Blank is correct for EOI and Contact Agent. Required for Asking Price and Price Guide; filling it for the other two modes is reported and ignored.", mapsTo: 'content.pricing.display, formatted as "$695,000 AUD". Never copied from the CRM Price.', note: "AUD. A single figure; a range needs a second field." },
+  { name: NOTION.webTitle, type: "rich_text", required: "optional", defaultBehaviour: 'Blank derives "SDA property, <suburb>".', mapsTo: "content.title.", note: "Maximum 90 characters." },
+  { name: NOTION.webFeatured, type: "checkbox", required: "optional", defaultBehaviour: "Unchecked: not featured.", mapsTo: "snapshot.featured (orders the hero cards).", note: "Defaults to unchecked." },
+  { name: NOTION.webPhotoFolder, type: "url", required: "optional", defaultBehaviour: "Blank is fine.", mapsTo: 'Not stored and never read by the website. A human pointer to the SharePoint "Approved for Website" folder.', note: "Never read by the website." }
+];
+var PROPOSAL_PROPERTIES = [
+  NOTION.name,
+  NOTION.address,
+  NOTION.price,
+  NOTION.yield,
+  NOTION.designCategory,
+  NOTION.buildType,
+  NOTION.state,
+  NOTION.listingEndDate,
+  NOTION.webStatus,
+  NOTION.webPublicAddress,
+  NOTION.webDescription,
+  NOTION.webPricingMode,
+  NOTION.webDisplayPrice,
+  NOTION.webApprovedBy,
+  NOTION.webTitle,
+  NOTION.webFeatured
+];
 export {
   AGENCIES,
   AddressError,
@@ -23801,6 +23907,7 @@ export {
   investmentValuesHash,
   isApprovedAgency,
   makeSlug,
+  mapDesignCategories,
   marketingSchema,
   normalisePriceDisplay,
   optionalGroupsSchema,

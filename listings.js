@@ -1178,7 +1178,8 @@ function reviewContent() {
   if (!v.complete) pf.push('Complete the required details.');
   if (!ph.items.some((p) => p.kind !== 'floorplan')) pf.push('Add at least one photograph.');
   if (!ph.readiness.ready) pf.push('Fix the flagged photo descriptions.');
-  if (v.blockers.some((b) => !['photos_required', 'photo_alt'].includes(b.code))) pf.push('Finish the items in "Preview and check".');
+  // say what is blocking, in the screen's own words: nothing is hidden behind a generic message
+  for (const b of v.blockers) if (!['photos_required', 'photo_alt'].includes(b.code) && !pf.includes(b.message)) pf.push(b.message);
   if (d.notion.changed.length) pf.push('The CRM record changed: review it and save the draft.');
   if (LS.dirty) pf.push('Save your changes first: this step shows the saved draft.');
   const startable = pf.length === 0;
@@ -1217,6 +1218,7 @@ function reviewContent() {
   const action = nochg ? lsEl('div', { class: 'ls-banner ls-banner-ok', id: 'ls-no-changes', role: 'status' }, 'No changes to publish. This listing already matches what is on the website. Go back to "Prepare" when something needs to change.')
     : ro ? lsEl('div', { class: 'ls-sub', text: 'Only a Publisher can publish.' })
     : lsEl('div', { class: 'ls-publish-action' },
+      !active && v.advisories && v.advisories.length ? lsEl('div', { class: 'ls-banner', id: 'ls-advisories', role: 'status' }, lsEl('strong', { text: 'Check before you confirm: ' }), v.advisories.map((a) => a.message).join(' ')) : null,
       startable && !active ? declarationBox() : null,
       lsEl('button', { class: 'btn btn-primary', type: 'button', id: 'ls-publish-btn', disabled: lsUnverified() || !startable || !!active || LS.jobBusy || (jobs && !jobs.configured) || !lsCanDeclare(), onclick: lsStartPublish,
         text: LS.jobBusy ? 'Starting...' : realActive ? 'Publishing...' : active ? 'Please wait...' : button }),

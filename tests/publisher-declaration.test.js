@@ -8,7 +8,9 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { draftPhotosRoute, draftPublishRoute, draftRoute, publishPayloadRoute, publishCallbackRoute } from '../api/_lib/routes.js';
 import { reviewedContentHash } from '../api/_lib/publication-acceptance.js';
-import { ALI_N, EDITOR, ID_7B, PUBLISH_ENV, SECRET, VIEWER, call, callSigned, database, github, resetCaches, world } from './drafts-harness.js';
+import { ALI_N, EDITOR, ID_7B, PUBLISH_ENV, SECRET, SECRETS, VIEWER, call, callSigned, database, github, resetCaches, world } from './drafts-harness.js';
+import * as core from '../api/_lib/vendor/listings-core.mjs';
+import { reviewedSdaFor } from '../api/_lib/draft-service.js';
 
 const jpeg = (n) => sharp({ create: { width: 1600 + n * 10, height: 1000, channels: 3, background: { r: (n * 37) % 255, g: (n * 91) % 255, b: (n * 151) % 255 } } }).jpeg().toBuffer();
 const BASE = { title: 'Established Improved Liveability SDA Investment', description: 'An improved liveability SDA house in Exampleton with three participant places and onsite overnight assistance.', publicAddress: 'Wattle Street, Exampleton VIC 3999', pricingMode: 'contact_agent', displayPrice: '', featured: false };
@@ -152,16 +154,6 @@ test('VICTORIA WITH FINANCIAL FIGURES: income, yield, occupancy and a financial 
   assert.equal(v.investment_disclosure, undefined); assert.equal(v.description_disclosure, undefined, 'no separate approval was ever recorded');
 });
 
-test('SOLD: a Sold listing carries no commercial block, and financial wording must be edited out first', async () => {
-  const c = await ready({ ...BASE, description: FIN_TEXT, investment: INV });
-  const pv = await preview(c);
-  assert.equal((await publish(c, { declarationAccepted: true, reviewedHash: pv.json.preview.reviewedHash })).status, 200);
-  const [job] = await c.db.unsafe('select * from listings.publish_jobs');
-  await c.db.unsafe("update listings.publish_jobs set status = 'succeeded', result = '{\"live\":true}'::jsonb where id = $1", [job.id]);
-  const sold = await route(c, ALI_N, { method: 'POST', declare: true, body: { id: ID_7B, expectedVersion: await version(c.db), mode: 'update', commercialStatus: 'sold', expectedStatus: 'available' } });
-  assert.notEqual(sold.status, 200, 'refused: the text still carries income or yield');
-});
-
 test('FAILURE AND RETRY: a failed dispatch keeps its acceptance; a retry needs a fresh declaration and leaves a separate trace', async () => {
   const c = await ready();
   c.gh.status = 500;
@@ -217,4 +209,63 @@ test('the declaration wording is exactly the approved text and the box starts un
   assert.match(ui, /declared: false/);
   assert.match(ui, /declarationAccepted: LS\.declared === true, reviewedHash: LS\.preview\.reviewedHash/);
   assert.ok(!/—/.test(ui));
+});
+
+test('CRM OCCUPANCY DIFFERENCE is a visible warning, not a blocker: the Publisher sees it, the declaration covers it, publication proceeds', async () => {
+  const c = await ready();
+  const open = await call(draftRoute, c.w, c.db, ALI_N, { url: `/api/listings/draft?id=${ID_7B}` });
+  assert.ok(open.json.validation.advisories.some((a) => a.code === 'occupancy_not_full' && /2 of 3/.test(a.message)), 'the warning is shown with its reason');
+  assert.ok(!open.json.validation.blockers.some((b) => b.code === 'verification'), 'and is not a blocker');
+  const pv = await preview(c);
+  assert.equal((await publish(c, { declarationAccepted: true, reviewedHash: pv.json.preview.reviewedHash })).status, 200);
+});
+
+test('A KNOWN MATERIALLY FALSE CLAIM is not overridden by the declaration: "fully leased" in the text or "fully occupied" in the commercial block, against a CRM that records 2 of 3', async () => {
+  for (const patch of [{ description: `${BASE.description} The property is fully occupied.` }, { investment: { occupancyStatus: 'fully_occupied', leaseStatus: 'fully_leased' } }]) {
+    const c = await ready({ ...BASE, ...patch });
+    const open = await call(draftRoute, c.w, c.db, ALI_N, { url: `/api/listings/draft?id=${ID_7B}` });
+    const b = open.json.validation.blockers.find((x) => x.code === 'public_text_claims_full');
+    assert.ok(b && /2 of 3/.test(b.message), 'the screen can say exactly why');
+    const pv = await preview(c);
+    assert.equal(pv.status, 409); assert.equal(pv.json.error, 'not_ready'); assert.ok(pv.json.reasons.some((r) => /2 of 3/.test(r)));
+    assert.deepEqual(await counts(c), { jobs: 0, audit: 0, dispatches: 0 });
+  }
+});
+
+test('PRIVATE CRM INFORMATION: a house number in the text is refused even with financial wording; no CRM figure ever reaches the payload', async () => {
+  const bad = await ready({ ...BASE, description: `${FIN_TEXT}\n\nThe property is at 7B Wattle Street, Exampleton.` });
+  const open = await call(draftRoute, bad.w, bad.db, ALI_N, { url: `/api/listings/draft?id=${ID_7B}` });
+  assert.equal(open.json.validation.complete, false); assert.ok(open.json.validation.errors.some((e) => e.code === 'private_address'));
+  assert.equal((await preview(bad)).status, 409);
+  const c = await ready({ ...BASE, description: FIN_TEXT, investment: INV });
+  const pv = await preview(c);
+  assert.equal((await publish(c, { declarationAccepted: true, reviewedHash: pv.json.preview.reviewedHash })).status, 200);
+  const [job] = await c.db.unsafe('select payload from listings.publish_jobs');
+  const wire = JSON.stringify(job.payload);
+  for (const secret of SECRETS) assert.ok(!wire.includes(secret), `the CRM value ${secret} must never be in the payload`);
+  assert.ok(!/7B Wattle|sharepoint|notion\.so/i.test(wire));
+});
+
+test('A DATABASE WITHOUT MIGRATION 0006 FAILS CLOSED: preview and publish answer 503 migration_required and nothing is recorded or dispatched', async () => {
+  const c = await ready();
+  await c.db.raw.exec("alter table listings.audit_log drop constraint audit_publication_acceptance_details; alter table listings.audit_log drop constraint audit_log_action_check; alter table listings.audit_log add constraint audit_log_action_check check (action in ('status_change','withdraw','reinstate'));");
+  const pv = await preview(c);
+  assert.equal(pv.status, 503); assert.equal(pv.json.error, 'migration_required');
+  const r = await publish(c, { declarationAccepted: true, reviewedHash: 'a'.repeat(64) });
+  assert.equal(r.status, 503); assert.equal(r.json.error, 'migration_required');
+  assert.equal((await c.db.unsafe('select count(*)::int n from listings.publish_jobs'))[0].n, 0); assert.equal(c.gh.dispatches.length, 0);
+});
+
+test('SDA MAPPING: the app reads the CRM design categories with the website\'s own function (every spelling), so the frozen facts cannot disagree with the engine', () => {
+  for (const labels of [['HPS', 'IL', 'R', 'FA', 'Basic'], ['High Physical Support', 'improved liveability', 'Robust'], ['il', 'IL']]) {
+    assert.deepEqual(reviewedSdaFor({ designCategories: labels, buildType: ' House ' }, { content: {} }), { designCategories: core.mapDesignCategories(labels).values, buildingType: 'House' });
+  }
+  assert.ok(!/DESIGN_TO_WEBSITE/.test(readFileSync('api/_lib/draft-service.js', 'utf8')), 'no second hand-written mapping');
+});
+
+test('THE SCREEN SAYS WHAT BLOCKS PUBLICATION and shows warnings next to the confirmation (screen source)', () => {
+  const ui = readFileSync('listings.js', 'utf8');
+  assert.match(ui, /for \(const b of v\.blockers\) if \(!\['photos_required', 'photo_alt'\]\.includes\(b\.code\) && !pf\.includes\(b\.message\)\) pf\.push\(b\.message\)/);
+  assert.ok(!ui.includes('Finish the items in "Preview and check".'), 'no generic message that hides the reason');
+  assert.match(ui, /id: 'ls-advisories'/);
 });

@@ -14,7 +14,8 @@ export function systemItems({ occupancy, content }) {
       text: `The CRM records ${occupancy.occupied} of ${occupancy.places} places physically occupied. Confirm the current occupancy before public wording or any other channel calls the property fully leased or fully occupied.`,
     });
     const text = `${content?.title ?? ''}\n${content?.description ?? ''}`;
-    if (FULL_CLAIM.test(text)) {
+    // a structured "fully occupied" claim in the commercial block is the same claim as the words: the Publisher's declaration cannot make a figure the CRM contradicts true
+    if (FULL_CLAIM.test(text) || content?.investment?.occupancyStatus === 'fully_occupied') {
       items.push({
         code: 'public_text_claims_full', severity: 'error', basis: sha(['claim', occupancy]),
         text: `The draft says the property is fully leased or occupied, but the CRM records ${occupancy.occupied} of ${occupancy.places}. Change the wording or correct the CRM first.`,
@@ -33,5 +34,8 @@ export function verificationState({ occupancy, content, verification, notes }) {
   });
   const staff = (notes ?? []).map((n) => ({ code: `note:${n.id}`, id: n.id, severity: 'verify', text: n.text, by: n.by, at: n.at, status: n.status, resolvedBy: n.resolvedBy ?? null, resolvedAt: n.resolvedAt ?? null }));
   const open = [...system, ...staff].filter((i) => i.status === 'open');
-  return { system, staff, open, blocking: open.length };
+  // A CRM occupancy difference is internal business validation: it is shown as a visible warning and the Publisher's declaration covers it. It no longer blocks.
+  // What still blocks: a claim the CRM contradicts (severity error) and a staff note somebody raised on purpose.
+  const advisories = open.filter((i) => i.severity === 'verify' && !i.code.startsWith('note:'));
+  return { system, staff, open, advisories, blocking: open.length - advisories.length };
 }

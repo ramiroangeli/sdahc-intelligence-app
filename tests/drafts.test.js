@@ -32,7 +32,7 @@ test('Editor creates the Exampleton draft: safe public address suggested, no num
   assert.ok(!w.calls.some((c) => /blob|vercel\.com/.test(c.url)));
 });
 
-test('the CRM occupancy discrepancy is flagged for verification and blocks publication, not saving', async () => {
+test('the CRM occupancy discrepancy is flagged and shown as a warning; it does not block saving or publication', async () => {
   const { w, db } = await setup();
   const c = await create(w, db);
   const item = c.json.verification.system.find((i) => i.code === 'occupancy_not_full');
@@ -40,8 +40,8 @@ test('the CRM occupancy discrepancy is flagged for verification and blocks publi
   assert.match(item.text, /2 of 3 places/);
   const s = await save(w, db, ALI, ID_7B, 1, GOOD);
   assert.equal(s.status, 200, 'an unfinished/unverified draft can be saved');
-  assert.ok(s.json.validation.blockers.some((b) => b.code === 'verification'));
-  assert.equal(s.json.validation.publishable, false);
+  assert.ok(!s.json.validation.blockers.some((b) => b.code === 'verification'), 'no longer a blocker');
+  assert.ok(s.json.validation.advisories.some((a) => a.code === 'occupancy_not_full' && /2 of 3 places/.test(a.message)), 'shown as a visible warning');
 });
 
 test('wording that says fully leased contradicts the CRM: it can be saved and previewed, and blocks publication with a specific message', async () => {
